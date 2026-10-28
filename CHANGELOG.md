@@ -5,6 +5,31 @@ change.
 
 ## v0.9.0 (unreleased)
 
+- **mail.SMTP**: STARTTLS by default (implicit TLS on 465; plain only to this
+  machine), AUTH PLAIN, text and HTML as multipart/alternative, Turkish
+  subjects encoded, Bcc in no header, line breaks in addresses and subjects
+  refused.
+- **Scheduled jobs**: `queue.Every` and `queue.Cron` enqueue a job once per tick
+  across replicas (`Queue.Fire`, the `gesso_schedule` table); missed ticks fire
+  once. *Change:* `Queue` has `Fire` and `Release`.
+- **PATCH**: `gesso.Optional[T]` tells a field left out from null from a value;
+  rules apply to the value, `notnull` refuses null; `gesso.Some`, `gesso.Null`.
+  The scaffold adds a PATCH endpoint, one fixed statement per module.
+- **Cursor pages**: `gesso.Page[T]`, `EncodeCursor`, `DecodeCursor`; the
+  scaffold lists `?after=…&take=…`. *Change:* scaffolded lists were take/skip.
+- **Files and streams**: a handler answers `*gesso.Download` (ranges and
+  If-Modified-Since for a seekable body) or `gesso.SSE` events.
+- **`gesso new`'s migrate command**: `app migrate status | up | down [n]`, and
+  `api.Migrator`.
+- **Metrics and tracing**: `Config.Metrics` (Prometheus text, by route
+  pattern), `Config.Tracer` (any tracer, OpenTelemetry through a few lines).
+- **Idempotency-Key**: the `idempotency` package, memory and SQL stores.
+- **ETags**: GET answers carry one, If-None-Match gets 304; `gesso.IfMatch`
+  and `gesso.ETagOf` give updates optimistic concurrency (412).
+- **Languages**: `Config.Languages` translates field errors and problem
+  details by Accept-Language; `gesso.Turkish` built in.
+- **storage/s3** and **cache/redis**, with the standard library only.
+
 - **Uploads**: `form` tags read `multipart/form-data` (or a urlencoded form):
   `*gesso.File` and `[]*gesso.File`, typed by their first bytes, held to
   `accept` and `maxsize` tags; `gesso.MaxBody(n)` per route; `gesso.NewFile` for

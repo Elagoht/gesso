@@ -45,10 +45,9 @@ func patchApp(t *testing.T) *App {
 func TestOptional(t *testing.T) {
 	a := patchApp(t)
 	do := func(body string) (int, string) {
-		w := send(a, "PATCH", "/notes/1", nil)
 		r := httptest.NewRequest("PATCH", "/notes/1", strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
-		w = httptest.NewRecorder()
+		w := httptest.NewRecorder()
 		a.ServeHTTP(w, r)
 		return w.Code, w.Body.String()
 	}

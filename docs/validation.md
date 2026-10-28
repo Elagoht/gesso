@@ -25,6 +25,7 @@ type SignupIn struct {
 | `slug` | `getting-started`: lower-case words joined by single hyphens |
 | `unique` | no element twice |
 | `dive` | the rules after it apply to each element |
+| `notnull` | a `gesso.Optional` that is given is not null |
 
 A failure answers 400 `invalid_input` with each field's error, named as the
 client spells it: `tags[2]`, `address.city`. Every rule is also written into the
@@ -41,3 +42,14 @@ func (in SignupIn) Validate(ctx context.Context) []validate.FieldError {
 	return nil
 }
 ```
+
+## In the client's language
+
+```go
+gesso.New(gesso.Config{Languages: map[string]gesso.Language{"tr": gesso.Turkish}}, …)
+```
+
+A request with `Accept-Language: tr` gets its field errors and problem details
+in Turkish ("en az 3 karakter olmalıdır"), `Content-Language: tr` saying so.
+Add your own codes to a copy of `gesso.Turkish.Details`; a code without a
+translation keeps its English.

@@ -179,15 +179,16 @@ implementations are usual. Everything else the application defines, consumer-sid
 
 | Contract | Package | Reference implementation | Fake | Suite |
 |---|---|---|---|---|
-| `Storage` | `storage` | `Disk` (through `os.Root`) | `Memory` | `storagetest.Run` |
-| `Cache` | `cache` | `Memory` (LRU, TTL) | `Memory` | `cachetest.Run` |
-| `Mailer` | `mail` | `Log` (envelope only) | `Capture` | — |
+| `Storage` | `storage` | `Disk` (through `os.Root`), `s3.Bucket` (SigV4, stdlib) | `Memory` | `storagetest.Run` |
+| `Cache` | `cache` | `Memory` (LRU, TTL), `redis.Cache` (RESP2, stdlib) | `Memory` | `cachetest.Run` |
+| `Mailer` | `mail` | `SMTP` (STARTTLS), `Log` (envelope only) | `Capture` | — |
 | `Clock` | `clock` | `System` | `Manual` | — |
 | `Hasher` | `password` | `Argon2id` (`x/crypto`, PHC) | `Argon2id{Cheap}` | — |
 | `token.Store` | `token` | SQL | memory | `tokentest.Run` |
 | `Locker` | `lock` | `Postgres` (advisory locks), `MySQL` (`GET_LOCK`) | `Memory` | `locktest.Run` |
 | `Queue` | `queue` | `SQL`: PostgreSQL (`SKIP LOCKED`), MySQL, SQLite (outbox) | `Memory` | `queuetest.Run` |
 | `ratelimit.Store` | `ratelimit` | `SQL` (one table every replica shares) | `Memory` (per process, bounded) | `ratelimittest.Run` |
+| `idempotency.Store` | `idempotency` | `SQL` | `Memory` | `idempotencytest.Run` |
 
 Every suite runs against both the reference implementation and the fake, so the
 fake cannot drift from what it stands in for. Any implementation — gesso-s3, the
@@ -340,6 +341,35 @@ shared process.
    `gesso init` (internal/api in a collage site), the API package named `api`.
 9. **v0.9** — what a JSON API meets in production: uploads, CORS, request ids,
    an access log, health probes, a drain.
+
+## 12a. Production surface (v0.9)
+
+What an API needs past its first week, each the smallest thing that does it:
+
+- **PATCH** is `Optional[T]` — three states, absent, null, value — and a
+  scaffolded statement that is the same whatever is set: each column
+  `CASE WHEN <set> THEN <value> ELSE <column> END`. No SQL is built at run
+  time, so nothing a client sends can shape it.
+- **Cursor pages** carry the last key, not an offset: a page is as fast deep
+  in a table as at its start. A cursor is opaque, not secret: base64 of JSON.
+- **Schedules** ride on the queue: a tick is recorded and its job enqueued in
+  one transaction, an UPDATE "fired < tick" letting one replica through.
+  Missed ticks fire once — a backlog of hourly reports helps nobody. The row is
+  created outside the transaction: in it, an insert and an update of one row
+  by replicas at once deadlock in MySQL.
+- **Idempotency** keys are scoped per client (its credential, else its
+  address) and hashed with it; a request's fingerprint is method, URI and
+  body. A 5xx or a panic frees the key; a running claim is a lease.
+- **ETags** are the hash of the JSON a GET sends, so `ETagOf` computes the
+  same value in an update — strong, as If-Match needs.
+- **Languages** translate by code: a FieldError says what a size rule counted
+  (Unit), so "en az 3 karakter" and "en az 3 öğe" differ as they should.
+- **Metrics** label by route pattern, never by path: the series stay as many
+  as the routes. No Prometheus or OpenTelemetry dependency: the text format is
+  a page of code, and a Tracer is one method an adapter implements.
+- **S3 and Redis** with the standard library: SigV4 is checked against AWS's
+  worked example and a server that verifies signatures (Zenko CloudServer;
+  MinIO's images are no longer public); RESP2 against Redis 7.
 
 ## 12b. Security review (2026-10-29)
 
@@ -549,16 +579,21 @@ in a major version.
   its constructors and `Err*` declarations, `Extend`, `Problem`, `FieldErrors`,
   `WriteProblem`, `ServeOpenAPI`, `ErrorMapper`, `Identity`, `IdentityFrom`, `WithIdentity`,
   `Authenticator`, `Guard`, `RequireIdentity`, `RequireRole`, `Interceptor`,
-  `Call`, `Middleware`, `Request`, `ResponseHeader`, `RequestIDFrom`.
+  `Call`, `Middleware`, `Request`, `ResponseHeader`, `RequestIDFrom`,
+  `Optional`/`Some`/`Null`, `Page`/`EncodeCursor`/`DecodeCursor`,
+  `Download`, `Stream`/`SSE`, `Metrics`, `Tracer`, `Language`/`Turkish`,
+  `IfMatch`/`ETagOf`.
 - The input tags and their meaning: `path`, `query`, `header`, `json`, `form`,
   `default`, `accept`, `maxsize`, `validate` with the rules §7 and validate's
   doc list.
 - **Packages**: `validate`, `db`, `migrate`, `date`, `clock`, `password`,
-  `storage`, `cache`, `mail`, `token`, `lock`, `queue`, `events`, `ratelimit`,
-  `gessotest`, and every `*test` suite: their exported names as of v0.9.
+  `storage`, `storage/s3`, `cache`, `cache/redis`, `mail`, `token`, `lock`,
+  `queue`, `events`, `ratelimit`, `idempotency`, `gessotest`, and every
+  `*test` suite: their exported names as of v0.9.
 - **Wire formats**: problem+json's members and codes, the token format
   (`gso_` + 43 base64url characters), the tables gesso's own migrations create
-  (`gesso_tokens`, `gesso_jobs`, `gesso_ratelimit` and their history tables) —
+  (`gesso_tokens`, `gesso_jobs`, `gesso_schedule`, `gesso_ratelimit`,
+  `gesso_idempotency` and their history tables) —
   a later change to one ships as a new migration, never an edited one.
 - **The CLI**: its commands and flags, and that a scaffold, once written, is the
   application's: a later gesso never edits it except where `add module` wires a

@@ -45,6 +45,13 @@ curl localhost:8080/notes
 curl localhost:8080/openapi.json
 ```
 
+The app migrates the database as it starts; to look or step back:
+
+```sh
+go run . migrate status
+go run . migrate down        # the newest; down 3 for three
+```
+
 Other commands:
 
 ```sh

@@ -22,6 +22,17 @@ app, err := gesso.New(cfg, users.New(…), w)
 least once: a handler must be idempotent. A failed job is retried with backoff,
 then dead; `q.Dead(ctx, kind, n)` lists dead jobs.
 
+## Schedules
+
+```go
+queue.Every(w, "cleanup", Cleanup, time.Hour, CleanupArgs{})       // on the hour
+queue.Cron(w, "nightly", Report, "0 3 * * *", ReportArgs{})          // 03:00 in WorkerOptions.Location
+```
+
+A schedule enqueues its job once per tick however many replicas run the
+worker: the tick is recorded with the job, in one transaction. Ticks missed
+while no worker ran fire once, for the latest.
+
 ## Events
 
 One module tells others something happened, without knowing who listens:

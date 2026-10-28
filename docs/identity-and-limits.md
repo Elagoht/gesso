@@ -63,6 +63,21 @@ Run `store.Purge(ctx, time.Now())` now and then — from a scheduled job — to
 delete clients whose bucket is full again. If the database fails, requests are
 let through and the failure logged.
 
+## Idempotency keys
+
+A client that retries a POST — the network failed after it was sent — must
+not pay twice. With the `idempotency` middleware it sends `Idempotency-Key`:
+
+```go
+idempotency.Migrate(ctx, pool, migrate.Postgres)
+keys := idempotency.New(idempotency.Options{Store: idempotency.NewSQL(pool, migrate.Postgres)})
+r.Group("/orders", func(g *gesso.Router) { g.Use(keys.Middleware()); … })
+```
+
+The first request with a key runs and its answer is kept (24h); a retry gets
+it again, `Idempotent-Replayed: true`. A retry while the first runs is 409,
+the key with another body 422; a 5xx frees the key.
+
 ## CORS
 
 A browser page on another origin — a single-page app on `app.example.com`

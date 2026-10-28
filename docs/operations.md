@@ -10,6 +10,29 @@ gives it to a handler, to log or to pass on. Behind a proxy that sets its own
 `Config.AccessLog` logs every request at Info: method, path, status, bytes,
 duration, request id.
 
+## Metrics and traces
+
+```go
+gesso.New(gesso.Config{Metrics: &gesso.Metrics{Token: os.Getenv("METRICS_TOKEN")}}, …)
+```
+
+`/metrics` serves Prometheus: requests by method, route pattern and status,
+their latency, those in flight. A `Config.Tracer` begins a span per request —
+an OpenTelemetry adapter is a few lines:
+
+```go
+type otelTracer struct{ t trace.Tracer }
+
+func (o otelTracer) Start(r *http.Request, route string) (context.Context, func(int)) {
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := o.t.Start(ctx, route)
+	return ctx, func(status int) {
+		span.SetAttributes(attribute.Int("http.status_code", status))
+		span.End()
+	}
+}
+```
+
 ## Health
 
 ```go

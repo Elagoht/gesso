@@ -59,6 +59,75 @@ files live until the handler returns: store what you keep (`storage`), from
 `file.Open()`. `Endpoint.Call` sends a form the same way: `gesso.NewFile(name,
 data)` makes a file to send.
 
+## Partial updates
+
+`gesso.Optional[T]` tells a field left out from one sent as null from one sent
+with a value — a PATCH needs all three:
+
+```go
+type PatchIn struct {
+	ID    int64                  `path:"id"`
+	Title gesso.Optional[string] `json:"title,omitzero" validate:"notnull,max=200"`
+	Due   gesso.Optional[date.Date] `json:"due,omitzero"`   // null clears it
+}
+
+if in.Title.Set { … in.Title.Value … }
+```
+
+Rules apply to the value when one is given; `required` asks for the field,
+`notnull` refuses null. `gesso.Some(v)` and `gesso.Null[T]()` make them for a
+call. `gesso add module` writes a PATCH endpoint.
+
+## Pages
+
+A list answers `gesso.Page[T]` — `items` and the `next` cursor — and reads the
+cursor back:
+
+```go
+type ListIn struct {
+	After string `query:"after"`
+	Take  int    `query:"take" default:"20" validate:"min=1,max=100"`
+}
+
+afterID, err := gesso.DecodeCursor[int64](in.After) // ErrInvalidCursor: 400
+… WHERE id > ? ORDER BY id LIMIT ? (take+1) …
+page.Next = gesso.EncodeCursor(items[take-1].ID)
+```
+
+A cursor is a position, not an offset: as fast on page 1000 as on page 1, and
+rows added meanwhile do not shift it.
+
+## Files and streams
+
+A handler answers a file with `*gesso.Download` — `Body`, `ContentType`,
+`Filename` (an attachment), `Size`, and, with a seekable Body, `ModTime` for
+ranges and If-Modified-Since. Server-sent events are `gesso.SSE`:
+
+```go
+func (m *Module) watch(ctx context.Context, in WatchIn) (*gesso.Stream, error) {
+	return gesso.SSE(func(ctx context.Context, send func(Note) error) error {
+		for n := range m.svc.Changes(ctx) {
+			if err := send(n); err != nil {
+				return err
+			}
+		}
+		return nil
+	}), nil
+}
+```
+
+## Caching and versions
+
+A GET's 200 carries an ETag, the hash of its JSON; a request whose
+If-None-Match names it is answered 304. An update guards against overwriting
+a change it has not seen with the ETag the client read:
+
+```go
+if err := gesso.IfMatch(ctx, gesso.ETagOf(current)); err != nil {
+	return Note{}, err // 412
+}
+```
+
 ## Endpoints
 
 An `Endpoint` declares a route once, so the server and a caller share its types:
