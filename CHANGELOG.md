@@ -13,6 +13,14 @@ change.
 - *Change:* `Limiter.Allow(key)` is `Allow(ctx, key)` and returns an error too;
   `Options.MaxClients` is `Options.Store: ratelimit.NewMemory(max)`.
 - A store that fails lets the request through and logs (`Options.Logger`).
+- **`gesso init`**: `internal/api` in a module that exists — a collage site
+  that serves its API in the same process — with the steps to wire it.
+- *Change:* `gesso new` writes the API as `internal/api` (package `api`), not
+  `internal/app`, so it sits beside collage's `app` without a rename. A project
+  from v0.7.0 keeps working; `add module` wires into `internal/api/api.go` only,
+  so rename the folder and package to have it wire yours.
+- The API refuses an empty `Config.Database` instead of opening a database of
+  its own.
 
 ## v0.7.0 — 2026-10-29
 

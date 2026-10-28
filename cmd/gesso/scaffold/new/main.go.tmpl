@@ -11,12 +11,12 @@ import (
 	"log/slog"
 	"os"
 
-	"{{.Module}}/internal/app"
+	"{{.Module}}/internal/api"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	a, err := app.New(context.Background(), app.Config{
+	a, err := api.New(context.Background(), api.Config{
 		Addr:     env("ADDR", ":8080"),
 		BasePath: os.Getenv("BASE_PATH"),
 		Database: env("DATABASE_URL", "{{.DefaultDSN}}"),

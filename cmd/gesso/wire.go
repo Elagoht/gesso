@@ -42,13 +42,13 @@ func readModule(dir string) (string, error) {
 	return "", errors.New("go.mod has no module line")
 }
 
-// wireModule adds a module to an app.go: pkg.New(pkg.Deps{DB: d.DB}) to what
+// wireModule adds a module to an api.go: pkg.New(pkg.Deps{DB: d.DB}) to what
 // modules returns, pkg.Migrations to what migrations returns, and the import.
 // Each list is found by its function's name, and the text is inserted before
 // the list's closing brace, so the rest of the file is left as it is.
 func wireModule(src []byte, pkg, importPath string) ([]byte, error) {
 	fset := gotoken.NewFileSet()
-	f, err := parser.ParseFile(fset, "app.go", src, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "api.go", src, parser.ParseComments)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func wireModule(src []byte, pkg, importPath string) ([]byte, error) {
 	for _, in := range inserts { // the later offset first, so the earlier stays right
 		out = append(out[:in.at:in.at], append([]byte(in.text), out[in.at:]...)...)
 	}
-	f, err = parser.ParseFile(fset, "app.go", out, parser.ParseComments)
+	f, err = parser.ParseFile(fset, "api.go", out, parser.ParseComments)
 	if err != nil {
 		return nil, err
 	}

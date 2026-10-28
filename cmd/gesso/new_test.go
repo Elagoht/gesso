@@ -48,10 +48,10 @@ func TestNew(t *testing.T) {
 					t.Fatalf("add %s did not wire the module:\n%s", m, out.String())
 				}
 			}
-			app, _ := os.ReadFile(filepath.Join(dir, "internal/app/app.go"))
+			app, _ := os.ReadFile(filepath.Join(dir, "internal/api/api.go"))
 			for _, want := range []string{"notes.New(notes.Deps{DB: d.DB})", "tags.Migrations", `"example.com/app/internal/tags"`} {
 				if !strings.Contains(string(app), want) {
-					t.Fatalf("app.go lacks %s:\n%s", want, app)
+					t.Fatalf("api.go lacks %s:\n%s", want, app)
 				}
 			}
 			if code := run([]string{"add", "module", "tags"}, dir, &out, &errOut, fixedNow); code == 0 {
@@ -138,6 +138,42 @@ func mysqlDatabase(t *testing.T) string {
 	})
 	cfg.DBName = name
 	return cfg.FormatDSN()
+}
+
+// gesso init puts internal/api in a module that exists — a collage site — and
+// add module wires into it, as into a gesso new project.
+func TestInit(t *testing.T) {
+	dir := t.TempDir()
+	var out, errOut bytes.Buffer
+	if code := run([]string{"init"}, dir, &out, &errOut, fixedNow); code == 0 {
+		t.Fatal("init without a go.mod")
+	}
+	seedModule(t, dir, "require modernc.org/sqlite v1.61.0\n")
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := run([]string{"init"}, dir, &out, &errOut, fixedNow); code != 0 {
+		t.Fatalf("code %d: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), `cmp.Or(os.Getenv("DATABASE_URL"), "app.db")`) {
+		t.Fatalf("the next steps:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "go.mod.orig")); err == nil {
+		t.Fatal("init touched go.mod")
+	}
+	if main, _ := os.ReadFile(filepath.Join(dir, "main.go")); string(main) != "package main\n\nfunc main() {}\n" {
+		t.Fatalf("init wrote over main.go: %s", main)
+	}
+	if code := run([]string{"init"}, dir, &out, &errOut, fixedNow); code == 0 {
+		t.Fatal("init twice")
+	}
+	out.Reset()
+	if code := run([]string{"add", "module", "notes", "-fields", "title:string"}, dir, &out, &errOut, fixedNow); code != 0 || !strings.Contains(out.String(), "wired") {
+		t.Fatalf("add module: %d %s %s", code, out.String(), errOut.String())
+	}
+	goIn(t, dir, "mod", "tidy")
+	goIn(t, dir, "vet", "./...")
+	goIn(t, dir, "test", "-count=1", "./...")
 }
 
 func TestWireModule(t *testing.T) {

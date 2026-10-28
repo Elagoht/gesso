@@ -57,12 +57,12 @@ func newProject(args []string, dir string, stdout io.Writer) error {
 	}
 	files := map[string]string{
 		"main.go":                  "main.go.tmpl",
-		"internal/app/app.go":      "app.go.tmpl",
-		"internal/app/app_test.go": "app_test.go.tmpl",
+		"internal/api/api.go":      "api.go.tmpl",
+		"internal/api/api_test.go": "api_test.go.tmpl",
 		".gitignore":               "gitignore.tmpl",
 		"README.md":                "README.md.tmpl",
 	}
-	for _, name := range []string{"main.go", "internal/app/app.go", "internal/app/app_test.go", ".gitignore", "README.md"} {
+	for _, name := range []string{"main.go", "internal/api/api.go", "internal/api/api_test.go", ".gitignore", "README.md"} {
 		var buf bytes.Buffer
 		if err := newTemplates.ExecuteTemplate(&buf, files[name], spec); err != nil {
 			return err
@@ -120,4 +120,58 @@ func newProjectSpec(module, dialect string) (projectSpec, error) {
 		return s, fmt.Errorf("unknown dialect %q: sqlite, postgres or mysql", dialect)
 	}
 	return s, nil
+}
+
+// initProject is gesso init: the API of a gesso new project, internal/api, in a
+// module that exists already — a collage site that serves its API in the same
+// process. No main: the module has one.
+func initProject(args []string, dir string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	dialect := fs.String("dialect", "sqlite", "the database: sqlite, postgres or mysql")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 0 {
+		return errors.New("init takes no arguments: run it in the module's root")
+	}
+	module, err := readModule(dir)
+	if err != nil {
+		return err
+	}
+	spec, err := newProjectSpec(module, *dialect)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(dir, "internal", "api")); err == nil {
+		return errors.New("internal/api exists already")
+	}
+	for name, tmpl := range map[string]string{"internal/api/api.go": "api.go.tmpl", "internal/api/api_test.go": "api_test.go.tmpl"} {
+		var buf bytes.Buffer
+		if err := newTemplates.ExecuteTemplate(&buf, tmpl, spec); err != nil {
+			return err
+		}
+		src, err := format.Source(buf.Bytes())
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		if err := writeNew(filepath.Join(dir, name), src, stdout); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(stdout, `
+next: build the API where the program starts, and serve it. In a collage site,
+in newApp, before collage.New:
+
+	gessoAPI, err := api.New(context.Background(), api.Config{
+		BasePath: "/api",
+		Database: cmp.Or(os.Getenv("DATABASE_URL"), %q), // %s
+		Logger:   slog.Default(),
+	})
+
+then, after it, app.Handle("/api/", gessoAPI), and run its lifecycle with
+collage plugin add elagoht/gesso (pass gessoAPI to plugins). Pages call it with
+gesso.NewLocal(gessoAPI). Modules: gesso add module notes -fields title:string
+`, spec.DefaultDSN, spec.DSNDoc)
+	return nil
 }

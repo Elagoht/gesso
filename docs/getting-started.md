@@ -14,12 +14,15 @@ go run .
 | File | What it is |
 | --- | --- |
 | `main.go` | reads `ADDR`, `BASE_PATH` and `DATABASE_URL`, builds the app, runs it until SIGINT or SIGTERM |
-| `internal/app/app.go` | opens the database, runs every module's migrations, maps database errors to answers, serves `/openapi.json` |
-| `internal/app/app_test.go` | starts the app on an empty database |
+| `internal/api/api.go` | opens the database, runs every module's migrations, maps database errors to answers, serves `/openapi.json` |
+| `internal/api/api_test.go` | starts the app on an empty database |
+
+In a module that exists — a collage site — `gesso init -dialect sqlite` writes
+only `internal/api`; see [With collage](collage.md).
 
 `gesso add module` scaffolds a module — models and endpoints, handlers, a
 service, a repository, a fake-store test and its migration — under `internal/`,
-and adds it to the `modules` and `migrations` lists in `internal/app/app.go`.
+and adds it to the `modules` and `migrations` lists in `internal/api/api.go`.
 The dialect comes from that file. Field types:
 
 | Type | Go | Rule | Column |

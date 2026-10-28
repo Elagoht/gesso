@@ -71,7 +71,7 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	if len(pos) != 1 {
 		return errors.New("add module takes one name: gesso add module events")
 	}
-	appGo := filepath.Join(dir, *parent, "app", "app.go")
+	appGo := filepath.Join(dir, *parent, "api", "api.go")
 	app, appErr := os.ReadFile(appGo)
 	given := false
 	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "dialect" })

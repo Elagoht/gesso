@@ -317,6 +317,7 @@ shared process.
    to the app), `events`, `ratelimit`, more validate rules and `dive`, the queue
    on MySQL and SQLite, the lock discard tested, CI actions on Node 24.
 8. **v0.8** — `ratelimit.Store`: Memory and SQL (shared by replicas), GCRA.
+   `gesso init` (internal/api in a collage site), the API package named `api`.
 
 ## 13. Decisions
 
@@ -424,16 +425,21 @@ shared process.
   UNVERIFIED", and CI fails on either.
 - 2026-10-28 — **`gesso new` writes the wiring, `add module` keeps it.** A new
   project is `main.go` (settings from ADDR, BASE_PATH, DATABASE_URL) and
-  `internal/app/app.go`, which opens the database for its dialect (SQLite with
+  `internal/api/api.go`, which opens the database for its dialect (SQLite with
   foreign keys, WAL and a busy timeout; MySQL with multiStatements and
   parseTime), runs every module's migrations as one history, maps the driver's
   violations, serves OpenAPI at /openapi.json and closes the database at
-  shutdown; `app_test.go` starts it. `app.go` declares `modules`, `migrations`
+  shutdown; `api_test.go` starts it. `app.go` declares `modules`, `migrations`
   and `var dialect = migrate.X`: `add module` reads the dialect from it, inserts
   the module into both lists before their closing braces (the rest of the file
   untouched) and adds the import. Not a generator that owns the file: the code
   is the application's, and a list `add module` cannot find is reported, for
-  the user to wire by hand. A migration's version is the first second, from
+  the user to wire by hand. The package is `api` (internal/api), not `app`:
+  in a collage site — `gesso init` writes only it, into the existing module —
+  collage's newApp already has an `app`. Tried end to end: collage new, gesso
+  init, add module, collage plugin add elagoht/gesso, a page reading the API
+  through NewLocal; a note created over /api showed on the page, in one
+  process. A migration's version is the first second, from
   now, that no migration in the project has: two modules scaffolded in one
   second used to collide in the one history.
 - 2026-10-28 — **validate's rules**: go-playground's names (gt, gte, lt, lte, eq,

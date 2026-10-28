@@ -1,4 +1,4 @@
-package app
+package api
 
 import (
 	"context"
@@ -25,7 +25,7 @@ func testDatabase(t *testing.T) string {
 {{- end}}
 }
 
-// The app starts on an empty database — its migrations run — and answers.
+// The API starts on an empty database — its migrations run — and answers.
 func TestNew(t *testing.T) {
 	a, err := New(context.Background(), Config{Database: testDatabase(t), Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
@@ -40,5 +40,11 @@ func TestNew(t *testing.T) {
 	a.ServeHTTP(rec, httptest.NewRequest("GET", "/openapi.json", nil))
 	if rec.Code != 200 {
 		t.Fatalf("GET /openapi.json: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestNewWantsADatabase(t *testing.T) {
+	if _, err := New(context.Background(), Config{}); err == nil {
+		t.Fatal("an empty Database is refused, not opened as a database of its own")
 	}
 }

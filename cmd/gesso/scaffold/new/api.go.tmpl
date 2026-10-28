@@ -1,8 +1,8 @@
-// Package app builds the API from its configuration: the database, the modules'
+// Package api builds the API from its configuration: the database, the modules'
 // migrations, the modules, and the mapping from database errors to answers.
 // Scaffolded by gesso new; it is yours now. gesso add module adds each new
 // module to modules and migrations below.
-package app
+package api
 
 import (
 	"context"
@@ -59,6 +59,9 @@ var dialect = migrate.{{.DialectGo}}
 // New opens the database, brings its schema up to date and builds the app. The
 // app closes the database when it shuts down.
 func New(ctx context.Context, cfg Config) (*gesso.App, error) {
+	if cfg.Database == "" {
+		return nil, errors.New("api: Config.Database is empty: name the database")
+	}
 	d, err := open(cfg.Database)
 	if err != nil {
 		return nil, err
