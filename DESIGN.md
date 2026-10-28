@@ -392,6 +392,7 @@ shared process.
   Postgres test that skips there fails the job), the CLI's generate-and-run tests,
   and lint (staticcheck v0.7.0, govulncheck). No MySQL job: MySQL stays
   unverified.
-- **Releasing the CLI.** `cmd/gesso` and `integration/` use gesso through a
-  `replace` to `../`. `go install …/cmd/gesso@latest` refuses a module with a
-  replace, so a release tags gesso first, then points `cmd/gesso` at that version.
+- **Releasing.** gesso is tagged `vX.Y.Z`, the CLI `cmd/gesso/vX.Y.Z` (its own
+  module, which imports nothing from gesso, so it has no `replace` and
+  `go install github.com/Elagoht/gesso/cmd/gesso@latest` works). `integration/`
+  keeps its `replace ../`: it tests the tree, and is never installed.
