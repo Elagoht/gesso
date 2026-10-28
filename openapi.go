@@ -4,6 +4,7 @@ import (
 	"encoding"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -23,8 +24,43 @@ type OpenAPIConfig struct {
 	Title       string
 	Version     string
 	Description string
-	// Path serves the document, under BasePath. Default "/openapi.json".
+	// Path, when set, serves the document there to anyone, under BasePath. Leave
+	// it empty to generate only, and register ServeOpenAPI where it belongs —
+	// behind the guards of an admin surface, say.
 	Path string
+}
+
+// ServeOpenAPI answers with the app's OpenAPI document, wherever a router
+// registers it and behind whatever guards it has:
+//
+//	r.Group("/internal", func(g *gesso.Router) {
+//	    g.Guard(gesso.RequireRole("admin"))
+//	    g.Get("/openapi.json", gesso.ServeOpenAPI())
+//	})
+//
+// It answers 404 when Config.OpenAPI is unset.
+func ServeOpenAPI() http.Handler { return openAPIHandler{} }
+
+type openAPIHandler struct{ app *App }
+
+func (h openAPIHandler) bind(app *App, _ route) (http.Handler, error) {
+	return openAPIHandler{app: app}, nil
+}
+
+func (h openAPIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.app == nil || h.app.openapi == nil {
+		h.errs().write(w, r, ErrNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(h.app.openapi)
+}
+
+func (h openAPIHandler) errs() *errorWriter {
+	if h.app == nil {
+		return &errorWriter{logger: slog.Default()}
+	}
+	return &h.app.errs
 }
 
 // Summary is a route's one-line summary in the OpenAPI document.
@@ -68,19 +104,14 @@ func (a *App) buildOpenAPI() error {
 	if oc == nil {
 		return nil
 	}
-	path := oc.Path
-	if path == "" {
-		path = "/openapi.json"
-	}
 	doc, err := a.document(*oc)
 	if err != nil {
 		return err
 	}
 	a.openapi = doc
-	a.register("GET "+a.basePath+path, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write(doc)
-	}))
+	if oc.Path != "" {
+		a.register("GET "+a.basePath+oc.Path, openAPIHandler{app: a})
+	}
 	return nil
 }
 
@@ -296,8 +327,12 @@ func (g *schemaGen) operation(rt docRoute, path string, ids map[string]int) *oaO
 			op.Parameters = append(op.Parameters, g.param(o.in, pp))
 		}
 		if o.plan.hasBody {
-			op.RequestBody = &oaBody{Required: true, Content: map[string]oaMediaType{
-				"application/json": {Schema: g.schema(o.in)},
+			// An empty body is no body, so the body is required only when one of
+			// its fields is.
+			bodySchema := g.schema(o.in)
+			comp := g.schemas[strings.TrimPrefix(bodySchema.Ref, "#/components/schemas/")]
+			op.RequestBody = &oaBody{Required: comp != nil && len(comp.Required) > 0, Content: map[string]oaMediaType{
+				"application/json": {Schema: bodySchema},
 			}}
 		}
 		if len(o.plan.params) > 0 || o.plan.hasBody {

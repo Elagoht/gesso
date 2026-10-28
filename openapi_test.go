@@ -43,7 +43,7 @@ type updateIn struct {
 }
 
 func openAPIApp(t *testing.T) *App {
-	return mustNew(t, Config{BasePath: "/api", OpenAPI: &OpenAPIConfig{Title: "Notes", Version: "1.2.0"}}, moduleFunc(func(r *Router) {
+	return mustNew(t, Config{BasePath: "/api", OpenAPI: &OpenAPIConfig{Title: "Notes", Version: "1.2.0", Path: "/openapi.json"}}, moduleFunc(func(r *Router) {
 		r.Get("/notes", Handle(func(context.Context, listNotesIn) (Page[Note], error) { return Page[Note]{}, nil },
 			Summary("List notes"), Tags("notes")))
 		r.Put("/notes/{id}", Handle(func(context.Context, updateIn) (Note, error) { return Note{}, nil },
@@ -147,6 +147,53 @@ func keys(m map[string]*Schema) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+type optIn struct {
+	Note string `json:"note"`
+}
+
+func TestOpenAPIGenerateOnlyAndGuarded(t *testing.T) {
+	a := mustNew(t, Config{OpenAPI: &OpenAPIConfig{Title: "Private"}}, moduleFunc(func(r *Router) {
+		r.Authenticate(auth)
+		r.Post("/notes", Handle(func(context.Context, optIn) (Empty, error) { return Empty{}, nil }))
+		r.Group("/internal", func(g *Router) {
+			g.Guard(RequireRole("admin"))
+			g.Get("/openapi.json", ServeOpenAPI())
+		})
+	}))
+	if a.OpenAPI() == nil {
+		t.Fatal("generated")
+	}
+	if code := do(a, "GET", "/openapi.json", "", "").Code; code != 404 {
+		t.Fatalf("not served by itself: %d", code)
+	}
+	if code, _, _ := withToken(a, "GET", "/internal/openapi.json", "", ""); code != 401 {
+		t.Fatalf("anonymous: %d", code)
+	}
+	code, body, _ := withToken(a, "GET", "/internal/openapi.json", "ada", "")
+	if code != 200 || !strings.Contains(body, `"title": "Private"`) {
+		t.Fatalf("admin: %d %s", code, body)
+	}
+	if strings.Contains(body, "/internal/openapi.json") {
+		t.Fatal("the document's own route is not in it")
+	}
+	var doc oaDoc
+	_ = json.Unmarshal(a.OpenAPI(), &doc)
+	if doc.Paths["/notes"]["post"].RequestBody.Required {
+		t.Fatal("a body with no required field is optional: an empty one is accepted")
+	}
+	if !bodyRequired(t, openAPIApp(t), "/notes/{id}", "put") {
+		t.Fatal("a body with a required field is required")
+	}
+}
+
+func bodyRequired(t *testing.T, a *App, path, method string) bool {
+	var doc oaDoc
+	if err := json.Unmarshal(a.OpenAPI(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc.Paths[path][method].RequestBody.Required
 }
 
 func TestOpenAPIOff(t *testing.T) {

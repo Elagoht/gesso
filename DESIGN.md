@@ -251,8 +251,11 @@ shared process.
   every request checks the store, so revocation is immediate. Bearer header only.
   An Authorization header of another scheme is not gesso's and is anonymous.
 - 2026-10-28 — **OpenAPI 3.1** is generated from the typed handlers (inputs,
-  validate rules, outputs, statuses, guards) when `Config.OpenAPI` is set, and served
-  at `/openapi.json` under the base path. The base path goes in `servers`; `{x...}`
+  validate rules, outputs, statuses, guards) when `Config.OpenAPI` is set. It is
+  served only where the application says: `OpenAPIConfig.Path` publishes it to
+  anyone, `gesso.ServeOpenAPI()` registers it on a router behind its guards (an
+  admin surface). A request body is `required` only when one of its fields is,
+  since an empty body is accepted as none. The base path goes in `servers`; `{x...}`
   becomes `{x}`; subtree patterns and plain handlers are left out (they declare
   nothing). Generic type names drop their package paths (`Page_Note`), and names
   that collide take their package's (`other_Note`). Any guard marks the route
