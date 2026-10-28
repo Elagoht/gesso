@@ -162,6 +162,7 @@ implementations are usual. Everything else the application defines, consumer-sid
 | `Hasher` | `password` | `Argon2id` (`x/crypto`, PHC) | `Argon2id{Cheap}` | — |
 | `token.Store` | `token` | SQL | memory | `tokentest.Run` |
 | `Locker` | `lock` | `Postgres` (session advisory locks) | `Memory` | `locktest.Run` |
+| `Queue` | `queue` | `Postgres` (outbox, `SKIP LOCKED`) | `Memory` | `queuetest.Run` |
 
 Every suite runs against both the reference implementation and the fake, so the
 fake cannot drift from what it stands in for. Any implementation — gesso-s3, the
@@ -176,7 +177,15 @@ the lock is; a connection that could not release its lock is ended, never
 returned to the pool, where it would hold the lock for ever. Tested: contention,
 waits, cancelled waits, and a holder whose session dies. Not reached by a test: a
 live session whose unlock fails (no way found to make one fail on demand).
-`Queue` (an outbox) is v0.4.
+`Queue` is an outbox: `Enqueue` writes through the db.DB the caller passes, so
+a job commits or rolls back with the data it is about (tested on Postgres; the
+Memory fake has no transactions and says so). Delivery is at least once: a claim
+holds a job for a lease, and `Complete`, `Fail` and `Bury` are fenced by the
+attempt number — a worker whose lease ran out gets `ErrLeaseLost` and cannot
+settle a job another worker now holds. Tested on Postgres: the suite, atomicity,
+and four claimers over 200 jobs taking each exactly once. Plain `FOR UPDATE`
+would also take each once (it waits and re-checks); `SKIP LOCKED` is there so
+claimers do not wait on each other, which no test measures.
 
 ## 9. Database
 
@@ -245,7 +254,7 @@ shared process.
    extensions (`gesso.Extend`).
 3. **v0.3** — live PostgreSQL in the tests, typed client (`Endpoint`), `Locker`,
    `gesso` CLI: `check` (the `ctx` rule), `add module`, `migrate new`.
-4. **v0.4** — SQL code generation, `Queue` (outbox).
+4. **v0.4** — `Queue` (outbox), SQL code generation (`gesso gen`).
 5. **later** — event bus, collage bridge, wiring generation.
 
 ## 13. Decisions
@@ -274,6 +283,14 @@ shared process.
   bearer-secured with 401/403. Checked once by openapi-spec-validator and
   Redocly's recommended rules: valid, two style warnings (no license, a 204 route
   with no 4xx).
+- 2026-10-28 — **Queue times come from the app's clock**, passed into the SQL,
+  not the database's `now()`: tests move them. Replicas then rely on synced
+  clocks, so a lease must be far longer than any skew between them (default 1m).
+  The worker is a gesso module with no routes: it runs where `Start` is called,
+  i.e. gesso as its own process. A handler's ctx ends with its lease; a panic is a
+  failure; a payload that does not decode is buried at once (`Bury`), not retried;
+  a failing `Claim` backs the poll off instead of spinning; `Stop` waits for
+  running jobs until its ctx ends. Queue is PostgreSQL only.
 - 2026-10-28 — Two processes are acceptable and first-class; one process is not
   required.
 - 2026-10-28 — Mockable: consumer-side interfaces, fakes, `gessotest`.
