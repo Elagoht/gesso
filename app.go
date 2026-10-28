@@ -59,6 +59,11 @@ type Config struct {
 	AccessLog bool
 	// Health, when set, answers liveness and readiness probes.
 	Health *Health
+	// Metrics, when set, counts and times requests and serves the counts to
+	// Prometheus.
+	Metrics *Metrics
+	// Tracer, when set, begins a span for each request.
+	Tracer Tracer
 	// DrainDelay is how long Run keeps serving after SIGTERM, readiness already
 	// answering 503, before it stops: time for a load balancer to stop sending.
 	// Default 0.
@@ -106,7 +111,8 @@ type App struct {
 	shutdown bool
 	failed   atomic.Bool // Start failed: every request is answered ErrUnavailable
 	draining atomic.Bool // Run is stopping: readiness answers 503
-	ready    readiness   // the last readiness result
+	metrics  *metrics
+	ready    readiness // the last readiness result
 }
 
 // New builds an app from its modules. Every route problem — a bad pattern, two
@@ -134,6 +140,13 @@ func New(cfg Config, modules ...Module) (*App, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if m := cfg.Metrics; m != nil {
+		c := *m
+		if c.Path == "" {
+			c.Path = "/metrics"
+		}
+		cfg.Metrics = &c
+	}
 	if h := cfg.Health; h != nil {
 		c := *h
 		if c.Timeout <= 0 {
@@ -151,9 +164,10 @@ func New(cfg Config, modules ...Module) (*App, error) {
 		cfg.Health = &c
 	}
 	a := &App{
-		cfg:  cfg,
-		mux:  http.NewServeMux(),
-		errs: errorWriter{logger: cfg.Logger, mappers: slices.Clone(cfg.ErrorMappers)},
+		metrics: newMetrics(),
+		cfg:     cfg,
+		mux:     http.NewServeMux(),
+		errs:    errorWriter{logger: cfg.Logger, mappers: slices.Clone(cfg.ErrorMappers)},
 	}
 	cors, err := newCORS(cfg.CORS)
 	if err != nil {
@@ -207,13 +221,39 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := a.requestID(r)
 	r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id))
 	w.Header().Set("X-Request-ID", id)
-	if a.cfg.AccessLog {
-		rec := &recorded{ResponseWriter: w}
-		defer a.logRequest(r, rec, time.Now())
-		w = rec
-	}
-	if a.probe(w, r) {
+	if a.probe(w, r) || a.scrape(w, r) {
 		return
+	}
+	if a.cfg.AccessLog || a.cfg.Metrics != nil || a.cfg.Tracer != nil {
+		rec := &recorded{ResponseWriter: w}
+		start := time.Now()
+		route := a.route(r)
+		var end func(int)
+		if a.cfg.Tracer != nil {
+			var ctx context.Context
+			ctx, end = a.cfg.Tracer.Start(r, route)
+			r = r.WithContext(ctx)
+		}
+		if a.cfg.Metrics != nil {
+			a.metrics.inFlight.Add(1)
+		}
+		defer func() {
+			status := rec.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if a.cfg.Metrics != nil {
+				a.metrics.inFlight.Add(-1)
+				a.metrics.observe(r.Method, route, status, time.Since(start))
+			}
+			if end != nil {
+				end(status)
+			}
+			if a.cfg.AccessLog {
+				a.logRequest(r, rec, start)
+			}
+		}()
+		w = rec
 	}
 	if a.cors != nil {
 		if a.preflight(w, r) {
