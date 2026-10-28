@@ -61,6 +61,7 @@ collage-gesso bridge exists.
 go install github.com/Elagoht/gesso/cmd/gesso@latest
 gesso add module events -fields title:string,seats:int,starts_at:time
 gesso migrate new add_event_city -dir internal/events/migrations
+gesso gen              # queries.sql → typed queries.gen.go; gen -check in CI
 gesso check            # database calls without ctx, service methods without ctx
 ```
 

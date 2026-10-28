@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.3 implemented, not released** (2026-10-28). §12 lists the phases.
+Status: **v0.4 implemented, not released** (2026-10-28). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -291,6 +291,23 @@ shared process.
   failure; a payload that does not decode is buried at once (`Bury`), not retried;
   a failing `Claim` backs the poll off instead of spinning; `Stop` waits for
   running jobs until its ctx ends. Queue is PostgreSQL only.
+- 2026-10-28 — **`gesso gen`: SQL in, typed Go out — not an ORM.** A package's
+  `queries.sql` declares its dialect (`-- gesso: dialect postgres`) and each query
+  (`-- name: NoteBySlug :one`, `-- in: slug string`, `-- out: Note`); `gen` writes
+  `queries.gen.go` with `Queries`/`NewQueries(db.DB)` and one method per query
+  (`:one`, `:many`, `:exec`, `:execrows`). The SQL is scanned, not parsed — enough
+  to count placeholders (distinct `$n` for Postgres, where `?` is an operator; `?`
+  elsewhere) and to name the result columns (the top-level RETURNING list, else the
+  first top-level SELECT list), skipping strings, quoted names, comments, `$$`
+  bodies and casts. Refused, with `file:line`: `*`, an expression with no AS, a
+  column with no field (by `db:"col"`, else snake_case), two columns in one field,
+  a placeholder count that does not match `in:`. The package is loaded with the
+  generated file blanked, so handwritten code that uses `Queries` loads before the
+  file exists. `gen -check` exits 1 on a stale or missing file: the CI hook. Not
+  checked: column types and nullability — a NULL into a `string` fails at run time.
+  For `?` dialects `in:` follows the order the `?` appear in. Tested by generating
+  into a module, vetting, testing, checking, and running every query on SQLite and
+  a real PostgreSQL.
 - 2026-10-28 — Two processes are acceptable and first-class; one process is not
   required.
 - 2026-10-28 — Mockable: consumer-side interfaces, fakes, `gessotest`.

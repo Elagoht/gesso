@@ -3,6 +3,7 @@
 //	gesso migrate new <name> [-dir migrations]
 //	gesso add module <name> [-fields title:string,seats:int] [-dialect postgres] [-dir internal]
 //	gesso check [packages]
+//	gesso gen [dirs] [-check]
 //
 // Applying migrations needs the application's database driver, which this binary
 // does not have: up and down run in the application's own binary, through the
@@ -24,6 +25,7 @@ const usage = `usage:
   gesso migrate new <name> [-dir migrations]
   gesso add module <name> [-fields title:string,seats:int] [-dialect postgres|sqlite|mysql] [-dir internal]
   gesso check [packages]   (default ./...)
+  gesso gen [dirs] [-check]   queries.sql → queries.gen.go; -check reports stale files
 `
 
 // run is main without the exit, for the tests. dir is where paths are relative to.
@@ -43,6 +45,12 @@ func run(args []string, dir string, stdout, stderr io.Writer, now func() time.Ti
 		var findings int
 		findings, err = check(args[1:], dir, stdout)
 		if err == nil && findings > 0 {
+			code = 1
+		}
+	case args[0] == "gen":
+		var stale int
+		stale, err = gen(args[1:], dir, stdout)
+		if err == nil && stale > 0 {
 			code = 1
 		}
 	case args[0] == "help" || args[0] == "-h" || args[0] == "--help":
