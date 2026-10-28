@@ -123,9 +123,13 @@ func TestTestTransactionRollsBack(t *testing.T) {
 	}
 }
 
-func TestInTxOnThePool(t *testing.T) {
-	d := migrated(t)
+func TestInTxOnThePool(t *testing.T) { inTxSuite(t, openDB(t)) }
+
+func inTxSuite(t *testing.T, d *sql.DB) {
 	ctx := context.Background()
+	if _, err := d.Exec("CREATE TABLE notes (slug VARCHAR(40) PRIMARY KEY, title TEXT NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
 	errStop := errors.New("stop")
 
 	err := db.InTx(ctx, d, func(tx db.DB) error {
@@ -166,8 +170,9 @@ func TestInTxOnThePool(t *testing.T) {
 	}
 }
 
-func TestMigrations(t *testing.T) {
-	d := openDB(t)
+func TestMigrations(t *testing.T) { migrationSuite(t, openDB(t), migrate.SQLite) }
+
+func migrationSuite(t *testing.T, d *sql.DB, dialect migrate.Dialect) {
 	ctx := context.Background()
 	files := fstest.MapFS{
 		"20261028100000_a.up.sql":   {Data: []byte("CREATE TABLE a (id INTEGER);")},
@@ -175,7 +180,7 @@ func TestMigrations(t *testing.T) {
 		"20261028110000_b.up.sql":   {Data: []byte("CREATE TABLE b (id INTEGER); CREATE TABLE b2 (id INTEGER);")},
 		"20261028110000_b.down.sql": {Data: []byte("DROP TABLE b2; DROP TABLE b;")},
 	}
-	m, err := migrate.New(d, migrate.SQLite, files)
+	m, err := migrate.New(d, dialect, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +212,7 @@ func TestMigrations(t *testing.T) {
 		edited[k] = v
 	}
 	edited["20261028100000_a.up.sql"] = &fstest.MapFile{Data: []byte("CREATE TABLE a (id INTEGER, extra TEXT);")}
-	m2, _ := migrate.New(d, migrate.SQLite, edited)
+	m2, _ := migrate.New(d, dialect, edited)
 	if _, err := m2.Up(ctx); !errors.Is(err, migrate.ErrChanged) {
 		t.Fatalf("got %v", err)
 	}
@@ -217,7 +222,7 @@ func TestMigrations(t *testing.T) {
 
 	// An older migration that arrives late stops Up, unless allowed.
 	late := fstest.MapFS{"20261028090000_late.up.sql": {Data: []byte("CREATE TABLE late (id INTEGER);")}}
-	m3, _ := migrate.New(d, migrate.SQLite, files, late)
+	m3, _ := migrate.New(d, dialect, files, late)
 	if _, err := m3.Up(ctx); !errors.Is(err, migrate.ErrOutOfOrder) {
 		t.Fatalf("got %v", err)
 	}
@@ -228,7 +233,7 @@ func TestMigrations(t *testing.T) {
 
 	// A failing migration is rolled back and recorded as nothing.
 	bad := fstest.MapFS{"20261028120000_bad.up.sql": {Data: []byte("CREATE TABLE c (id INTEGER); NOT SQL;")}}
-	m4, _ := migrate.New(d, migrate.SQLite, files, late, bad)
+	m4, _ := migrate.New(d, dialect, files, late, bad)
 	if _, err := m4.Up(ctx); err == nil || !strings.Contains(err.Error(), "20261028120000_bad") {
 		t.Fatalf("got %v", err)
 	}

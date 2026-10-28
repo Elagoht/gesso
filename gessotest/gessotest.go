@@ -24,6 +24,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sync"
 	"testing"
 
 	"github.com/Elagoht/gesso"
@@ -49,21 +51,96 @@ func New(t testing.TB, cfg gesso.Config, modules ...gesso.Module) *gesso.App {
 	return app
 }
 
-// Tx begins a transaction on db and rolls it back when the test ends, so nothing
+// Tx begins a transaction on d and rolls it back when the test ends, so nothing
 // the test writes outlives it. Hand it to the repositories under test as their
 // db.DB; a db.InTx inside it nests as a savepoint.
+//
+// Every request a Client of the same test sends runs in a savepoint of its own.
+// PostgreSQL fails a whole transaction at its first error; without the savepoint,
+// a test that expects a 409 could send nothing after it. A request that failed is
+// rolled back to its savepoint, so the next starts clean — as it would in
+// production, where each request's statements commit on their own.
+//
+// Within one request the transaction still behaves as one: after an error inside
+// a handler, PostgreSQL refuses that request's later statements unless the
+// handler ran them in a db.InTx of their own.
 //
 // A transaction is one connection: requests in one test run one after another,
 // not in parallel. And it holds only for an app served in process, as Client
 // does; a server in another process has connections of its own.
-func Tx(t testing.TB, db *sql.DB) *sql.Tx {
+func Tx(t testing.TB, d *sql.DB) *TxDB {
 	t.Helper()
-	tx, err := db.BeginTx(context.Background(), nil)
+	tx, err := d.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("gessotest: begin: %v", err)
 	}
-	t.Cleanup(func() { _ = tx.Rollback() })
-	return tx
+	x := &TxDB{tx: tx}
+	txMu.Lock()
+	txs[t] = append(txs[t], x)
+	txMu.Unlock()
+	t.Cleanup(func() {
+		_ = tx.Rollback()
+		txMu.Lock()
+		delete(txs, t)
+		txMu.Unlock()
+	})
+	return x
+}
+
+var (
+	txMu sync.Mutex
+	txs  = map[testing.TB][]*TxDB{}
+)
+
+// TxDB is a test's transaction: a db.DB, and a db.Transactor whose units nest as
+// savepoints.
+type TxDB struct {
+	tx *sql.Tx
+}
+
+// SQLTx is the transaction underneath.
+func (x *TxDB) SQLTx() *sql.Tx { return x.tx }
+
+// ExecContext runs a statement in the transaction.
+func (x *TxDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return x.tx.ExecContext(ctx, query, args...)
+}
+
+// QueryContext runs a query in the transaction.
+func (x *TxDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return x.tx.QueryContext(ctx, query, args...)
+}
+
+// QueryRowContext runs a one-row query in the transaction.
+func (x *TxDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return x.tx.QueryRowContext(ctx, query, args...)
+}
+
+// InTx runs fn in a savepoint of the transaction.
+func (x *TxDB) InTx(ctx context.Context, _ *sql.TxOptions, fn func(tx db.DB) error) error {
+	return db.InTx(ctx, x.tx, fn)
+}
+
+const requestSavepoint = "gessotest_request"
+
+// around runs one request in a savepoint, and rolls back to it when the request
+// left the transaction failed.
+func (x *TxDB) around(t testing.TB, serve func()) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := x.tx.ExecContext(ctx, "SAVEPOINT "+requestSavepoint); err != nil {
+		t.Fatalf("gessotest: savepoint: %v", err)
+	}
+	serve()
+	if _, err := x.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+requestSavepoint); err == nil {
+		return
+	}
+	if _, err := x.tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+requestSavepoint); err != nil {
+		t.Fatalf("gessotest: rollback to savepoint: %v", err)
+	}
+	if _, err := x.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+requestSavepoint); err != nil {
+		t.Fatalf("gessotest: release savepoint: %v", err)
+	}
 }
 
 // FakeDB is a db.DB for unit tests that touch no database: a service under test
@@ -170,7 +247,15 @@ func (c *Client) Do(method, target string, body Body) *Response {
 		req.Header.Set("Content-Type", body.ContentType)
 	}
 	rec := httptest.NewRecorder()
-	c.h.ServeHTTP(rec, req)
+	serve := func() { c.h.ServeHTTP(rec, req) }
+	txMu.Lock()
+	open := slices.Clone(txs[c.t])
+	txMu.Unlock()
+	for _, x := range open {
+		inner := serve
+		serve = func() { x.around(c.t, inner) }
+	}
+	serve()
 	return &Response{t: c.t, Status: rec.Code, Header: rec.Header(), Body: rec.Body.Bytes()}
 }
 

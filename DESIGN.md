@@ -290,18 +290,27 @@ shared process.
   the field named by an explicit constraint→field map.
 - 2026-10-28 — The `ctx`-first check moves to the CLI (`gesso check`, v0.3); v0.1
   enforces it by API shape (every handler and `InTx` takes `ctx`).
-- 2026-10-28 — gesso's own tests that need a database run against SQLite (pure Go,
-  `modernc.org/sqlite`) in a nested `integration/` module, so gesso's `go.mod` stays
-  empty.
+- 2026-10-28 — gesso's own tests that need a database live in a nested
+  `integration/` module, so their drivers never reach gesso's `go.mod`: SQLite
+  (`modernc.org/sqlite`) and a real PostgreSQL (embedded-postgres, or
+  `GESSO_POSTGRES_DSN` in CI). Each Postgres test gets a database of its own;
+  without a server they skip, saying "POSTGRES UNVERIFIED".
+- 2026-10-28 — **Each request in a test transaction runs in a savepoint.**
+  PostgreSQL fails a whole transaction at its first error, so a test that expected
+  a 409 could send nothing after it. `gessotest.Tx` returns a `TxDB`, and a Client
+  of the same test wraps every request in a savepoint, rolled back when the request
+  left the transaction failed.
 - 2026-10-28 — `db.Transactor` lets a DB run a unit its own way; InTx defers to
   it first. `gessotest.FakeDB` is one, so a service that uses transactions is
   unit-tested with fake repositories and no database.
 
 ## 14. Open questions
 
-- **Untested against live servers.** The Postgres and MySQL dialects (locks,
-  placeholders) and their violation classifiers have unit tests only; no Postgres
-  or MySQL server ran them. Needs a CI job with both before v0.1 is tagged.
+- **MySQL is untested against a server.** Its dialect (GET_LOCK, placeholders) and
+  violation classifier have unit tests only. PostgreSQL runs every suite:
+  migrations with the advisory lock under contention, InTx and savepoints, the SQL
+  token store, the pgx classifier through db.Errors.
+- **No CI** until the repository exists.
 - **One process, lifecycle.** Mounted in collage, nothing calls the app's Start or
   Shutdown: collage gives an application no shutdown hook, only plugins. Until the
   bridge exists, run modules with Starter/Stopper as their own process.
