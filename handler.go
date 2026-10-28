@@ -175,6 +175,22 @@ func (h *typed[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.errs.write(w, r, err)
 		return
 	}
+	switch v := reflect.ValueOf(&out).Elem().Interface().(type) {
+	case *Download:
+		if v == nil {
+			h.errs.write(w, r, errors.New("gesso: the handler answered a nil *Download"))
+			return
+		}
+		v.write(w, r)
+		return
+	case *Stream:
+		if v == nil {
+			h.errs.write(w, r, errors.New("gesso: the handler answered a nil *Stream"))
+			return
+		}
+		v.write(w, r, h.errs.logger)
+		return
+	}
 	if h.cfg.status == http.StatusNoContent {
 		w.WriteHeader(http.StatusNoContent)
 		return

@@ -354,7 +354,13 @@ func (g *schemaGen) operation(rt docRoute, path string, ids map[string]int) *oaO
 		}
 	}
 	ok := oaResponse{Description: http.StatusText(o.status)}
-	if o.out != emptyType {
+	switch o.out {
+	case emptyType:
+	case downloadType:
+		ok.Content = map[string]oaMediaType{"application/octet-stream": {Schema: &Schema{Type: typ("string"), Format: "binary"}}}
+	case streamType:
+		ok.Content = map[string]oaMediaType{"text/event-stream": {Schema: &Schema{Type: typ("string")}}}
+	default:
 		ok.Content = map[string]oaMediaType{"application/json": {Schema: g.schema(o.out)}}
 	}
 	op.Responses[strconv.Itoa(o.status)] = ok

@@ -193,9 +193,17 @@ func (e Endpoint[In, Out]) Call(ctx context.Context, rm *Remote, in In, opts ...
 	if !rm.local {
 		req.Header.Del(clientAddrHeader)
 	}
+	if reflect.TypeFor[Out]() == streamType {
+		return out, fmt.Errorf("gesso: %s %s: a stream of events is not called through an Endpoint", e.Method, e.Pattern)
+	}
 	res, err := rm.client.Do(req)
 	if err != nil {
 		return out, fmt.Errorf("gesso: %s %s: %w", e.Method, e.Pattern, err)
+	}
+	if reflect.TypeFor[Out]() == downloadType && res.StatusCode >= 200 && res.StatusCode <= 299 {
+		// The caller reads the file, and closes it.
+		reflect.ValueOf(&out).Elem().Set(reflect.ValueOf(downloadFrom(res)))
+		return out, nil
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(res.Body, 32<<20))
