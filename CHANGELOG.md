@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## v0.8.0 (unreleased)
+## v0.8.0 — 2026-10-29
 
 - **Rate limits shared by replicas**: `ratelimit.Store`, with `NewMemory(max)`
   (per process, as before) and `NewSQL(db, dialect)` (the gesso_ratelimit

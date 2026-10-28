@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.7.0 released; v0.8 on main** (2026-10-29). §12 lists the phases.
+Status: **v0.8.0 released** (2026-10-29). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
