@@ -86,8 +86,8 @@ type WorkerOptions struct {
 // gesso.New and the app starts and stops it. It runs only where the app's Start
 // is called — gesso as its own process, not mounted under collage.
 type Worker struct {
-	q        Queue
-	opt      WorkerOptions
+	q         Queue
+	opt       WorkerOptions
 	handlers  map[string]func(context.Context, Job) error
 	kinds     []string
 	schedules []*scheduled
