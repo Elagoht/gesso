@@ -17,8 +17,9 @@ import (
 	"github.com/Elagoht/gesso/validate"
 )
 
-// A handler takes a form — files and fields from a multipart/form-data body, or
-// fields from an application/x-www-form-urlencoded one — through form tags:
+// A handler takes a form — files and fields from a multipart/form-data body, or,
+// for an input with no file, fields from an application/x-www-form-urlencoded
+// one (at most 1 MiB) — through form tags:
 //
 //	type UploadIn struct {
 //		Title  string        `form:"title" validate:"required,max=100"`
@@ -148,7 +149,17 @@ func parseSize(s string) (int64, error) {
 	return n * mult, nil
 }
 
-const formMemory = 32 << 20
+const (
+	// formMemory is how much of a multipart form is kept in memory; the rest
+	// goes to temporary files.
+	formMemory = 32 << 20
+	// urlencodedMax bounds a urlencoded form, which is read whole into memory.
+	urlencodedMax = 1 << 20
+)
+
+func (p *inputPlan) hasFiles() bool {
+	return slices.ContainsFunc(p.form, func(fp formPlan) bool { return fp.file })
+}
 
 // decodeForm fills the form fields of dst from r's body.
 func (p *inputPlan) decodeForm(r *http.Request, dst reflect.Value, maxBody int64) error {
@@ -159,18 +170,23 @@ func (p *inputPlan) decodeForm(r *http.Request, dst reflect.Value, maxBody int64
 	if err != nil {
 		return ErrUnsupportedMedia.WithDetail("the body must be multipart/form-data or application/x-www-form-urlencoded")
 	}
-	r.Body = http.MaxBytesReader(nil, r.Body, maxBody)
 	var values map[string][]string
 	var files map[string][]*multipart.FileHeader
-	switch mt {
-	case "multipart/form-data":
-		err = r.ParseMultipartForm(formMemory)
+	switch {
+	case mt == "multipart/form-data":
+		r.Body = http.MaxBytesReader(nil, r.Body, maxBody)
+		err = r.ParseMultipartForm(min(formMemory, maxBody))
 		if err == nil {
 			values, files = r.MultipartForm.Value, r.MultipartForm.File
 		}
-	case "application/x-www-form-urlencoded":
+	case mt == "application/x-www-form-urlencoded" && !p.hasFiles():
+		// Read whole into memory: bounded by the app's own limit, never by an
+		// upload route's larger one, which is for files on disk.
+		r.Body = http.MaxBytesReader(nil, r.Body, min(maxBody, urlencodedMax))
 		err = r.ParseForm()
 		values = r.PostForm
+	case p.hasFiles():
+		return ErrUnsupportedMedia.WithDetail("the body must be multipart/form-data")
 	default:
 		return ErrUnsupportedMedia.WithDetail("the body must be multipart/form-data or application/x-www-form-urlencoded")
 	}

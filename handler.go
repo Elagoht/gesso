@@ -185,6 +185,7 @@ func (h *typed[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(h.cfg.status)
 	_, _ = w.Write(buf.Bytes())
 }

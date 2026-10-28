@@ -76,20 +76,34 @@ func New(ctx context.Context, cfg Config) (*gesso.App, error) {
 
 func build(ctx context.Context, d *sql.DB, cfg Config) (*gesso.App, error) {
 	if err := d.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("app: database: %w", err)
+		return nil, fmt.Errorf("api: database: %w", err)
 	}
+{{- if eq .Dialect "mysql"}}
+	// Migrations run on a connection of their own that takes several
+	// statements in one Exec; the app's pool does not, so an injected "; DROP"
+	// is never a second statement.
+	md, err := openMigrator(cfg.Database)
+	if err != nil {
+		return nil, err
+	}
+	defer md.Close()
+	m, err := migrate.New(md, dialect, migrations()...)
+{{- else}}
 	m, err := migrate.New(d, dialect, migrations()...)
+{{- end}}
 	if err != nil {
 		return nil, err
 	}
 	if _, err := m.Up(ctx); err != nil {
-		return nil, fmt.Errorf("app: migrations: %w", err)
+		return nil, fmt.Errorf("api: migrations: %w", err)
 	}
 	return gesso.New(gesso.Config{
 		Addr:         cfg.Addr,
 		BasePath:     cfg.BasePath,
 		Logger:       cfg.Logger,
 		ErrorMappers: []gesso.ErrorMapper{db.Errors(classify, constraints)},
+		// The OpenAPI document maps every route, to anyone who asks: guard it, or
+		// leave Path empty to only generate it, before the API is public.
 		OpenAPI:      &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json"},
 		AccessLog:    true,
 		// /healthz answers while the process runs; /readyz while the database
@@ -123,14 +137,20 @@ func classify(err error) (db.Violation, bool) {
 	return db.PostgresViolation(pe.Code, pe.ConstraintName)
 }
 {{else}}
-// open opens a MySQL pool. A migration file runs as one Exec, so the
-// connection takes several statements at once; DATETIME scans into time.Time.
-func open(dsn string) (*sql.DB, error) {
+// open opens a MySQL pool: DATETIME scans into time.Time, and one statement
+// per Exec.
+func open(dsn string) (*sql.DB, error) { return openMySQL(dsn, false) }
+
+// openMigrator opens the connection migrations run on: a migration file runs
+// as one Exec, so it takes several statements.
+func openMigrator(dsn string) (*sql.DB, error) { return openMySQL(dsn, true) }
+
+func openMySQL(dsn string, multi bool) (*sql.DB, error) {
 	cfg, err := mysql.ParseDSN(dsn)
 	if err != nil {
 		return nil, err
 	}
-	cfg.MultiStatements, cfg.ParseTime = true, true
+	cfg.MultiStatements, cfg.ParseTime = multi, true
 	c, err := mysql.NewConnector(cfg)
 	if err != nil {
 		return nil, err

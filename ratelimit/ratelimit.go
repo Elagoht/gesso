@@ -38,9 +38,11 @@ type Options struct {
 	Per      time.Duration
 	// Burst is how many a client may send at once. Zero: Requests.
 	Burst int
-	// Key names the client a request comes from. Nil: its IP address, read from
-	// the connection, or from X-Forwarded-For when the connection comes from
-	// one of TrustedProxies.
+	// Key names the client a request comes from. Nil: its IP address — read
+	// from the connection, or from X-Forwarded-For when the connection comes
+	// from one of TrustedProxies — and for IPv6 its /64, since a client has a
+	// /64 to pick addresses from. A request made in process (gesso.NewLocal)
+	// comes from the address its caller gives with gesso.ClientAddr.
 	Key func(*http.Request) string
 	// TrustedProxies are the addresses of the proxies in front of the server.
 	// Only a request from one of them has its X-Forwarded-For read: anyone else
@@ -104,7 +106,7 @@ func New(opts Options) *Limiter {
 		opts.Logger = slog.Default()
 	}
 	if opts.Key == nil {
-		opts.Key = func(r *http.Request) string { return ClientIP(r, opts.TrustedProxies) }
+		opts.Key = func(r *http.Request) string { return clientKey(ClientIP(r, opts.TrustedProxies)) }
 	}
 	return &Limiter{opts: opts, interval: opts.Per / time.Duration(opts.Requests)}
 }
@@ -138,8 +140,8 @@ func (l *Limiter) Middleware() gesso.Middleware {
 }
 
 // Memory keeps the clients in this process, at most a bound of them: past it,
-// the ones whose bucket is full again are forgotten, or, if none is, the one
-// seen longest ago.
+// one is forgotten to make room — of a few looked at, the one whose bucket is
+// fullest — so the cost of a new client does not grow with the bound.
 type Memory struct {
 	mu   sync.Mutex
 	max  int
@@ -167,25 +169,33 @@ func (m *Memory) Take(_ context.Context, key string, now time.Time, interval tim
 	return ok, wait, nil
 }
 
-// forget drops every client whose bucket is full — whose arrival time has
-// passed — or, if there is none, the one with the earliest arrival time.
-func (m *Memory) forget(now time.Time) {
+// forget drops one client: of a sample of them, the one with the earliest
+// arrival time — a full bucket if there is one among them. Go's map iteration
+// order makes the sample.
+func (m *Memory) forget(_ time.Time) {
 	var oldest string
 	var oldestAt time.Time
-	dropped := false
+	n := 0
 	for k, tat := range m.tats {
-		if !tat.After(now) {
-			delete(m.tats, k)
-			dropped = true
-			continue
-		}
 		if oldest == "" || tat.Before(oldestAt) {
 			oldest, oldestAt = k, tat
 		}
+		if n++; n == 16 {
+			break
+		}
 	}
-	if !dropped && oldest != "" {
-		delete(m.tats, oldest)
+	delete(m.tats, oldest)
+}
+
+// clientKey is the bucket an address counts in: an IPv4 address, or an IPv6
+// address's /64.
+func clientKey(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil || a.Is4() || a.Is4In6() {
+		return ip
 	}
+	p, _ := a.Prefix(64)
+	return p.String()
 }
 
 // ClientIP is the address r comes from: the connection's, or, when the

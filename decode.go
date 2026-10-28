@@ -88,6 +88,12 @@ func planFields(t reflect.Type, prefix []int, p *inputPlan) error {
 			}
 			continue
 		}
+		if f.Anonymous && f.Type.Kind() == reflect.Pointer && f.Type.Elem().Kind() == reflect.Struct && readsParams(f.Type.Elem()) {
+			// encoding/json would fill its promoted fields from the body, path
+			// and query fields included, and they could not be planned: a nil
+			// pointer has nowhere to put them.
+			return fmt.Errorf("input %s: embed %s, not a pointer to it: it has path, query, header or form fields", t, f.Type.Elem())
+		}
 		if !f.IsExported() {
 			continue
 		}
@@ -110,6 +116,25 @@ func planFields(t reflect.Type, prefix []int, p *inputPlan) error {
 		}
 	}
 	return nil
+}
+
+// readsParams reports whether t, or a struct it embeds, has a field read from
+// the path, query, header or a form.
+func readsParams(t reflect.Type) bool {
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if hasTag(f, "path") || hasTag(f, "query") || hasTag(f, "header") || hasTag(f, "form") {
+			return true
+		}
+		ft := f.Type
+		if ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+		if f.Anonymous && ft.Kind() == reflect.Struct && readsParams(ft) {
+			return true
+		}
+	}
+	return false
 }
 
 func planParam(f reflect.StructField, index []int) (paramPlan, bool, error) {

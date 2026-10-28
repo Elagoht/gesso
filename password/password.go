@@ -13,7 +13,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -55,6 +57,27 @@ var Cheap = Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
 // Argon2id hashes with its params.
 type Argon2id struct {
 	Params Params
+	// Concurrent bounds how many hashes run at once; the rest wait their turn.
+	// Each takes Params.Memory, so without a bound a burst of sign-ins — or an
+	// attacker sending them — would take memory the process does not have.
+	// Zero: the number of CPUs, which hashing cannot outrun anyway.
+	Concurrent int
+
+	once  sync.Once
+	slots chan struct{}
+}
+
+// acquire waits for a slot, and returns its release.
+func (a *Argon2id) acquire() func() {
+	a.once.Do(func() {
+		n := a.Concurrent
+		if n <= 0 {
+			n = runtime.NumCPU()
+		}
+		a.slots = make(chan struct{}, n)
+	})
+	a.slots <- struct{}{}
+	return func() { <-a.slots }
 }
 
 // New is an argon2id hasher with Default params.
@@ -70,7 +93,9 @@ func (a *Argon2id) Hash(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
+	release := a.acquire()
 	key := argon2.IDKey([]byte(password), salt, p.Time, p.Memory, p.Threads, p.KeyLen)
+	release()
 	b64 := base64.RawStdEncoding
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, p.Memory, p.Time, p.Threads, b64.EncodeToString(salt), b64.EncodeToString(key)), nil
@@ -87,7 +112,9 @@ func (a *Argon2id) Verify(password, encoded string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	release := a.acquire()
 	got := argon2.IDKey([]byte(password), salt, p.Time, p.Memory, p.Threads, uint32(len(key)))
+	release()
 	return subtle.ConstantTimeCompare(got, key) == 1, nil
 }
 

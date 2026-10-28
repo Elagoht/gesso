@@ -31,6 +31,12 @@ type Config struct {
 	MaxBodyBytes int64
 	// ShutdownTimeout bounds Run's graceful shutdown. Default 10s.
 	ShutdownTimeout time.Duration
+	// ReadTimeout bounds reading a request, its body included; WriteTimeout,
+	// writing its answer; IdleTimeout, a kept-alive connection waiting for the
+	// next. They stop a client that sends a byte now and then from holding a
+	// connection for ever. Defaults 1m, 1m and 2m; Run uses them. Raise
+	// ReadTimeout for large uploads on slow links.
+	ReadTimeout, WriteTimeout, IdleTimeout time.Duration
 	// Logger receives server errors. Default slog.Default().
 	Logger *slog.Logger
 	// ErrorMappers turn errors gesso does not know into answers, in order: a
@@ -100,6 +106,7 @@ type App struct {
 	shutdown bool
 	failed   atomic.Bool // Start failed: every request is answered ErrUnavailable
 	draining atomic.Bool // Run is stopping: readiness answers 503
+	ready    readiness   // the last readiness result
 }
 
 // New builds an app from its modules. Every route problem — a bad pattern, two
@@ -115,6 +122,15 @@ func New(cfg Config, modules ...Module) (*App, error) {
 	if cfg.ShutdownTimeout <= 0 {
 		cfg.ShutdownTimeout = 10 * time.Second
 	}
+	if cfg.ReadTimeout <= 0 {
+		cfg.ReadTimeout = time.Minute
+	}
+	if cfg.WriteTimeout <= 0 {
+		cfg.WriteTimeout = time.Minute
+	}
+	if cfg.IdleTimeout <= 0 {
+		cfg.IdleTimeout = 2 * time.Minute
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -122,6 +138,9 @@ func New(cfg Config, modules ...Module) (*App, error) {
 		c := *h
 		if c.Timeout <= 0 {
 			c.Timeout = 2 * time.Second
+		}
+		if c.CacheFor <= 0 {
+			c.CacheFor = time.Second
 		}
 		if c.LivePath == "" {
 			c.LivePath = "/healthz"
@@ -340,7 +359,18 @@ func (a *App) stopModules(ctx context.Context) error {
 func (a *App) Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return a.run(ctx, &http.Server{Addr: a.cfg.Addr, Handler: a, ReadHeaderTimeout: 10 * time.Second})
+	return a.run(ctx, a.server())
+}
+
+// server is the http.Server Run serves with.
+func (a *App) server() *http.Server {
+	return &http.Server{
+		Addr: a.cfg.Addr, Handler: a,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       a.cfg.ReadTimeout,
+		WriteTimeout:      a.cfg.WriteTimeout,
+		IdleTimeout:       a.cfg.IdleTimeout,
+	}
 }
 
 func (a *App) run(ctx context.Context, srv *http.Server) error {

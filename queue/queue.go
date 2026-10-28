@@ -208,13 +208,16 @@ func (p *SQL) Claim(ctx context.Context, kind string, n int, lease time.Duration
 		return p.claimEach(ctx, kind, n, lease)
 	}
 	now := p.clock.Now()
+	if err := p.buryExpired(ctx, kind, now); err != nil {
+		return nil, err
+	}
 	rows, err := p.db.QueryContext(ctx, `
 		UPDATE gesso_jobs SET status = 'running', attempts = attempts + 1, locked_until = $3
 		WHERE id IN (
 			SELECT id FROM gesso_jobs
 			WHERE kind = $1 AND (
 				(status = 'ready' AND run_at <= $2) OR
-				(status = 'running' AND locked_until <= $2))
+				(status = 'running' AND locked_until <= $2 AND attempts < max_attempts))
 			ORDER BY run_at, id
 			LIMIT $4
 			FOR UPDATE SKIP LOCKED)
@@ -243,7 +246,10 @@ func (p *SQL) Claim(ctx context.Context, kind string, n int, lease time.Duration
 // was due.
 func (p *SQL) claimEach(ctx context.Context, kind string, n int, lease time.Duration) ([]Job, error) {
 	now := p.clock.Now()
-	due := `kind = ? AND ((status = 'ready' AND run_at <= ?) OR (status = 'running' AND locked_until <= ?))`
+	if err := p.buryExpired(ctx, kind, now); err != nil {
+		return nil, err
+	}
+	due := `kind = ? AND ((status = 'ready' AND run_at <= ?) OR (status = 'running' AND locked_until <= ? AND attempts < max_attempts))`
 	for {
 		ids, err := p.dueIDs(ctx, due, kind, now, n)
 		if err != nil || len(ids) == 0 {
@@ -293,6 +299,18 @@ func (p *SQL) dueIDs(ctx context.Context, due, kind string, now time.Time, n int
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// buryExpired makes dead the jobs of kind whose lease ran out on their last
+// attempt. Their worker never settled them — it crashed, or the job crashed
+// it — so taking them again would let a job that kills its worker do so for
+// ever.
+func (p *SQL) buryExpired(ctx context.Context, kind string, now time.Time) error {
+	_, err := p.db.ExecContext(ctx, `UPDATE gesso_jobs SET status = 'dead', locked_until = NULL,
+		last_error = 'the lease ran out on its last attempt'
+		WHERE kind = `+p.ph(1)+` AND status = 'running' AND locked_until <= `+p.ph(2)+` AND attempts >= max_attempts`,
+		kind, p.at(now))
+	return err
 }
 
 // held is the WHERE that fences a settle to the claimer still holding the job:
@@ -419,7 +437,12 @@ func (m *Memory) Claim(_ context.Context, kind string, n int, lease time.Duratio
 	now := m.clock.Now()
 	var due []*memJob
 	for _, j := range m.jobs {
-		if j.Kind == kind && (j.status == "ready" && !j.runAt.After(now) || j.status == "running" && !j.lockedUntil.After(now)) {
+		expired := j.Kind == kind && j.status == "running" && !j.lockedUntil.After(now)
+		if expired && j.Attempt >= j.MaxAttempts {
+			j.status, j.lockedUntil, j.lastError = "dead", time.Time{}, "the lease ran out on its last attempt"
+			continue
+		}
+		if j.Kind == kind && (j.status == "ready" && !j.runAt.After(now) || expired) {
 			due = append(due, j)
 		}
 	}

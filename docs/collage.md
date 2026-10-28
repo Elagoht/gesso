@@ -59,7 +59,9 @@ func plugins(api *gessoapp.App) []collage.Plugin {
 ```
 
 A page reads the API through `gesso.NewLocal`, which runs the call through the
-API's whole pipeline without the network:
+API's whole pipeline without the network. Pass the end client's address with
+`gesso.ClientAddr(collage.ClientIP(r))`, so the API's rate limits count the
+visitor, not the site:
 
 ```go
 // routes.go: pages.Notes(gesso.NewLocal(api))

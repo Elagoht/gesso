@@ -37,8 +37,9 @@ a missing query or header value. The input is validated (see
 
 ## Uploads
 
-An input with `form` tags reads a form — `multipart/form-data`, or
-`application/x-www-form-urlencoded` when there are no files — instead of JSON:
+An input with `form` tags reads a form — `multipart/form-data`, or, when it has
+no file field, `application/x-www-form-urlencoded` (at most 1 MiB) — instead of
+JSON:
 
 ```go
 type AvatarIn struct {
@@ -70,7 +71,10 @@ note, err := GetNote.Call(ctx, gesso.NewRemote(url, nil), GetIn{Slug: "jam"}) //
 ```
 
 `gesso.NewLocal(app)` calls the app in the same process through its whole
-pipeline.
+pipeline. A call refuses a path value that would leave its route (`..`), and
+follows no redirect. An error the other app answered is an `*Error` the caller
+can match with `errors.Is`; returned from a handler as it is, it is answered
+502 — map it to pass it on.
 
 ## Errors
 

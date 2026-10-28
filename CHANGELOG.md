@@ -18,6 +18,37 @@ change.
   while the app stops. **`Config.DrainDelay`** keeps serving that long after
   SIGTERM.
 - `gesso new` turns on the access log and health, with a database check.
+- **Security review** (an independent audit; no Critical or High findings),
+  each fixed and tested:
+  - `Endpoint.Call` refuses a path value that would leave its route (`..`,
+    `.`, an empty wildcard segment), and a Remote follows no redirect — a
+    redirect would carry the call's credential to another route.
+  - An error another app answered a `Call` with, returned from a handler as it
+    is, is answered 502 `bad_gateway`: its detail (a DSN, a path) and its 401
+    are not passed to the client. `errors.Is` still matches it in code.
+  - `gesso.ClientAddr(ip)`: whom a call is made for — `NewLocal` takes it as
+    the request's address, a Remote sends it as X-Forwarded-For — so a rate
+    limit counts end clients, not the caller. A local call no longer carries
+    the caller's ctx identity: only what it sends authenticates it.
+  - `Run` sets ReadTimeout, WriteTimeout (1m) and IdleTimeout (2m)
+    (`Config.ReadTimeout` …): a client trickling bytes cannot hold a
+    connection for ever.
+  - A urlencoded form is read only for an input with no files, and at most
+    1 MiB of it, whatever the route's `MaxBodyBytes`.
+  - An input that embeds a *pointer* to a struct with path, query, header or
+    form fields is refused at New: the body could fill them.
+  - ratelimit counts an IPv6 client by its /64; `Memory` forgets one client in
+    constant time at its bound.
+  - A Bearer header with no single token is an invalid credential, not none.
+  - `/readyz` answers a result again for `Health.CacheFor` (1s).
+  - `password.Argon2id.Concurrent` bounds hashes at once (default: CPUs).
+  - The queue worker's lease runs from the batch's claim; a job whose lease
+    ran out on its last attempt is dead, not taken again for ever.
+  - `gesso new` with MySQL runs migrations on a connection of their own:
+    the app's pool takes one statement per Exec.
+  - Scaffolds say that writes are open and OpenAPI is public until guarded.
+  - Success answers carry `X-Content-Type-Options: nosniff`; `Extend` refuses
+    standard members in any case; `lock.Memory` forgets names nobody holds.
 - *Change, before v1:* names made consistent across packages —
   `token.MemoryStore`/`SQLStore` are `token.Memory`/`token.SQL`
   (`NewMemory`, `NewSQL`), as in queue, ratelimit, cache and storage;

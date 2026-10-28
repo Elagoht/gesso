@@ -30,7 +30,9 @@ func New(d Deps) *Module {
 	return &Module{svc: NewService(newRepository(d.DB))}
 }
 
-// Routes registers the module's endpoints.
+// Routes registers the module's endpoints. Create, update and delete are open
+// to anyone: guard them — gesso.Guards(gesso.RequireIdentity) as an option of
+// each Handle — once the app has an Authenticator (gesso.Config.Authenticator).
 func (m *Module) Routes(r *gesso.Router) {
 	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201))
 	Get{{.Entity}}.Handle(r, m.get)

@@ -12,7 +12,8 @@ import (
 func TestHealth(t *testing.T) {
 	dbUp := true
 	a := mustNew(t, Config{BasePath: "/api", Health: &Health{
-		Timeout: 50 * time.Millisecond,
+		Timeout:  50 * time.Millisecond,
+		CacheFor: time.Nanosecond,
 		Checks: map[string]func(context.Context) error{
 			"database": func(context.Context) error {
 				if !dbUp {
@@ -81,5 +82,22 @@ func TestDrainDelay(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A readiness result is answered again for CacheFor: a probe anyone may send
+// runs the checks once a second at most, however often it comes.
+func TestReadinessIsCached(t *testing.T) {
+	var runs int
+	a := mustNew(t, Config{Health: &Health{Checks: map[string]func(context.Context) error{
+		"db": func(context.Context) error { runs++; return nil },
+	}}})
+	for range 50 {
+		if w := send(a, "GET", "/readyz", nil); w.Code != 200 {
+			t.Fatal(w.Code)
+		}
+	}
+	if runs != 1 {
+		t.Fatalf("50 probes ran the check %d times", runs)
 	}
 }

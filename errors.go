@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/Elagoht/gesso/validate"
 )
@@ -29,6 +30,9 @@ type Error struct {
 	Fields []validate.FieldError
 	cause  error
 	ext    []byte // a JSON object of extension members, from Extend
+	// remote is set on an error another app answered a Call with: what it says
+	// is that app's to say, not this one's.
+	remote bool
 }
 
 // NewError declares an error answered with status.
@@ -95,9 +99,12 @@ func Extend[T any](e *Error, ext T) *Error {
 	if err := json.Unmarshal(data, &members); err != nil || members == nil {
 		panic(fmt.Sprintf("gesso: Extend: %T does not encode as a JSON object", ext))
 	}
-	for _, std := range []string{"type", "title", "status", "code", "detail", "instance", "errors"} {
-		if _, ok := members[std]; ok {
-			panic(fmt.Sprintf("gesso: Extend: %T redefines the standard member %q", ext, std))
+	for name := range members {
+		// encoding/json matches names without regard to case, so "Code" would
+		// set a reader's Code as "code" does.
+		switch strings.ToLower(name) {
+		case "type", "title", "status", "code", "detail", "instance", "errors":
+			panic(fmt.Sprintf("gesso: Extend: %T redefines the standard member %q", ext, name))
 		}
 	}
 	c := *e
@@ -142,6 +149,7 @@ var (
 	ErrInternal         = NewError(http.StatusInternalServerError, "internal", "something went wrong")
 	ErrUnavailable      = NewError(http.StatusServiceUnavailable, "unavailable", "the service could not start")
 	ErrTooManyRequests  = NewError(http.StatusTooManyRequests, "too_many_requests", "too many requests: try again later")
+	ErrBadGateway       = NewError(http.StatusBadGateway, "bad_gateway", "a service this one calls failed")
 )
 
 // ErrorMapper turns an error gesso does not know into one it can answer, or
@@ -177,6 +185,13 @@ type errorWriter struct {
 func (ew errorWriter) resolve(err error) *Error {
 	var e *Error
 	if errors.As(err, &e) {
+		if e.remote {
+			// Another app's answer, returned as it is: its detail could be
+			// anything that app let out, and its 401 is about this app's
+			// credential, not the client's. Map it in the handler to pass it
+			// on; unmapped, it is this app's upstream failing.
+			return ErrBadGateway.Wrap(err)
+		}
 		return e
 	}
 	for _, m := range ew.mappers {

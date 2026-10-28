@@ -23,6 +23,13 @@ each bounded by `Timeout` (2s), and answers 503 when one fails — naming it,
 never its error — or when the app is stopping. Both are under `BasePath`.
 `gesso new` sets them up with a database check.
 
+## Timeouts
+
+`Run` gives a request a minute to arrive (`ReadTimeout`, its body included) and
+a minute to be answered (`WriteTimeout`), and closes a kept-alive connection
+idle for two (`IdleTimeout`). Raise `ReadTimeout` for large uploads over slow
+links.
+
 ## Stopping
 
 `Run` stops on SIGINT or SIGTERM: readiness turns 503, `DrainDelay` passes —

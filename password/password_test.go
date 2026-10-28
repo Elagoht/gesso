@@ -2,7 +2,9 @@ package password
 
 import (
 	"errors"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -56,5 +58,32 @@ func TestLimitsAndMalformed(t *testing.T) {
 		if !h.NeedsRehash(enc) {
 			t.Errorf("%q: an unreadable hash needs rehashing", enc)
 		}
+	}
+}
+
+// Hashes beyond Concurrent wait their turn instead of all taking memory at once.
+func TestConcurrentBound(t *testing.T) {
+	h := &Argon2id{Params: Cheap, Concurrent: 2}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	most := 0
+	for range 20 {
+		wg.Go(func() {
+			if _, err := h.Hash("pw"); err != nil {
+				t.Error(err)
+			}
+			mu.Lock()
+			most = max(most, len(h.slots))
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	if cap(h.slots) != 2 || most > 2 {
+		t.Fatalf("slots %d, most in use %d", cap(h.slots), most)
+	}
+	d := New()
+	_, _ = d.Hash("pw")
+	if cap(d.slots) != runtime.NumCPU() {
+		t.Fatalf("default: %d slots", cap(d.slots))
 	}
 }

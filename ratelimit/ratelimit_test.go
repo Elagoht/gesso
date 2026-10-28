@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,38 @@ func TestMemoryForgets(t *testing.T) {
 	}
 	if take("c", now.Add(3*time.Second)) {
 		t.Fatal("c, still limited, was forgotten")
+	}
+	// At the bound, a new client costs the same, however large the bound.
+	big := ratelimit.NewMemory(100_000)
+	for i := range 100_000 {
+		_, _, _ = big.Take(ctx, strconv.Itoa(i), now, time.Hour, 1)
+	}
+	start := time.Now()
+	for i := range 1000 {
+		_, _, _ = big.Take(ctx, "new"+strconv.Itoa(i), now, time.Hour, 1)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Fatalf("1000 new clients at a full bound of 100000 took %v", d)
+	}
+}
+
+// An IPv6 client counts by its /64: picking another address in it does not
+// buy more requests.
+func TestIPv6CountsBySlash64(t *testing.T) {
+	l := ratelimit.New(ratelimit.Options{Requests: 1, Per: time.Hour})
+	h := l.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	do := func(remote string) int {
+		r := httptest.NewRequest("POST", "/", nil)
+		r.RemoteAddr = remote
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	if do("[2001:db8:1:2::1]:5") != 204 || do("[2001:db8:1:2::ffff]:5") != 429 {
+		t.Fatal("two addresses in one /64 counted apart")
+	}
+	if do("[2001:db8:1:3::1]:5") != 204 {
+		t.Fatal("another /64 is another client")
 	}
 }
 

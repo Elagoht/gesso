@@ -117,8 +117,12 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	for _, p := range paths {
 		fmt.Fprintln(stdout, "created", p)
 	}
-	if err != nil || appErr != nil {
-		return err // no gesso new app here: wiring the module is the user's
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "note: create, update and delete in %s are open to anyone until you guard them (see Routes)\n", spec.Pkg)
+	if appErr != nil {
+		return nil // no gesso new app here: wiring the module is the user's
 	}
 	mod, err := readModule(dir)
 	if err != nil {

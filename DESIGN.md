@@ -341,6 +341,36 @@ shared process.
 9. **v0.9** — what a JSON API meets in production: uploads, CORS, request ids,
    an access log, health probes, a drain.
 
+## 12b. Security review (2026-10-29)
+
+An independent audit read the code against this document, with proof programs
+for what it claimed: no Critical or High findings; six Medium, nine Low, a few
+Info, all fixed in v0.9 with a test each (CHANGELOG lists them). What it found
+sound is as worth keeping as what it found wrong: all runtime SQL is
+parameterized (concatenated pieces are constants, placeholders, a programmer's
+table name or counter-made savepoint names); tokens are 32 random bytes with
+only their SHA-256 stored; storage cannot leave its root (`os.Root` and
+`ValidKey`); the CORS, request-id and X-Forwarded-For handling hold.
+
+Rules the fixes added, which later code keeps:
+
+- **A call stays on its route**: no path value may be `.` or `..` or, in a
+  wildcard, hold such a segment or an empty one; no Remote follows a redirect.
+- **Another app's words are not this app's**: an error from a Call is
+  answered 502 unless the handler maps it.
+- **A local call is a request of its own**: it carries no identity from the
+  caller's ctx; its address is `ClientAddr`'s, or 127.0.0.1.
+- **Memory is bounded where a client chooses the size**: bodies, urlencoded
+  forms (1 MiB), multipart memory, rate-limit clients, argon2 hashes at once,
+  lock names, readiness checks per second; and **time** is bounded too: the
+  server's read, write and idle timeouts.
+
+Known and left, in the docs: `storage.Disk` on a case-insensitive filesystem
+(macOS) maps `a.png` and `A.png` to one file; a field error from a type's
+UnmarshalText repeats that type's message to the client; forms are "simple"
+requests a browser sends cross-site without preflight, harmless while gesso
+reads bearer tokens only, and never to be paired with a cookie Authenticator.
+
 ## 13. Decisions
 
 - 2026-10-28 — Name: **gesso**.

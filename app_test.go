@@ -473,3 +473,14 @@ func TestDateFields(t *testing.T) {
 		t.Fatalf("a date in another layout: status %d: %s", rec.Code, rec.Body)
 	}
 }
+
+func TestServerTimeouts(t *testing.T) {
+	srv := mustNew(t, Config{}).server()
+	if srv.ReadHeaderTimeout == 0 || srv.ReadTimeout != time.Minute || srv.WriteTimeout != time.Minute || srv.IdleTimeout != 2*time.Minute {
+		t.Fatalf("defaults: %+v", srv)
+	}
+	srv = mustNew(t, Config{ReadTimeout: 10 * time.Minute}).server()
+	if srv.ReadTimeout != 10*time.Minute {
+		t.Fatalf("set: %v", srv.ReadTimeout)
+	}
+}

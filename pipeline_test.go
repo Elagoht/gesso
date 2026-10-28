@@ -3,6 +3,7 @@ package gesso
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -274,4 +275,19 @@ func TestAppWideAuthenticatorAndMiddleware(t *testing.T) {
 	if _, err := New(Config{Logger: quiet(), Middleware: []Middleware{nil}}); err == nil {
 		t.Fatal("a nil middleware is reported")
 	}
+}
+
+type sneaky struct {
+	Code string `json:"Code"`
+}
+
+// An extension cannot redefine a standard member, in any case: JSON readers
+// match names regardless of it.
+func TestExtendRefusesStandardMembers(t *testing.T) {
+	defer func() {
+		if p := recover(); p == nil || !strings.Contains(fmt.Sprint(p), `standard member "Code"`) {
+			t.Fatalf("got %v", p)
+		}
+	}()
+	Extend(ErrNotFound, sneaky{Code: "x"})
 }

@@ -131,8 +131,8 @@ func TestUploadRefusals(t *testing.T) {
 	if w := postForm(a, strings.NewReader(`{"title":"x"}`), "application/json"); w.Code != 415 {
 		t.Errorf("JSON to a form: %d", w.Code)
 	}
-	if w := postForm(a, strings.NewReader("title=x"), "application/x-www-form-urlencoded"); w.Code != 400 || !strings.Contains(w.Body.String(), `"field":"avatar"`) {
-		t.Errorf("a urlencoded form is read, and has no file: %d %s", w.Code, w.Body)
+	if w := postForm(a, strings.NewReader("title=x"), "application/x-www-form-urlencoded"); w.Code != 415 {
+		t.Errorf("an input with files takes multipart only: %d %s", w.Code, w.Body)
 	}
 }
 
@@ -178,4 +178,48 @@ func TestUploadPlanning(t *testing.T) {
 		t.Fatal("a form is not JSON")
 	}
 	_ = http.MethodPost
+}
+
+type textForm struct {
+	Name string `form:"name" validate:"required"`
+}
+
+// A form with no file is read urlencoded too, and whole into memory, so at
+// most 1 MiB of it, whatever the route's MaxBodyBytes.
+func TestUrlencodedForm(t *testing.T) {
+	a := mustNew(t, Config{}, moduleFunc(func(r *Router) {
+		r.Post("/t", Handle(func(_ context.Context, in textForm) (whoOut, error) { return whoOut{Subject: in.Name}, nil }, MaxBodyBytes(64<<20)))
+	}))
+	post := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/t", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		a.ServeHTTP(w, r)
+		return w
+	}
+	if w := post("name=ada"); w.Code != 200 || !strings.Contains(w.Body.String(), `"ada"`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if w := post("name=" + strings.Repeat("a", 2<<20)); w.Code != 413 {
+		t.Fatalf("2 MiB urlencoded on a 64 MiB route: %d", w.Code)
+	}
+}
+
+type Owner struct {
+	UID string `path:"uid"`
+}
+
+type renameIn struct {
+	*Owner
+	Name string `json:"name"`
+}
+
+// An embedded pointer's path field would be filled from the body: refused.
+func TestEmbeddedPointerWithParams(t *testing.T) {
+	_, err := New(Config{Logger: quiet()}, moduleFunc(func(r *Router) {
+		r.Post("/users/{uid}/rename", Handle(func(context.Context, renameIn) (Empty, error) { return Empty{}, nil }))
+	}))
+	if err == nil || !strings.Contains(err.Error(), "not a pointer to it") {
+		t.Fatalf("got %v", err)
+	}
 }

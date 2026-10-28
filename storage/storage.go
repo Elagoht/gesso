@@ -3,7 +3,9 @@
 // modules (gesso-s3), and every implementation passes storagetest.Run.
 //
 // Storage holds bytes under keys. What a file is (its type, its owner, its
-// original name) the application records itself, in its database.
+// original name) the application records itself, in its database. Make keys
+// from your own ids, not a client's file name: on a case-insensitive file
+// system (macOS's, Windows's) Disk keeps "a.png" and "A.png" as one file.
 package storage
 
 import (

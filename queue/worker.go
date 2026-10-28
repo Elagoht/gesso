@@ -64,7 +64,9 @@ func Handle[T any](w *Worker, k Kind[T], fn func(ctx context.Context, payload T)
 type WorkerOptions struct {
 	// Interval between polls when there was nothing to do. Default 1s.
 	Interval time.Duration
-	// Lease a job is claimed for; a handler's ctx ends with it. Default 1m.
+	// Lease a job is claimed for, from the moment its batch is claimed; a
+	// handler's ctx ends with it, and a job of the batch whose lease has run
+	// out before its turn is left for the next claim. Default 1m.
 	Lease time.Duration
 	// Batch is how many jobs of a kind one poll claims. Default 10.
 	Batch int
@@ -124,21 +126,28 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	ran := 0
 	var errs []error
 	for _, kind := range slices.Sorted(slices.Values(w.kinds)) {
+		// The lease runs from the claim, for the whole batch: a job run late in
+		// it has only what is left, and one whose lease is gone is another
+		// worker's to take — running it here too would run it twice.
+		deadline := time.Now().Add(w.opt.Lease)
 		jobs, err := w.q.Claim(ctx, kind, w.opt.Batch, w.opt.Lease)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("queue: claim %s: %w", kind, err))
 			continue
 		}
 		for _, j := range jobs {
-			w.run(ctx, j)
+			if time.Until(deadline) <= 0 {
+				break
+			}
+			w.run(ctx, j, deadline)
 			ran++
 		}
 	}
 	return ran, errors.Join(errs...)
 }
 
-func (w *Worker) run(ctx context.Context, j Job) {
-	jctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.opt.Lease)
+func (w *Worker) run(ctx context.Context, j Job, deadline time.Time) {
+	jctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	defer cancel()
 	err := w.call(jctx, j)
 	if err == nil {

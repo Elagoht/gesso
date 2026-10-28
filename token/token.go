@@ -141,11 +141,11 @@ func (i *Issuer) Purge(ctx context.Context) (int64, error) {
 // or one of another scheme, is anonymous; a bearer token that does not verify is
 // gesso.ErrInvalidToken, a 401.
 func (i *Issuer) Authenticate(r *http.Request) (gesso.Identity, bool, error) {
-	scheme, raw, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
+	raw, present := bearer(r)
+	if !present {
 		return gesso.Identity{}, false, nil
 	}
-	rec, err := i.Verify(r.Context(), strings.TrimSpace(raw))
+	rec, err := i.Verify(r.Context(), raw)
 	if errors.Is(err, ErrInvalid) {
 		return gesso.Identity{}, false, gesso.ErrInvalidToken
 	}
@@ -155,14 +155,27 @@ func (i *Issuer) Authenticate(r *http.Request) (gesso.Identity, bool, error) {
 	return gesso.Identity{Subject: rec.Subject, Roles: rec.Roles}, true, nil
 }
 
+// bearer is the token in r's Authorization header, and whether the header
+// names the Bearer scheme at all. A Bearer header with no token, or with more
+// than one word after the scheme, is present with an empty token: there, but
+// wrong — never anonymous.
+func bearer(r *http.Request) (string, bool) {
+	h := r.Header.Get("Authorization")
+	fields := strings.Fields(h)
+	if len(fields) == 0 || !strings.EqualFold(fields[0], "Bearer") {
+		return "", false
+	}
+	if len(fields) != 2 {
+		return "", true
+	}
+	return fields[1], true
+}
+
 // FromRequest is the bearer token a request carries, for a logout handler to
 // revoke: gesso.Request(ctx) gives the request.
 func FromRequest(r *http.Request) string {
-	scheme, raw, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
-		return ""
-	}
-	return strings.TrimSpace(raw)
+	raw, _ := bearer(r)
+	return raw
 }
 
 // Hash is the key a token is stored under.

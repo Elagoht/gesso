@@ -12,6 +12,7 @@ package queuetest
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,6 +109,26 @@ func Run(t *testing.T, open func(t *testing.T, c clock.Clock) (queue.Queue, db.D
 		}
 		if err := q.Complete(ctx, second[0]); err != nil {
 			t.Fatal(err)
+		}
+	})
+
+	t.Run("a lease lost on the last attempt makes the job dead", func(t *testing.T) {
+		// A job that kills its worker is never settled: taken again and again,
+		// it would kill every worker for ever.
+		q, d, clk := setup(t)
+		enqueue(t, q, d, queue.NewJob{Kind: "crash", MaxAttempts: 2})
+		claim(t, q, "crash", 1)
+		clk.Advance(time.Minute)
+		if got := claim(t, q, "crash", 1); len(got) != 1 || got[0].Attempt != 2 {
+			t.Fatalf("an attempt left: %+v", got)
+		}
+		clk.Advance(time.Minute)
+		if got := claim(t, q, "crash", 1); len(got) != 0 {
+			t.Fatalf("claimed past its last attempt: %+v", got)
+		}
+		dead, err := q.Dead(ctx, "crash", 10)
+		if err != nil || len(dead) != 1 || !strings.Contains(dead[0].LastError, "lease ran out") {
+			t.Fatalf("dead: %+v %v", dead, err)
 		}
 	})
 

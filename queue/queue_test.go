@@ -146,3 +146,34 @@ func TestWorkerBacksOffWhenClaimsFail(t *testing.T) {
 		t.Fatalf("%d claims in 500ms: a hot loop", n)
 	}
 }
+
+// A batch shares one lease, from its claim: a job whose lease ran out while
+// the ones before it ran is left for the next claim, not run late beside the
+// worker that has taken it since.
+func TestWorkerLeaseRunsFromTheClaim(t *testing.T) {
+	ctx := context.Background()
+	q := queue.NewMemory(nil)
+	w := queue.NewWorker(q, queue.WorkerOptions{Lease: 100 * time.Millisecond, Batch: 3, Logger: slog.New(slog.DiscardHandler)})
+	kind := queue.Kind[int]{Name: "slow"}
+	var ran []int
+	var deadlines []time.Duration
+	queue.Handle(w, kind, func(ctx context.Context, n int) error {
+		dl, _ := ctx.Deadline()
+		deadlines = append(deadlines, time.Until(dl))
+		ran = append(ran, n)
+		time.Sleep(120 * time.Millisecond)
+		return nil
+	})
+	for i := range 3 {
+		if _, err := kind.Enqueue(ctx, q, nil, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := w.RunOnce(ctx)
+	if err != nil || n != 1 || len(ran) != 1 {
+		t.Fatalf("ran %d (%v) after the first used up the lease: %v", n, ran, err)
+	}
+	if deadlines[0] > 100*time.Millisecond {
+		t.Fatalf("the job's deadline was past the lease: %v", deadlines[0])
+	}
+}

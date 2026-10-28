@@ -17,6 +17,10 @@ type Health struct {
 	Checks map[string]func(context.Context) error
 	// Timeout bounds each check. Default 2s.
 	Timeout time.Duration
+	// CacheFor is how long a readiness result is answered again before the
+	// checks run anew: a probe anyone can send must not be a way to ping the
+	// database at will. Default 1s.
+	CacheFor time.Duration
 	// LivePath and ReadyPath are under BasePath. Default /healthz and /readyz.
 	LivePath, ReadyPath string
 }
@@ -26,6 +30,14 @@ type Health struct {
 type healthAnswer struct {
 	Status string            `json:"status"`
 	Checks map[string]string `json:"checks,omitempty"`
+}
+
+// readiness keeps the last readiness result, for Health.CacheFor.
+type readiness struct {
+	mu     sync.Mutex
+	at     time.Time
+	status int
+	ans    healthAnswer
 }
 
 // probe answers a request for a health path, and reports whether it was one.
@@ -40,6 +52,12 @@ func (a *App) probe(w http.ResponseWriter, r *http.Request) bool {
 	case a.basePath + h.ReadyPath:
 		if a.draining.Load() || a.failed.Load() {
 			writeHealth(w, http.StatusServiceUnavailable, healthAnswer{Status: "unavailable"})
+			return true
+		}
+		a.ready.mu.Lock()
+		defer a.ready.mu.Unlock()
+		if !a.ready.at.IsZero() && time.Since(a.ready.at) < h.CacheFor {
+			writeHealth(w, a.ready.status, a.ready.ans)
 			return true
 		}
 		ans := healthAnswer{Status: "ok", Checks: map[string]string{}}
@@ -67,6 +85,7 @@ func (a *App) probe(w http.ResponseWriter, r *http.Request) bool {
 		if ans.Status != "ok" {
 			status = http.StatusServiceUnavailable
 		}
+		a.ready.at, a.ready.status, a.ready.ans = time.Now(), status, ans
 		writeHealth(w, status, ans)
 	default:
 		return false

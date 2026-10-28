@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"reflect"
 	"slices"
@@ -56,15 +58,20 @@ func (e Endpoint[In, Out]) Handle(r *Router, fn HandlerFunc[In, Out], opts ...Ha
 type Remote struct {
 	base   string
 	client *http.Client
+	local  bool
 }
 
 // NewRemote calls the app at base — "http://api.internal:8081/api", its BasePath
-// included — through client (nil for http.DefaultClient).
+// included — through client (nil for http.DefaultClient). Redirects are not
+// followed: an endpoint's answer is its own, and a redirect would carry the
+// call's credential to another route.
 func NewRemote(base string, client *http.Client) *Remote {
-	if client == nil {
-		client = http.DefaultClient
+	c := http.Client{}
+	if client != nil {
+		c = *client
 	}
-	return &Remote{base: strings.TrimSuffix(base, "/"), client: client}
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &Remote{base: strings.TrimSuffix(base, "/"), client: &c}
 }
 
 // NewLocal calls app in this process — collage serving the app mounted beside
@@ -74,7 +81,10 @@ func NewRemote(base string, client *http.Client) *Remote {
 // leaves memory. Code written against a Remote moves between one process and
 // two by changing the Remote it is given.
 func NewLocal(app *App) *Remote {
-	return &Remote{base: "http://gesso.local" + app.basePath, client: &http.Client{Transport: localTransport{app}}}
+	return &Remote{base: "http://gesso.local" + app.basePath, local: true, client: &http.Client{
+		Transport:     localTransport{app},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 }
 
 // localTransport answers a request with the app's ServeHTTP.
@@ -88,12 +98,21 @@ func (t localTransport) RoundTrip(req *http.Request) (res *http.Response, err er
 			res, err = nil, fmt.Errorf("gesso: local call aborted: %v", p)
 		}
 	}()
-	r := req.Clone(req.Context())
+	// The call is a request of its own: what the caller's ctx says of the
+	// caller's request — its identity, its exchange — is not the call's. Only a
+	// credential sent with the call authenticates it, as over the network.
+	ctx := context.WithValue(req.Context(), identityKey{}, nil)
+	ctx = context.WithValue(ctx, exchangeKey{}, nil)
+	r := req.Clone(ctx)
 	if r.Body == nil {
 		r.Body = http.NoBody
 	}
 	r.RequestURI = r.URL.RequestURI()
-	r.RemoteAddr = "local"
+	r.RemoteAddr = "127.0.0.1:0"
+	if addr := r.Header.Get(clientAddrHeader); addr != "" {
+		r.RemoteAddr = net.JoinHostPort(addr, "0")
+	}
+	r.Header.Del(clientAddrHeader)
 	rec := &recorder{header: http.Header{}}
 	t.app.ServeHTTP(rec, r)
 	if rec.status == 0 {
@@ -120,6 +139,27 @@ func Bearer(token string) CallOption {
 	return func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
 }
 
+// clientAddrHeader carries ClientAddr to the local transport; it never leaves
+// the process.
+const clientAddrHeader = "X-Gesso-Client-Addr"
+
+// ClientAddr says whom the call is made for: the address of the end client
+// behind it, so the app limits and logs that client, not the caller. In the
+// same process (NewLocal) it is the request's address outright; over the network
+// it is sent as X-Forwarded-For, which the app reads when it trusts the
+// caller's address as a proxy (ratelimit.Options.TrustedProxies). An address
+// that does not parse is left out.
+func ClientAddr(ip string) CallOption {
+	return func(r *http.Request) {
+		addr, err := netip.ParseAddr(ip)
+		if err != nil {
+			return
+		}
+		r.Header.Set(clientAddrHeader, addr.String())
+		r.Header.Set("X-Forwarded-For", addr.String())
+	}
+}
+
 // Header sends a header with the call.
 func Header(key, value string) CallOption {
 	return func(r *http.Request) { r.Header.Set(key, value) }
@@ -130,6 +170,10 @@ func Header(key, value string) CallOption {
 // errors.Is matches it against the declaration the server returned:
 //
 //	if errors.Is(err, notes.ErrNoteLocked) { … }
+//
+// Returned from a gesso handler as it is, such an error is answered 502
+// bad_gateway, its detail logged, not sent: what another app answered is not
+// this one's to repeat. A handler passes it on by returning its own error.
 //
 // In is encoded as the server decodes it: path fields into the pattern (escaped),
 // query and header fields as parameters, and the rest as the JSON body. A zero
@@ -144,6 +188,9 @@ func (e Endpoint[In, Out]) Call(ctx context.Context, rm *Remote, in In, opts ...
 	}
 	for _, opt := range opts {
 		opt(req)
+	}
+	if !rm.local {
+		req.Header.Del(clientAddrHeader)
 	}
 	res, err := rm.client.Do(req)
 	if err != nil {
@@ -170,10 +217,11 @@ func remoteError(res *http.Response, body []byte) error {
 	if mt, _, _ := mime.ParseMediaType(res.Header.Get("Content-Type")); mt == "application/problem+json" {
 		var p Problem
 		if json.Unmarshal(body, &p) == nil && p.Code != "" {
-			return &Error{Status: res.StatusCode, Code: p.Code, Detail: p.Detail, Fields: p.Errors}
+			return &Error{Status: res.StatusCode, Code: p.Code, Detail: p.Detail, Fields: p.Errors, remote: true}
 		}
 	}
-	return &Error{Status: res.StatusCode, Code: "http_" + strconv.Itoa(res.StatusCode), Detail: strings.TrimSpace(string(body[:min(len(body), 200)]))}
+	return &Error{Status: res.StatusCode, Code: "http_" + strconv.Itoa(res.StatusCode),
+		Detail: strings.TrimSpace(string(body[:min(len(body), 200)])), remote: true}
 }
 
 func (e Endpoint[In, Out]) request(ctx context.Context, rm *Remote, in In) (*http.Request, error) {
@@ -198,6 +246,9 @@ func (e Endpoint[In, Out]) request(ctx context.Context, rm *Remote, in In) (*htt
 			}
 			if s == "" {
 				return nil, fmt.Errorf("gesso: %s %s: path parameter %q is empty", e.Method, e.Pattern, pp.key)
+			}
+			if err := checkPathValue(s, strings.Contains(e.Pattern, "{"+pp.key+"...}")); err != nil {
+				return nil, fmt.Errorf("gesso: %s %s: path parameter %q: %w", e.Method, e.Pattern, pp.key, err)
 			}
 			path = strings.Replace(path, "{"+pp.key+"}", url.PathEscape(s), 1)
 			path = strings.Replace(path, "{"+pp.key+"...}", escapeSegments(s), 1)
@@ -242,6 +293,22 @@ func (e Endpoint[In, Out]) request(ctx context.Context, rm *Remote, in In) (*htt
 	}
 	req.Header.Set("Accept", "application/json, application/problem+json")
 	return req, nil
+}
+
+// checkPathValue refuses a value that would move the call to another path once
+// the server cleans it: "." or "..", or — in a {name...} wildcard, where "/"
+// stays a separator — such a segment or an empty one.
+func checkPathValue(s string, wildcard bool) error {
+	segs := []string{s}
+	if wildcard {
+		segs = strings.Split(s, "/")
+	}
+	for _, seg := range segs {
+		if seg == "." || seg == ".." || (wildcard && seg == "") {
+			return fmt.Errorf("%q would leave the route", s)
+		}
+	}
+	return nil
 }
 
 func escapeSegments(s string) string {

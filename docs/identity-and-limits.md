@@ -41,6 +41,13 @@ Each client — its address, or behind `TrustedProxies` the address the nearest
 proxy saw — has a token bucket; over it, 429 `too_many_requests` with
 `Retry-After`.
 
+A request a collage page makes in process (`gesso.NewLocal`) comes from the
+address the page passes with `gesso.ClientAddr` — the end client's, which
+collage reads with `collage.ClientIP(r)`; without it every such call comes from
+127.0.0.1 and all of them share one bucket. Over the network, `ClientAddr`
+sends X-Forwarded-For: list the caller (collage's address) in
+`TrustedProxies` for the API to read it. An IPv6 client counts by its /64.
+
 By default the buckets are in the process's memory, so N replicas let a client
 through N times as often. To share them:
 

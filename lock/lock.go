@@ -26,44 +26,71 @@ type Locker interface {
 	TryLock(ctx context.Context, name string) (Unlock, bool, error)
 }
 
-// Memory locks within one process.
+// Memory locks within one process. A name is kept only while someone holds or
+// waits for it, so names made from data do not pile up.
 type Memory struct {
 	mu    sync.Mutex
-	locks map[string]chan struct{}
+	locks map[string]*memLock
+}
+
+type memLock struct {
+	ch   chan struct{}
+	refs int // the holder and the waiters
 }
 
 // NewMemory is a locker with nothing held.
-func NewMemory() *Memory { return &Memory{locks: map[string]chan struct{}{}} }
+func NewMemory() *Memory { return &Memory{locks: map[string]*memLock{}} }
 
-func (m *Memory) slot(name string) chan struct{} {
+// enter counts one more user of name's lock, and returns it.
+func (m *Memory) enter(name string) *memLock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ch, ok := m.locks[name]
+	l, ok := m.locks[name]
 	if !ok {
-		ch = make(chan struct{}, 1)
-		m.locks[name] = ch
+		l = &memLock{ch: make(chan struct{}, 1)}
+		m.locks[name] = l
 	}
-	return ch
+	l.refs++
+	return l
+}
+
+// leave counts one user less, forgetting the name with the last.
+func (m *Memory) leave(name string, l *memLock) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if l.refs--; l.refs == 0 {
+		delete(m.locks, name)
+	}
+}
+
+func (m *Memory) unlock(name string, l *memLock) Unlock {
+	return once(func(context.Context) error {
+		<-l.ch
+		m.leave(name, l)
+		return nil
+	})
 }
 
 // Lock waits for name.
 func (m *Memory) Lock(ctx context.Context, name string) (Unlock, error) {
-	ch := m.slot(name)
+	l := m.enter(name)
 	select {
-	case ch <- struct{}{}:
-		return once(func(context.Context) error { <-ch; return nil }), nil
+	case l.ch <- struct{}{}:
+		return m.unlock(name, l), nil
 	case <-ctx.Done():
+		m.leave(name, l)
 		return nil, ctx.Err()
 	}
 }
 
 // TryLock takes name if it is free.
 func (m *Memory) TryLock(_ context.Context, name string) (Unlock, bool, error) {
-	ch := m.slot(name)
+	l := m.enter(name)
 	select {
-	case ch <- struct{}{}:
-		return once(func(context.Context) error { <-ch; return nil }), true, nil
+	case l.ch <- struct{}{}:
+		return m.unlock(name, l), true, nil
 	default:
+		m.leave(name, l)
 		return nil, false, nil
 	}
 }
@@ -80,7 +107,9 @@ func once(fn Unlock) Unlock {
 // Postgres holds locks as PostgreSQL session advisory locks: each on a
 // connection of its own, taken from the pool for as long as the lock is held.
 // A lock is released when the connection ends, so a crashed holder never leaves
-// one behind. Names are hashed to the 64-bit keys PostgreSQL locks on.
+// one behind. Names are hashed to the 64-bit keys PostgreSQL locks on: two
+// names may share a key, rarely by chance and on purpose if an attacker picks
+// them, so name locks after your own data, not a client's.
 //
 // Hold few at once: every held lock is a pooled connection out of the pool.
 type Postgres struct {
