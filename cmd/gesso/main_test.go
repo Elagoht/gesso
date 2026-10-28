@@ -10,6 +10,32 @@ import (
 	"time"
 )
 
+// ourRequires is this module's require lines, as a require block.
+func ourRequires(t *testing.T) string {
+	data, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	b.WriteString("require (\n")
+	inBlock := false
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "require (":
+			inBlock = true
+		case inBlock && line == ")":
+			inBlock = false
+		case inBlock && line != "" && !strings.HasPrefix(line, "github.com/Elagoht/gesso "):
+			path, rest, _ := strings.Cut(line, " ")
+			version, _, _ := strings.Cut(rest, " ")
+			b.WriteString("\t" + path + " " + version + "\n")
+		}
+	}
+	b.WriteString(")\n")
+	return b.String()
+}
+
 func fixedNow() time.Time { return time.Date(2026, 10, 28, 15, 30, 0, 0, time.UTC) }
 
 func gessoRoot(t *testing.T) string {
@@ -52,12 +78,22 @@ func goIn(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-// newApp is an empty module that uses the gesso in this repository.
+// newApp is an empty module that uses the gesso in this repository. It requires
+// every module ours does, at our versions: go never selects lower, so each module
+// it resolves is one whose checksum our go.sum already holds.
 func newApp(t *testing.T, require string) string {
 	dir := t.TempDir()
 	mod := "module example.com/app\n\ngo 1.26.10\n\nrequire github.com/Elagoht/gesso v0.0.0\n" + require +
-		"\nreplace github.com/Elagoht/gesso => " + gessoRoot(t) + "\n"
+		ourRequires(t) + "\nreplace github.com/Elagoht/gesso => " + gessoRoot(t) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(mod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Every checksum the module will need is already in ours (deps_test.go).
+	sums, err := os.ReadFile("go.sum")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), sums, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return dir
