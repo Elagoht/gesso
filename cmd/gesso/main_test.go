@@ -99,7 +99,8 @@ func newApp(t *testing.T, require string) string {
 	return dir
 }
 
-const fields = "title:string,seats:int,starts_at:time,public:bool,price:float"
+// order is a keyword in every dialect, so its column is quoted.
+const fields = "title:string,seats:int,starts_at:time,public:bool,price:float,order:int,body:text,day:date"
 
 // The scaffold compiles, vets, passes its own tests and the ctx check — and its
 // SQL runs: a test written beside it drives the repository against a real
@@ -155,14 +156,30 @@ func exercise(t *testing.T, d *sql.DB, dialect migrate.Dialect) {
 	}
 	r := newRepository(d)
 	at := time.Date(2026, 11, 1, 18, 0, 0, 0, time.UTC)
-	a, err := r.Insert(ctx, CreateIn{Title: "Jam", Seats: 30, StartsAt: at, Public: true, Price: 9.5})
+	day := date.Date{Year: 2026, Month: time.November, Day: 1}
+	long := strings.Repeat("a long body ", 100)
+	a, err := r.Insert(ctx, CreateIn{Title: "Jam", Seats: 30, StartsAt: at, Public: true, Price: 9.5, Order: 3, Body: long, Day: day})
 	if err != nil || a.ID == 0 {
 		t.Fatalf("insert: %+v %v", a, err)
 	}
-	b, _ := r.Insert(ctx, CreateIn{Title: "Talk", StartsAt: at})
+	b, _ := r.Insert(ctx, CreateIn{Title: "Talk", StartsAt: at, Day: day})
 	got, err := r.ByID(ctx, a.ID)
-	if err != nil || got.Title != "Jam" || got.Seats != 30 || !got.StartsAt.Equal(at) || !got.Public || got.Price != 9.5 {
+	if err != nil || got.Title != "Jam" || got.Seats != 30 || !got.StartsAt.Equal(at) || !got.Public || got.Price != 9.5 ||
+		got.Order != 3 || got.Body != long || got.Day != day {
 		t.Fatalf("by id: %+v %v", got, err)
+	}
+	in := UpdateIn{ID: a.ID, Title: "Jam 2", StartsAt: at, Order: 1, Body: "short", Day: day.AddDays(1)}
+	if _, err := r.Update(ctx, in); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if got, _ := r.ByID(ctx, a.ID); got.Title != "Jam 2" || got.Order != 1 || got.Day != day.AddDays(1) || got.Public {
+		t.Fatalf("updated: %+v", got)
+	}
+	if _, err := r.Update(ctx, in); err != nil {
+		t.Fatalf("an update that changes nothing still finds the row: %v", err)
+	}
+	if _, err := r.Update(ctx, UpdateIn{ID: 999_999, StartsAt: at, Day: day}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("update of a missing row: %v", err)
 	}
 	page, err := r.List(ctx, 1, 1)
 	if err != nil || len(page) != 1 || page[0].ID != b.ID {
@@ -187,9 +204,11 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Elagoht/gesso/date"
 	"github.com/Elagoht/gesso/migrate"
 	_ "modernc.org/sqlite"
 )
@@ -214,9 +233,11 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Elagoht/gesso/date"
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/Elagoht/gesso/migrate"

@@ -34,6 +34,16 @@ func (f *fakeStore) List(_ context.Context, take, skip int) ([]{{.Entity}}, erro
 	return f.records[skip:min(len(f.records), skip+take)], nil
 }
 
+func (f *fakeStore) Update(_ context.Context, in UpdateIn) ({{.Entity}}, error) {
+	for i, e := range f.records {
+		if e.ID == in.ID {
+			f.records[i] = {{.Entity}}{ID: in.ID{{range .Fields}}, {{.Go}}: in.{{.Go}}{{end}}}
+			return f.records[i], nil
+		}
+	}
+	return {{.Entity}}{}, sql.ErrNoRows
+}
+
 func (f *fakeStore) Delete(_ context.Context, id int64) error {
 	for i, e := range f.records {
 		if e.ID == id {
@@ -56,6 +66,12 @@ func TestService(t *testing.T) {
 	}
 	if page, err := svc.List(ctx, 10, 0); err != nil || len(page) != 1 {
 		t.Fatalf("got %+v %v", page, err)
+	}
+	if _, err := svc.Update(ctx, UpdateIn{ID: created.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Update(ctx, UpdateIn{ID: created.ID + 1}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("updating a missing record: %v", err)
 	}
 	if err := svc.Delete(ctx, created.ID); err != nil {
 		t.Fatal(err)

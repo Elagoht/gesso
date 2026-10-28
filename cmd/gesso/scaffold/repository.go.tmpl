@@ -14,13 +14,13 @@ type repository struct {
 // newRepository opens the SQL store on d: the pool, or a transaction.
 func newRepository(d db.DB) Store { return &repository{db: d} }
 
-const columns = "id{{range .Fields}}, {{.Column}}{{end}}"
+const columns = "id{{range .Fields}}, {{lit .Ident}}{{end}}"
 
 func (r *repository) Insert(ctx context.Context, in CreateIn) ({{.Entity}}, error) {
 	e := {{.Entity}}{ {{- range .Fields}}{{.Go}}: in.{{.Go}}, {{end -}} }
 {{- if eq .Dialect "mysql"}}
 	res, err := r.db.ExecContext(ctx,
-		"INSERT INTO {{.Table}} ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{$f.Column}}{{end}}) VALUES ({{range $i, $f := .Fields}}{{if $i}}, {{end}}?{{end}})",
+		"INSERT INTO {{.Table}} ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}}{{end}}) VALUES ({{range $i, $f := .Fields}}{{if $i}}, {{end}}?{{end}})",
 		{{range .Fields}}in.{{.Go}}, {{end}})
 	if err != nil {
 		return e, err
@@ -29,7 +29,7 @@ func (r *repository) Insert(ctx context.Context, in CreateIn) ({{.Entity}}, erro
 	return e, err
 {{- else}}
 	err := r.db.QueryRowContext(ctx,
-		"INSERT INTO {{.Table}} ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{$f.Column}}{{end}}) VALUES ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{ph $.Dialect (add $i 1)}}{{end}}) RETURNING id",
+		"INSERT INTO {{.Table}} ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}}{{end}}) VALUES ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{ph $.Dialect (add $i 1)}}{{end}}) RETURNING id",
 		{{range .Fields}}in.{{.Go}}, {{end}}).Scan(&e.ID)
 	return e, err
 {{- end}}
@@ -57,6 +57,28 @@ func (r *repository) List(ctx context.Context, take, skip int) ([]{{.Entity}}, e
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (r *repository) Update(ctx context.Context, in UpdateIn) ({{.Entity}}, error) {
+	e := {{.Entity}}{ID: in.ID{{range .Fields}}, {{.Go}}: in.{{.Go}}{{end}}}
+	res, err := r.db.ExecContext(ctx,
+		"UPDATE {{.Table}} SET {{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}} = {{ph $.Dialect (add $i 1)}}{{end}} WHERE id = {{ph .Dialect (add (len .Fields) 1)}}",
+		{{range .Fields}}in.{{.Go}}, {{end}}in.ID)
+	if err != nil {
+		return e, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n > 0 {
+		return e, err
+	}
+{{- if eq .Dialect "mysql"}}
+	// MySQL counts the rows it changed, not the rows it found: an update that
+	// changes nothing affects none. Ask whether the row is there.
+	var one int
+	return e, r.db.QueryRowContext(ctx, "SELECT 1 FROM {{.Table}} WHERE id = ?", in.ID).Scan(&one)
+{{- else}}
+	return e, sql.ErrNoRows
+{{- end}}
 }
 
 func (r *repository) Delete(ctx context.Context, id int64) error {

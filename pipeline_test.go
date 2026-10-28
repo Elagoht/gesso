@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -231,5 +232,46 @@ func TestProblemExtensions(t *testing.T) {
 			}()
 			fn()
 		}()
+	}
+}
+
+// Config.Authenticator and Config.Middleware reach every module, the app's
+// middleware outside a module's own; a module may replace the authenticator.
+func TestAppWideAuthenticatorAndMiddleware(t *testing.T) {
+	var trail []string
+	mark := func(name string) Middleware {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				trail = append(trail, name)
+				next.ServeHTTP(w, r)
+			})
+		}
+	}
+	partner := headerAuth{"key": {Subject: "partner"}}
+	a := mustNew(t, Config{Authenticator: auth, Middleware: []Middleware{mark("app")}},
+		moduleFunc(func(r *Router) {
+			r.Use(mark("notes"))
+			r.Get("/notes/who", Handle(who, Guards(RequireIdentity)))
+		}),
+		moduleFunc(func(r *Router) { r.Get("/events/who", Handle(who)) }),
+		moduleFunc(func(r *Router) {
+			r.Authenticate(partner)
+			r.Get("/partner/who", Handle(who))
+		}),
+	)
+	if code, body, _ := withToken(a, "GET", "/notes/who", "ada", ""); code != 200 || !strings.Contains(body, `"ada"`) {
+		t.Fatalf("%d %s", code, body)
+	}
+	if code, body, _ := withToken(a, "GET", "/events/who", "bob", ""); code != 200 || !strings.Contains(body, `"bob"`) {
+		t.Fatalf("every module reads the identity: %d %s", code, body)
+	}
+	if code, body, _ := withToken(a, "GET", "/partner/who", "key", ""); code != 200 || !strings.Contains(body, `"partner"`) {
+		t.Fatalf("a module's own authenticator wins: %d %s", code, body)
+	}
+	if want := []string{"app", "notes", "app", "app"}; !slices.Equal(trail, want) {
+		t.Fatalf("middleware ran %v, want %v", trail, want)
+	}
+	if _, err := New(Config{Logger: quiet(), Middleware: []Middleware{nil}}); err == nil {
+		t.Fatal("a nil middleware is reported")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding"
 	"encoding/json"
 	"fmt"
+	"github.com/Elagoht/gesso/date"
 	"log/slog"
 	"net/http"
 	"reflect"
@@ -400,6 +401,8 @@ func (g *schemaGen) schema(t reflect.Type) *Schema {
 	switch {
 	case t == timeTypeOA:
 		return &Schema{Type: typ("string"), Format: "date-time"}
+	case t == dateTypeOA:
+		return &Schema{Type: typ("string"), Format: "date"}
 	case t == byteSliceType:
 		return &Schema{Type: typ("string"), Format: "byte"}
 	case t.Implements(textMarshalerType) || reflect.PointerTo(t).Implements(textMarshalerType):
@@ -434,7 +437,10 @@ func (g *schemaGen) schema(t reflect.Type) *Schema {
 	return &Schema{} // an interface: anything
 }
 
-var timeTypeOA = reflect.TypeFor[time.Time]()
+var (
+	timeTypeOA = reflect.TypeFor[time.Time]()
+	dateTypeOA = reflect.TypeFor[date.Date]()
+)
 
 // component names t, registers its schema once, and returns the name. The name is
 // taken before the properties are built, so a recursive type refers to itself.

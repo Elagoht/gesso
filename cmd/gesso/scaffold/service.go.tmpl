@@ -8,6 +8,7 @@ type Store interface {
 	Insert(ctx context.Context, in CreateIn) ({{.Entity}}, error)
 	ByID(ctx context.Context, id int64) ({{.Entity}}, error)
 	List(ctx context.Context, take, skip int) ([]{{.Entity}}, error)
+	Update(ctx context.Context, in UpdateIn) ({{.Entity}}, error)
 	Delete(ctx context.Context, id int64) error
 }
 
@@ -32,6 +33,11 @@ func (s *Service) Get(ctx context.Context, id int64) ({{.Entity}}, error) {
 // List returns a page of {{.Table}}, oldest first.
 func (s *Service) List(ctx context.Context, take, skip int) ([]{{.Entity}}, error) {
 	return s.store.List(ctx, take, skip)
+}
+
+// Update replaces a {{.Entity}}; sql.ErrNoRows reaches gesso as a 404.
+func (s *Service) Update(ctx context.Context, in UpdateIn) ({{.Entity}}, error) {
+	return s.store.Update(ctx, in)
 }
 
 // Delete removes a {{.Entity}}.

@@ -38,6 +38,14 @@ type Config struct {
 	ErrorMappers []ErrorMapper
 	// OpenAPI, when set, generates and serves the OpenAPI document.
 	OpenAPI *OpenAPIConfig
+	// Authenticator finds the identity of every request, for every module: each
+	// module's router starts with it, and one that needs another (a partner API
+	// with signed requests) replaces it with Router.Authenticate. Nil leaves
+	// every request anonymous until a router sets one.
+	Authenticator Authenticator
+	// Middleware wraps every module's routes, outermost first, outside what a
+	// module adds with Router.Use.
+	Middleware []Middleware
 }
 
 // Module is a feature: it registers its routes. A module that also implements
@@ -103,13 +111,16 @@ func New(cfg Config, modules ...Module) (*App, error) {
 		}
 		a.basePath = bp
 	}
+	if slices.ContainsFunc(cfg.Middleware, func(m Middleware) bool { return m == nil }) {
+		a.fail(errors.New("gesso: nil middleware in Config.Middleware"))
+	}
 	for _, m := range modules {
 		if m == nil {
 			a.fail(errors.New("gesso: nil module"))
 			continue
 		}
 		a.modules = append(a.modules, m)
-		m.Routes(&Router{app: a})
+		m.Routes(&Router{app: a, auth: cfg.Authenticator, mws: slices.Clone(cfg.Middleware)})
 	}
 	if len(a.errList) == 0 {
 		if err := a.buildOpenAPI(); err != nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Elagoht/gesso/date"
 	"io"
 	"log/slog"
 	"net/http"
@@ -439,5 +440,36 @@ func TestBodyCannotFillParams(t *testing.T) {
 	rec := do(a, "POST", "/m?take=3", "application/json", `{"title":"a"}`)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"Take":3`) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+type dueIn struct {
+	From date.Date `query:"from"`
+	Due  date.Date `json:"due" validate:"required"`
+}
+
+type dueOut struct {
+	From date.Date `json:"from"`
+	Due  date.Date `json:"due"`
+}
+
+// A date.Date is "2006-01-02" in a query and a body, and "required" refuses its
+// zero value.
+func TestDateFields(t *testing.T) {
+	a := mustNew(t, Config{}, moduleFunc(func(r *Router) {
+		r.Post("/due", Handle(func(_ context.Context, in dueIn) (dueOut, error) { return dueOut(in), nil }))
+	}))
+	rec := do(a, "POST", "/due?from=2026-10-01", "application/json", `{"due":"2026-10-28"}`)
+	if rec.Code != 200 || rec.Body.String() != `{"from":"2026-10-01","due":"2026-10-28"}`+"\n" {
+		t.Fatalf("status %d: %q", rec.Code, rec.Body)
+	}
+	if rec := do(a, "POST", "/due", "application/json", `{}`); rec.Code != 400 || !strings.Contains(rec.Body.String(), `"field":"due"`) {
+		t.Fatalf("a missing date: status %d: %s", rec.Code, rec.Body)
+	}
+	if rec := do(a, "POST", "/due?from=2026-02-30", "application/json", `{"due":"2026-10-28"}`); rec.Code != 400 {
+		t.Fatalf("February 30 in a query: status %d: %s", rec.Code, rec.Body)
+	}
+	if rec := do(a, "POST", "/due", "application/json", `{"due":"28.10.2026"}`); rec.Code != 400 {
+		t.Fatalf("a date in another layout: status %d: %s", rec.Code, rec.Body)
 	}
 }

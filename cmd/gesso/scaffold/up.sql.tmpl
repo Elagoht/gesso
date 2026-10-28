@@ -1,4 +1,4 @@
 CREATE TABLE {{.Table}} (
     {{.IDSQL}}{{range .Fields}},
-    {{.Column}} {{.SQL}}{{end}}
+    {{.Ident}} {{.SQL}}{{end}}
 );

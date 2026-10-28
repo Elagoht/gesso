@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.5.0 released** (2026-10-28). §12 lists the phases.
+Status: **v0.5.0 released; v0.6 on main, not released** (2026-10-28). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -129,8 +129,12 @@ runtime container never is.
 middleware → authenticate → guard → decode + validate → interceptor → handler → error mapper
 ```
 
-- **Middleware**: plain `func(http.Handler) http.Handler`.
+- **Middleware**: plain `func(http.Handler) http.Handler`. `Config.Middleware`
+  wraps every module, outside what a module adds with `Use`.
 - **Authenticate**: an `Authenticator` finds the identity (`gesso.IdentityFrom(ctx)`).
+  `Config.Authenticator` is every module's to start with — a token issuer is the
+  app's, not each module's dependency — and a router replaces it with
+  `Authenticate` (a partner API with signed requests).
   No credential is anonymous; a credential that is there but malformed, expired or
   revoked is a 401, never anonymous.
 - **Guard**: decides whether the request may proceed (identity, role), before the
@@ -205,6 +209,12 @@ claimers do not wait on each other, which no test measures.
   tables (`token`) has fixed versions; in the application's history they would
   sort before migrations it already ran and stop `Up`. So each applies through its
   own `Migrate` into its own table (`gesso_token_migrations`).
+- **Dates.** `date.Date` is a calendar day — a publication date, a birthday — for
+  which `time.Time`, an instant, shifts by a day once a time zone touches it. It
+  is "2006-01-02" in JSON, parameters and the database (DATE; text in SQLite),
+  `format: date` in OpenAPI; its zero value is null in JSON and NULL in the
+  database, so a client that leaves a defaulted date out round-trips as "not
+  given" and a NOT NULL column refuses a date nobody gave.
 - **Code generation**: typed query functions from annotated SQL. Generated files are
   never edited; `gesso add module` scaffolds once and then the code is the
   application's.
@@ -272,7 +282,11 @@ shared process.
 4. **v0.4** — `Queue` (outbox), SQL code generation (`gesso gen`).
 5. **v0.5** — collage bridge: the collage-gesso plugin, `NewLocal`, 503 after a
    failed Start.
-6. **later** — event bus, wiring generation.
+6. **v0.6** — from the first trial (a documents API on SQLite): `date.Date`,
+   `Config.Authenticator` / `Config.Middleware`, scaffold `text` / `date` /
+   update / keyword columns.
+7. **later** — event bus, wiring generation, `gesso new` (the main and the wiring
+   a first module needs: the trial wrote ~100 lines of it by hand).
 
 ## 13. Decisions
 
@@ -363,7 +377,12 @@ shared process.
   down run in the application's binary through `migrate`. `gesso add module`
   scaffolds a module (endpoints, handler, service with a consumer-side `Store`,
   repository, a fake-store test, migrations) for postgres, sqlite or mysql; the
-  scaffold writes no `any`. Its tests generate a module, vet and test it with
+  scaffold writes no `any`. Field types: string (255, VARCHAR in MySQL), text
+  (unbounded), int, bool, float, time, date (`date.Date`). Create, get, list,
+  update (PUT, the record whole) and delete. A column named after an SQL keyword
+  (`order`, `group`, `user`) is quoted in the SQL it writes, per dialect; MySQL's
+  UPDATE counts changed rows, not found ones, so its scaffold asks whether a row
+  that changed nothing exists before answering 404. Its tests generate a module, vet and test it with
   `-count=1`, pass it through `check`, and run its repository against SQLite and a
   real PostgreSQL. The MySQL scaffold compiles and passes its own tests; its SQL is
   unverified.

@@ -35,5 +35,6 @@ func (m *Module) Routes(r *gesso.Router) {
 	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201))
 	Get{{.Entity}}.Handle(r, m.get)
 	List{{.Plural}}.Handle(r, m.list)
+	Update{{.Entity}}.Handle(r, m.update)
 	Delete{{.Entity}}.Handle(r, m.delete)
 }

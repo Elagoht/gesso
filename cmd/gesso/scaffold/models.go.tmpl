@@ -5,6 +5,9 @@ import (
 	"time"
 {{end}}
 	"github.com/Elagoht/gesso"
+{{- if .UsesDate}}
+	"github.com/Elagoht/gesso/date"
+{{- end}}
 )
 
 // {{.Entity}} is one of the module's records, as clients see it.
@@ -17,6 +20,15 @@ type {{.Entity}} struct {
 
 // CreateIn is the body that creates a {{.Entity}}.
 type CreateIn struct {
+{{- range .Fields}}
+	{{.Go}} {{.Type}} `json:"{{.JSON}}"{{if .Rule}} validate:"{{.Rule}}"{{end}}`
+{{- end}}
+}
+
+// UpdateIn replaces a {{.Entity}}: its id from the path, everything else from
+// the body.
+type UpdateIn struct {
+	ID int64 `path:"id"`
 {{- range .Fields}}
 	{{.Go}} {{.Type}} `json:"{{.JSON}}"{{if .Rule}} validate:"{{.Rule}}"{{end}}`
 {{- end}}
@@ -39,5 +51,6 @@ var (
 	Create{{.Entity}} = gesso.Endpoint[CreateIn, {{.Entity}}]{Method: "POST", Pattern: "/{{.Table}}"}
 	Get{{.Entity}}    = gesso.Endpoint[IDIn, {{.Entity}}]{Method: "GET", Pattern: "/{{.Table}}/{id}"}
 	List{{.Plural}}   = gesso.Endpoint[ListIn, []{{.Entity}}]{Method: "GET", Pattern: "/{{.Table}}"}
+	Update{{.Entity}} = gesso.Endpoint[UpdateIn, {{.Entity}}]{Method: "PUT", Pattern: "/{{.Table}}/{id}"}
 	Delete{{.Entity}} = gesso.Endpoint[IDIn, gesso.Empty]{Method: "DELETE", Pattern: "/{{.Table}}/{id}"}
 )

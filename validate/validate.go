@@ -26,6 +26,7 @@ package validate
 
 import (
 	"context"
+	"encoding"
 	"fmt"
 	"net/mail"
 	"net/url"
@@ -125,7 +126,10 @@ func FieldName(f reflect.StructField) string {
 	return f.Name
 }
 
-var timeType = reflect.TypeFor[time.Time]()
+var (
+	timeType            = reflect.TypeFor[time.Time]()
+	textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
+)
 
 type typePlan struct {
 	fields []fieldPlan
@@ -216,14 +220,15 @@ func addFields(t reflect.Type, prefix []int, p *typePlan, building map[reflect.T
 }
 
 // structBeneath is the struct type a field holds through pointers and slices, or
-// nil. time.Time is a value, not a struct to look inside.
+// nil. time.Time, and any struct that reads itself from text (date.Date), is a
+// value, not a struct to look inside.
 func structBeneath(t reflect.Type) reflect.Type {
 	for {
 		switch t.Kind() {
 		case reflect.Pointer, reflect.Slice, reflect.Array:
 			t = t.Elem()
 		case reflect.Struct:
-			if t == timeType {
+			if t == timeType || reflect.PointerTo(t).Implements(textUnmarshalerType) {
 				return nil
 			}
 			return t

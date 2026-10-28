@@ -18,6 +18,10 @@ func (m *Module) list(ctx context.Context, in ListIn) ([]{{.Entity}}, error) {
 	return m.svc.List(ctx, in.Take, in.Skip)
 }
 
+func (m *Module) update(ctx context.Context, in UpdateIn) ({{.Entity}}, error) {
+	return m.svc.Update(ctx, in)
+}
+
 func (m *Module) delete(ctx context.Context, in IDIn) (gesso.Empty, error) {
 	return gesso.Empty{}, m.svc.Delete(ctx, in.ID)
 }

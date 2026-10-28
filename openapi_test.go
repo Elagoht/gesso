@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elagoht/gesso/date"
 	"github.com/Elagoht/gesso/internal/oatest/other"
 )
 
@@ -24,6 +25,7 @@ type Note struct {
 	Parent  *Note      `json:"parent,omitempty"`
 	Other   other.Note `json:"other"`
 	Score   uint8      `json:"score"`
+	Due     date.Date  `json:"due" validate:"required"`
 }
 
 type Page[T any] struct {
@@ -122,12 +124,13 @@ func TestOpenAPIDocument(t *testing.T) {
 		"status enum":        len(note.Properties["status"].Enum) == 2,
 		"email format":       note.Properties["email"].Format == "email",
 		"created date-time":  note.Properties["created"].Format == "date-time",
+		"due date":           note.Properties["due"].Format == "date" && note.Properties["due"].Ref == "",
 		"edited nullable":    slices.Equal(note.Properties["edited"].Type, []string{"string", "null"}),
 		"tags maxItems":      *note.Properties["tags"].MaxItems == 5,
 		"parent recursive":   note.Properties["parent"].AnyOf[0].Ref == "#/components/schemas/Note",
 		"other renamed":      note.Properties["other"].Ref == "#/components/schemas/other_Note",
 		"uint non-negative":  *note.Properties["score"].Minimum == 0,
-		"required from tags": slices.Equal(note.Required, []string{"title"}),
+		"required from tags": slices.Equal(note.Required, []string{"due", "title"}),
 	}
 	for name, ok := range checks {
 		if !ok {

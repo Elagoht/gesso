@@ -28,6 +28,9 @@ var scaffold = template.Must(template.New("").Funcs(template.FuncMap{
 		return "?"
 	},
 	"add": func(a, b int) int { return a + b },
+	// lit is SQL written inside a Go string literal: a quoted identifier's
+	// double quotes escaped.
+	"lit": func(sql string) string { return strings.ReplaceAll(sql, `"`, `\"`) },
 }).ParseFS(scaffoldFS, "scaffold/*.tmpl"))
 
 // field is one column of the scaffolded entity.
@@ -35,6 +38,7 @@ type field struct {
 	Go     string // Title
 	JSON   string // title
 	Column string // title
+	Ident  string // the column as SQL names it: title, or "order", quoted where it is a keyword
 	Type   string // string
 	Rule   string // required,max=255
 	SQL    string // TEXT NOT NULL
@@ -48,6 +52,7 @@ type moduleSpec struct {
 	Dialect  string
 	Fields   []field
 	UsesTime bool
+	UsesDate bool
 	IDSQL    string
 }
 
@@ -55,7 +60,7 @@ var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 func addModule(args []string, dir string, stdout io.Writer, now func() time.Time) error {
 	fs := flag.NewFlagSet("add module", flag.ContinueOnError)
-	fields := fs.String("fields", "name:string", "the entity's fields, name:type, comma-separated; types: string, int, bool, float, time")
+	fields := fs.String("fields", "name:string", "the entity's fields, name:type, comma-separated; types: string, text, int, bool, float, time, date")
 	dialect := fs.String("dialect", "postgres", "the SQL the repository and migration are written in: postgres, sqlite or mysql")
 	parent := fs.String("dir", "internal", "the folder the module's folder goes in")
 	entity := fs.String("entity", "", "the entity's Go name (default: the module name, singular, capitalised)")
@@ -142,15 +147,18 @@ func newSpec(name, entity, fieldList, dialect string) (moduleSpec, error) {
 			return moduleSpec{}, err
 		}
 		spec.UsesTime = spec.UsesTime || f.Type == "time.Time"
+		spec.UsesDate = spec.UsesDate || f.Type == "date.Date"
 		spec.Fields = append(spec.Fields, f)
 	}
 	return spec, nil
 }
 
 func newField(col, typ, dialect string) (field, error) {
-	f := field{Go: camel(col), JSON: lowerCamel(col), Column: col}
+	f := field{Go: camel(col), JSON: lowerCamel(col), Column: col, Ident: quoteIdent(col, dialect)}
 	sqlTypes := map[string]map[string]string{
 		"string": {"postgres": "TEXT", "sqlite": "TEXT", "mysql": "VARCHAR(255)"},
+		"text":   {"postgres": "TEXT", "sqlite": "TEXT", "mysql": "TEXT"},
+		"date":   {"postgres": "DATE", "sqlite": "DATE", "mysql": "DATE"},
 		"int":    {"postgres": "BIGINT", "sqlite": "INTEGER", "mysql": "BIGINT"},
 		"bool":   {"postgres": "BOOLEAN", "sqlite": "BOOLEAN", "mysql": "BOOLEAN"},
 		"float":  {"postgres": "DOUBLE PRECISION", "sqlite": "REAL", "mysql": "DOUBLE"},
@@ -158,12 +166,16 @@ func newField(col, typ, dialect string) (field, error) {
 	}
 	types, ok := sqlTypes[typ]
 	if !ok {
-		return f, fmt.Errorf("field %q: unknown type %q (string, int, bool, float, time)", col, typ)
+		return f, fmt.Errorf("field %q: unknown type %q (string, text, int, bool, float, time, date)", col, typ)
 	}
 	f.SQL = types[dialect] + " NOT NULL"
 	switch typ {
 	case "string":
 		f.Type, f.Rule = "string", "required,max=255"
+	case "text":
+		f.Type, f.Rule = "string", "required"
+	case "date":
+		f.Type, f.Rule = "date.Date", "required"
 	case "int":
 		f.Type = "int64"
 	case "bool":
@@ -174,6 +186,38 @@ func newField(col, typ, dialect string) (field, error) {
 		f.Type, f.Rule = "time.Time", "required"
 	}
 	return f, nil
+}
+
+// keywords are words a column cannot be named in one of the dialects without
+// quoting: SQL's reserved words, PostgreSQL's and MySQL's.
+var keywords = map[string]bool{}
+
+func init() {
+	for w := range strings.FieldsSeq(`all alter analyse analyze and any array as asc asymmetric authorization
+		between binary both by call case cast change check collate column condition constraint
+		create cross current_catalog current_date current_role current_time current_timestamp
+		current_user database databases default deferrable delete desc describe distinct do drop
+		else end except exists explain false fetch for foreign freeze from full grant group having
+		ilike in index initially inner insert intersect interval into is isnull join key keys
+		lateral leading left like limit localtime localtimestamp match natural not notnull null
+		offset on only or order outer overlaps placing primary range rank read references
+		regexp rename replace returning right row rows select session_user set show similar some
+		symmetric table tablesample then to trailing trigger true union unique update usage
+		user using values variadic verbose when where window with write`) {
+		keywords[w] = true
+	}
+}
+
+// quoteIdent is col as the dialect's SQL must spell it: as it is, or, when it is
+// a keyword, in double quotes (PostgreSQL, SQLite) or backquotes (MySQL).
+func quoteIdent(col, dialect string) string {
+	if !keywords[col] {
+		return col
+	}
+	if dialect == "mysql" {
+		return "`" + col + "`"
+	}
+	return `"` + col + `"`
 }
 
 // camel is snake_case in CamelCase, with Go's initialisms: user_id is UserID.
