@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **design, no code yet** (2026-10-28).
+Status: **v0.1 implemented, not released** (2026-10-28). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -203,11 +203,13 @@ shared process.
 
 ## 12. Phases
 
-1. **v0.1** — router, surfaces, typed handlers, decode + validate, problem+json,
-   `ctx` rule, `DB` / `InTx`, migrations, lifecycle, `gessotest`.
-2. **v0.2** — guards, interceptors, query structs, OpenAPI, contracts + fakes +
-   conformance suites.
-3. **v0.3** — SQL code generation, `gesso add module`, typed client.
+1. **v0.1** — router, surfaces, typed handlers, decode (path, query, header, body)
+   + validate, problem+json, `DB` / `InTx` with savepoints, driver-error
+   classification, migrations, lifecycle, `gessotest`.
+2. **v0.2** — guards, identity, opaque tokens, interceptors, OpenAPI, contracts +
+   fakes + conformance suites, typed problem extensions (`Problem[T]`).
+3. **v0.3** — `gesso` CLI: `check` (the `ctx` rule), SQL code generation,
+   `add module`, `migrate`, typed client.
 4. **later** — event bus, collage bridge, wiring generation.
 
 ## 13. Decisions
@@ -223,15 +225,34 @@ shared process.
   required.
 - 2026-10-28 — Mockable: consumer-side interfaces, fakes, `gessotest`.
 
+- 2026-10-28 — **Tokens**: opaque, server-side, revocable tokens by default (only
+  their SHA-256 is stored). No JWT in gesso; an application that needs a stateless
+  token brings one behind `Authenticator`. Lands with guards (v0.2).
+- 2026-10-28 — **Collage bridge**: later and optional. Two processes need no bridge.
+- 2026-10-28 — **Layout with collage**: one Go module. Collage stays at the root
+  (`collage new` lays it out there and `collage dev` builds `.`), gesso's binary is
+  `cmd/api`, and both share `internal/`. Collage reserves nothing under `internal/`.
+- 2026-10-28 — **Validation tags**: gesso's own validator, using the
+  `go-playground/validator` names for the rules it has (`required`, `omitempty`,
+  `min`, `max`, `len`, `oneof`, `email`, `url`, `uuid`), so the tags people know
+  mean the same thing. It is a subset, not a dependency. A field's name in an error
+  is its JSON (or query/path/header) name.
+- 2026-10-28 — **Bounds reject, they do not clamp.** `?take=500` against `max=100`
+  is a 400 naming the field, not a silent 100. `default:"20"` fills an absent value.
+- 2026-10-28 — **Migration versions are timestamps** (`20261028153000_name.up.sql`),
+  so modules can each carry their own folder without colliding. Applied migrations
+  are checksummed; an edited one stops `Up`. A missing older migration (from a merge)
+  stops `Up` unless out-of-order is allowed.
+- 2026-10-28 — **Driver errors**: gesso cannot read a driver's error type without
+  importing the driver, so the application passes a one-line classifier
+  (`db.Violation` from its driver's error); gesso turns violations into 409/400 with
+  the field named by an explicit constraint→field map.
+- 2026-10-28 — The `ctx`-first check moves to the CLI (`gesso check`, v0.3); v0.1
+  enforces it by API shape (every handler and `InTx` takes `ctx`).
+- 2026-10-28 — gesso's own tests that need a database run against SQLite (pure Go,
+  `modernc.org/sqlite`) in a nested `integration/` module, so gesso's `go.mod` stays
+  empty; Postgres-specific tests run when `GESSO_POSTGRES_DSN` is set.
+
 ## 14. Open questions
 
-- **Tokens.** Self-written JWT (HS256 / EdDSA only, strict) vs opaque, revocable
-  tokens stored server-side. Recommendation: opaque by default; JWT only if a
-  stateless consumer needs it.
-- **Collage bridge.** A `collage-gesso` plugin for the one-process case (mount,
-  shutdown, identity). Recommendation: later, optional.
-- **Project layout with collage.** One Go module, collage at the root as
-  `collage new` lays it out, gesso under `cmd/api`, sharing `internal/` types — to be
-  checked against `collage new` and `collage dev` before it is fixed.
-- **Validation tags.** Own tag syntax vs compatibility with
-  `go-playground/validator` tags, which people already know.
+None yet.
