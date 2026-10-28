@@ -1,0 +1,71 @@
+package {{.Pkg}}
+
+import (
+	"context"
+	"database/sql"
+
+	"github.com/Elagoht/gesso/db"
+)
+
+type repository struct {
+	db db.DB
+}
+
+// newRepository opens the SQL store on d: the pool, or a transaction.
+func newRepository(d db.DB) Store { return &repository{db: d} }
+
+const columns = "id{{range .Fields}}, {{.Column}}{{end}}"
+
+func (r *repository) Insert(ctx context.Context, in CreateIn) ({{.Entity}}, error) {
+	e := {{.Entity}}{ {{- range .Fields}}{{.Go}}: in.{{.Go}}, {{end -}} }
+{{- if eq .Dialect "mysql"}}
+	res, err := r.db.ExecContext(ctx,
+		"INSERT INTO {{.Table}} ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{$f.Column}}{{end}}) VALUES ({{range $i, $f := .Fields}}{{if $i}}, {{end}}?{{end}})",
+		{{range .Fields}}in.{{.Go}}, {{end}})
+	if err != nil {
+		return e, err
+	}
+	e.ID, err = res.LastInsertId()
+	return e, err
+{{- else}}
+	err := r.db.QueryRowContext(ctx,
+		"INSERT INTO {{.Table}} ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{$f.Column}}{{end}}) VALUES ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{ph $.Dialect (add $i 1)}}{{end}}) RETURNING id",
+		{{range .Fields}}in.{{.Go}}, {{end}}).Scan(&e.ID)
+	return e, err
+{{- end}}
+}
+
+func (r *repository) ByID(ctx context.Context, id int64) ({{.Entity}}, error) {
+	var e {{.Entity}}
+	err := r.db.QueryRowContext(ctx, "SELECT "+columns+" FROM {{.Table}} WHERE id = {{ph .Dialect 1}}", id).
+		Scan(&e.ID{{range .Fields}}, &e.{{.Go}}{{end}})
+	return e, err
+}
+
+func (r *repository) List(ctx context.Context, take, skip int) ([]{{.Entity}}, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT "+columns+" FROM {{.Table}} ORDER BY id LIMIT {{ph .Dialect 1}} OFFSET {{ph .Dialect 2}}", take, skip)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []{{.Entity}}{}
+	for rows.Next() {
+		var e {{.Entity}}
+		if err := rows.Scan(&e.ID{{range .Fields}}, &e.{{.Go}}{{end}}); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (r *repository) Delete(ctx context.Context, id int64) error {
+	res, err := r.db.ExecContext(ctx, "DELETE FROM {{.Table}} WHERE id = {{ph .Dialect 1}}", id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return sql.ErrNoRows
+	}
+	return err
+}

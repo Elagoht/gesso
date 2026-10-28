@@ -55,4 +55,11 @@ shutdown hook for application code. Modules with background work (Starter,
 Stopper) and OnShutdown hooks need gesso as its own process, until the
 collage-gesso bridge exists.
 
+```sh
+go install github.com/Elagoht/gesso/cmd/gesso@latest
+gesso add module events -fields title:string,seats:int,starts_at:time
+gesso migrate new add_event_city -dir internal/events/migrations
+gesso check            # database calls without ctx, service methods without ctx
+```
+
 `integration/notes` is a complete module; [DESIGN.md](DESIGN.md) is the spec.

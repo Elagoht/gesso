@@ -1,0 +1,23 @@
+package {{.Pkg}}
+
+import (
+	"context"
+
+	"github.com/Elagoht/gesso"
+)
+
+func (m *Module) create(ctx context.Context, in CreateIn) ({{.Entity}}, error) {
+	return m.svc.Create(ctx, in)
+}
+
+func (m *Module) get(ctx context.Context, in IDIn) ({{.Entity}}, error) {
+	return m.svc.Get(ctx, in.ID)
+}
+
+func (m *Module) list(ctx context.Context, in ListIn) ([]{{.Entity}}, error) {
+	return m.svc.List(ctx, in.Take, in.Skip)
+}
+
+func (m *Module) delete(ctx context.Context, in IDIn) (gesso.Empty, error) {
+	return gesso.Empty{}, m.svc.Delete(ctx, in.ID)
+}

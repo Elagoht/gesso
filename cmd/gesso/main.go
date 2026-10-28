@@ -1,0 +1,60 @@
+// Command gesso is gesso's command line:
+//
+//	gesso migrate new <name> [-dir migrations]
+//	gesso add module <name> [-fields title:string,seats:int] [-dialect postgres] [-dir internal]
+//	gesso check [packages]
+//
+// Applying migrations needs the application's database driver, which this binary
+// does not have: up and down run in the application's own binary, through the
+// migrate package.
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"time"
+)
+
+func main() {
+	os.Exit(run(os.Args[1:], ".", os.Stdout, os.Stderr, time.Now))
+}
+
+const usage = `usage:
+  gesso migrate new <name> [-dir migrations]
+  gesso add module <name> [-fields title:string,seats:int] [-dialect postgres|sqlite|mysql] [-dir internal]
+  gesso check [packages]   (default ./...)
+`
+
+// run is main without the exit, for the tests. dir is where paths are relative to.
+func run(args []string, dir string, stdout, stderr io.Writer, now func() time.Time) int {
+	if len(args) == 0 {
+		fmt.Fprint(stderr, usage)
+		return 2
+	}
+	var err error
+	code := 0
+	switch {
+	case len(args) >= 2 && args[0] == "migrate" && args[1] == "new":
+		err = migrateNew(args[2:], dir, stdout, now)
+	case len(args) >= 2 && args[0] == "add" && args[1] == "module":
+		err = addModule(args[2:], dir, stdout, now)
+	case args[0] == "check":
+		var findings int
+		findings, err = check(args[1:], dir, stdout)
+		if err == nil && findings > 0 {
+			code = 1
+		}
+	case args[0] == "help" || args[0] == "-h" || args[0] == "--help":
+		fmt.Fprint(stdout, usage)
+		return 0
+	default:
+		fmt.Fprintf(stderr, "gesso: unknown command %q\n%s", args[0], usage)
+		return 2
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "gesso: %v\n", err)
+		return 2
+	}
+	return code
+}

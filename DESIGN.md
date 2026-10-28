@@ -299,6 +299,20 @@ shared process.
   the field named by an explicit constraint→field map.
 - 2026-10-28 — The `ctx`-first check moves to the CLI (`gesso check`, v0.3); v0.1
   enforces it by API shape (every handler and `InTx` takes `ctx`).
+- 2026-10-28 — **The CLI is its own module** (`cmd/gesso`), so `golang.org/x/tools`
+  never reaches the library's go.mod. `gesso check` reports database/sql calls
+  without a context (`Query`, `QueryRow`, `Exec`, `Begin`, `Prepare`, `Ping` on
+  `DB`, `Tx`, `Conn`, `Stmt`) and exported methods in `service.go` /
+  `repository.go` (or `*_service.go`, `*_repository.go`) whose first parameter is
+  not `context.Context`; it exits 1 on findings. `gesso migrate new` only creates
+  the timestamped files: applying them needs the application's driver, so up and
+  down run in the application's binary through `migrate`. `gesso add module`
+  scaffolds a module (endpoints, handler, service with a consumer-side `Store`,
+  repository, a fake-store test, migrations) for postgres, sqlite or mysql; the
+  scaffold writes no `any`. Its tests generate a module, vet and test it with
+  `-count=1`, pass it through `check`, and run its repository against SQLite and a
+  real PostgreSQL. The MySQL scaffold compiles and passes its own tests; its SQL is
+  unverified.
 - 2026-10-28 — gesso's own tests that need a database live in a nested
   `integration/` module, so their drivers never reach gesso's `go.mod`: SQLite
   (`modernc.org/sqlite`) and a real PostgreSQL (embedded-postgres, or

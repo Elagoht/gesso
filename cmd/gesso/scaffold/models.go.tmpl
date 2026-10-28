@@ -1,0 +1,43 @@
+package {{.Pkg}}
+
+import (
+{{- if .UsesTime}}
+	"time"
+{{end}}
+	"github.com/Elagoht/gesso"
+)
+
+// {{.Entity}} is one of the module's records, as clients see it.
+type {{.Entity}} struct {
+	ID int64 `json:"id"`
+{{- range .Fields}}
+	{{.Go}} {{.Type}} `json:"{{.JSON}}"`
+{{- end}}
+}
+
+// CreateIn is the body that creates a {{.Entity}}.
+type CreateIn struct {
+{{- range .Fields}}
+	{{.Go}} {{.Type}} `json:"{{.JSON}}"{{if .Rule}} validate:"{{.Rule}}"{{end}}`
+{{- end}}
+}
+
+// IDIn names one {{.Entity}} by its id.
+type IDIn struct {
+	ID int64 `path:"id"`
+}
+
+// ListIn pages through the {{.Table}}.
+type ListIn struct {
+	Take int `query:"take" default:"20" validate:"min=1,max=100"`
+	Skip int `query:"skip" validate:"min=0"`
+}
+
+// The module's endpoints: the server registers them, another process calls them
+// with the same types.
+var (
+	Create{{.Entity}} = gesso.Endpoint[CreateIn, {{.Entity}}]{Method: "POST", Pattern: "/{{.Table}}"}
+	Get{{.Entity}}    = gesso.Endpoint[IDIn, {{.Entity}}]{Method: "GET", Pattern: "/{{.Table}}/{id}"}
+	List{{.Plural}}   = gesso.Endpoint[ListIn, []{{.Entity}}]{Method: "GET", Pattern: "/{{.Table}}"}
+	Delete{{.Entity}} = gesso.Endpoint[IDIn, gesso.Empty]{Method: "DELETE", Pattern: "/{{.Table}}/{id}"}
+)

@@ -1,0 +1,295 @@
+package main
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func fixedNow() time.Time { return time.Date(2026, 10, 28, 15, 30, 0, 0, time.UTC) }
+
+func gessoRoot(t *testing.T) string {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestMigrateNew(t *testing.T) {
+	dir := t.TempDir()
+	var out, errOut bytes.Buffer
+	if code := run([]string{"migrate", "new", "add_events", "-dir", "db/migrations"}, dir, &out, &errOut, fixedNow); code != 0 {
+		t.Fatalf("code %d: %s", code, errOut.String())
+	}
+	for _, f := range []string{"20261028153000_add_events.up.sql", "20261028153000_add_events.down.sql"} {
+		if _, err := os.Stat(filepath.Join(dir, "db/migrations", f)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if code := run([]string{"migrate", "new", "add_events", "-dir", "db/migrations"}, dir, &out, &errOut, fixedNow); code == 0 {
+		t.Fatal("an existing migration is never overwritten")
+	}
+	if code := run([]string{"migrate", "new", "Add Events"}, dir, &out, &errOut, fixedNow); code != 2 {
+		t.Fatal("a bad name is refused")
+	}
+}
+
+// goIn runs the go command in dir.
+func goIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
+// newApp is an empty module that uses the gesso in this repository.
+func newApp(t *testing.T, require string) string {
+	dir := t.TempDir()
+	mod := "module example.com/app\n\ngo 1.26.10\n\nrequire github.com/Elagoht/gesso v0.0.0\n" + require +
+		"\nreplace github.com/Elagoht/gesso => " + gessoRoot(t) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(mod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+const fields = "title:string,seats:int,starts_at:time,public:bool,price:float"
+
+// The scaffold compiles, vets, passes its own tests and the ctx check — and its
+// SQL runs: a test written beside it drives the repository against a real
+// database, SQLite and PostgreSQL.
+func TestAddModule(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs scaffolded modules")
+	}
+	cases := map[string]struct{ require, dbTest string }{
+		"sqlite":   {"require modernc.org/sqlite v1.61.0\n", sqliteRepoTest},
+		"postgres": {"require (\n\tgithub.com/fergusstrange/embedded-postgres v1.34.0\n\tgithub.com/jackc/pgx/v5 v5.11.0\n)\n", postgresRepoTest},
+		// No MySQL server here: the scaffold compiles, vets and passes its own
+		// tests, but its SQL is unverified.
+		"mysql": {"", ""},
+	}
+	for dialect, c := range cases {
+		t.Run(dialect, func(t *testing.T) {
+			dir := newApp(t, c.require)
+			var out, errOut bytes.Buffer
+			if code := run([]string{"add", "module", "events", "-fields", fields, "-dialect", dialect}, dir, &out, &errOut, fixedNow); code != 0 {
+				t.Fatalf("code %d: %s", code, errOut.String())
+			}
+			if c.dbTest != "" {
+				mod := filepath.Join(dir, "internal/events")
+				if err := os.WriteFile(filepath.Join(mod, "repository_db_test.go"), []byte(c.dbTest), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			goIn(t, dir, "mod", "tidy")
+			goIn(t, dir, "vet", "./...")
+			goIn(t, dir, "test", "-count=1", "./...")
+			var checkOut bytes.Buffer
+			if n, err := check(nil, dir, &checkOut); err != nil || n != 0 {
+				t.Fatalf("the scaffold breaks the ctx rule: %v\n%s", err, checkOut.String())
+			}
+			if code := run([]string{"add", "module", "events"}, dir, &out, &errOut, fixedNow); code == 0 {
+				t.Fatal("an existing module is never overwritten")
+			}
+		})
+	}
+}
+
+// The repository test placed beside a scaffold: migrations, then every method.
+const repoTestBody = `
+func exercise(t *testing.T, d *sql.DB, dialect migrate.Dialect) {
+	ctx := context.Background()
+	m, err := migrate.New(d, dialect, Migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r := newRepository(d)
+	at := time.Date(2026, 11, 1, 18, 0, 0, 0, time.UTC)
+	a, err := r.Insert(ctx, CreateIn{Title: "Jam", Seats: 30, StartsAt: at, Public: true, Price: 9.5})
+	if err != nil || a.ID == 0 {
+		t.Fatalf("insert: %+v %v", a, err)
+	}
+	b, _ := r.Insert(ctx, CreateIn{Title: "Talk", StartsAt: at})
+	got, err := r.ByID(ctx, a.ID)
+	if err != nil || got.Title != "Jam" || got.Seats != 30 || !got.StartsAt.Equal(at) || !got.Public || got.Price != 9.5 {
+		t.Fatalf("by id: %+v %v", got, err)
+	}
+	page, err := r.List(ctx, 1, 1)
+	if err != nil || len(page) != 1 || page[0].ID != b.ID {
+		t.Fatalf("list: %+v %v", page, err)
+	}
+	if err := r.Delete(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ByID(ctx, a.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("deleted: %v", err)
+	}
+	if err := r.Delete(ctx, a.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("delete twice: %v", err)
+	}
+}
+`
+
+const sqliteRepoTest = `package events
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/Elagoht/gesso/migrate"
+	_ "modernc.org/sqlite"
+)
+
+func TestRepositorySQLite(t *testing.T) {
+	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	exercise(t, d, migrate.SQLite)
+}
+` + repoTestBody
+
+const postgresRepoTest = `package events
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"path/filepath"
+	"testing"
+	"time"
+
+	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/Elagoht/gesso/migrate"
+)
+
+func TestRepositoryPostgres(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	dir := t.TempDir()
+	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().Port(uint32(port)).
+		RuntimePath(filepath.Join(dir, "rt")).DataPath(filepath.Join(dir, "data")).Logger(io.Discard))
+	if err := pg.Start(); err != nil {
+		t.Skipf("POSTGRES UNVERIFIED — no server: %v", err)
+	}
+	defer pg.Stop()
+	d, err := sql.Open("pgx", fmt.Sprintf("postgres://postgres:postgres@127.0.0.1:%d/postgres?sslmode=disable", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	exercise(t, d, migrate.Postgres)
+}
+` + repoTestBody
+
+func TestCheck(t *testing.T) {
+	dir := newApp(t, "")
+	files := map[string]string{
+		"internal/users/repository.go": `package users
+
+import (
+	"context"
+	"database/sql"
+)
+
+type Repository struct{ db *sql.DB }
+
+func (r *Repository) Count() (int, error) {
+	var n int
+	err := r.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&n)
+	return n, err
+}
+
+func (r *Repository) Rename(ctx context.Context, id int64, name string) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE users SET name = $1 WHERE id = $2", name, id)
+	return err
+}
+
+func (r *Repository) helper() {}
+`,
+		"internal/users/service.go": `package users
+
+import "context"
+
+type Service struct{ r *Repository }
+
+func (s *Service) Total() (int, error) { return s.r.Count() }
+
+func (s *Service) Rename(ctx context.Context, id int64, name string) error { return s.r.Rename(ctx, id, name) }
+`,
+		"internal/users/jobs.go": `package users
+
+import "database/sql"
+
+func Purge(d *sql.DB) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec("DELETE FROM users WHERE deleted")
+	if err != nil {
+		return tx.Rollback()
+	}
+	return tx.Commit()
+}
+
+// Total is not a service method: jobs.go is not a layer file.
+func (s *Service) Report() int { return 0 }
+`,
+	}
+	for name, src := range files {
+		p := filepath.Join(dir, name)
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	goIn(t, dir, "mod", "tidy")
+	var out, errOut bytes.Buffer
+	code := run([]string{"check"}, dir, &out, &errOut, fixedNow)
+	got := out.String()
+	if code != 1 {
+		t.Fatalf("code %d, out %s, err %s", code, got, errOut.String())
+	}
+	for _, want := range []string{
+		"internal/users/jobs.go:6:13: sql.DB.Begin runs without a context: call BeginTx",
+		"internal/users/jobs.go:10:11: sql.Tx.Exec runs without a context: call ExecContext",
+		"internal/users/repository.go:10:1: Count takes no ctx",
+		"internal/users/repository.go:12:9: sql.DB.QueryRow runs without a context",
+		"internal/users/service.go:7:1: Total takes no ctx",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "\n"); n != 5 {
+		t.Errorf("want 5 findings, got %d:\n%s", n, got)
+	}
+}

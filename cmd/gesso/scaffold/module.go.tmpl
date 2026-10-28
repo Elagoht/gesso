@@ -1,0 +1,39 @@
+// Package {{.Pkg}} is the {{.Table}} module: a repository over db.DB, a service
+// that knows nothing of HTTP, typed handlers on shared endpoints, and its own
+// migrations. Scaffolded by gesso add module; it is yours now.
+package {{.Pkg}}
+
+import (
+	"embed"
+
+	"github.com/Elagoht/gesso"
+	"github.com/Elagoht/gesso/db"
+)
+
+// Migrations create the module's tables.
+//
+//go:embed migrations
+var Migrations embed.FS
+
+// Deps is everything the module needs, passed in.
+type Deps struct {
+	DB db.DB
+}
+
+// Module is the {{.Table}} feature.
+type Module struct {
+	svc *Service
+}
+
+// New wires the module from its dependencies.
+func New(d Deps) *Module {
+	return &Module{svc: NewService(newRepository(d.DB))}
+}
+
+// Routes registers the module's endpoints.
+func (m *Module) Routes(r *gesso.Router) {
+	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201))
+	Get{{.Entity}}.Handle(r, m.get)
+	List{{.Plural}}.Handle(r, m.list)
+	Delete{{.Entity}}.Handle(r, m.delete)
+}

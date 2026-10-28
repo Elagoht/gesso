@@ -1,0 +1,66 @@
+package {{.Pkg}}
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"testing"
+)
+
+// fakeStore keeps records in memory: the service is tested with no database.
+type fakeStore struct {
+	records []{{.Entity}}
+}
+
+func (f *fakeStore) Insert(_ context.Context, in CreateIn) ({{.Entity}}, error) {
+	e := {{.Entity}}{ID: int64(len(f.records) + 1){{range .Fields}}, {{.Go}}: in.{{.Go}}{{end}}}
+	f.records = append(f.records, e)
+	return e, nil
+}
+
+func (f *fakeStore) ByID(_ context.Context, id int64) ({{.Entity}}, error) {
+	for _, e := range f.records {
+		if e.ID == id {
+			return e, nil
+		}
+	}
+	return {{.Entity}}{}, sql.ErrNoRows
+}
+
+func (f *fakeStore) List(_ context.Context, take, skip int) ([]{{.Entity}}, error) {
+	if skip >= len(f.records) {
+		return []{{.Entity}}{}, nil
+	}
+	return f.records[skip:min(len(f.records), skip+take)], nil
+}
+
+func (f *fakeStore) Delete(_ context.Context, id int64) error {
+	for i, e := range f.records {
+		if e.ID == id {
+			f.records = append(f.records[:i], f.records[i+1:]...)
+			return nil
+		}
+	}
+	return sql.ErrNoRows
+}
+
+func TestService(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(&fakeStore{})
+	created, err := svc.Create(ctx, CreateIn{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.Get(ctx, created.ID); err != nil || got != created {
+		t.Fatalf("got %+v %v", got, err)
+	}
+	if page, err := svc.List(ctx, 10, 0); err != nil || len(page) != 1 {
+		t.Fatalf("got %+v %v", page, err)
+	}
+	if err := svc.Delete(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Get(ctx, created.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("got %v", err)
+	}
+}
