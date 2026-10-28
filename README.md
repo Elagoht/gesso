@@ -13,7 +13,7 @@ nothing from it. The standard library and `golang.org/x/crypto`, nothing else.
 - **Transactions that nest**: `db.InTx` over `*sql.DB`, or as a savepoint inside a
   test's transaction.
 - **Migrations** per module, timestamped, checksummed, locked.
-- **Contracts with fakes**: storage, cache, mail, clock, password hashing — each
+- **Contracts with fakes**: storage, cache, mail, clock, password hashing, locks — each
   fake held to the same conformance suite as the real implementation.
 - **gessotest**: in-process client, problem assertions, rolled-back test
   transactions.

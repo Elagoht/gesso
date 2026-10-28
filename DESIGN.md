@@ -161,6 +161,7 @@ implementations are usual. Everything else the application defines, consumer-sid
 | `Clock` | `clock` | `System` | `Manual` | — |
 | `Hasher` | `password` | `Argon2id` (`x/crypto`, PHC) | `Argon2id{Cheap}` | — |
 | `token.Store` | `token` | SQL | memory | `tokentest.Run` |
+| `Locker` | `lock` | `Postgres` (session advisory locks) | `Memory` | `locktest.Run` |
 
 Every suite runs against both the reference implementation and the fake, so the
 fake cannot drift from what it stands in for. Any implementation — gesso-s3, the
@@ -170,8 +171,10 @@ Contracts are bytes and plain types, never `any`: `cache.GetOrLoad[T]` puts the
 types back as JSON. Storage holds bytes under keys; what a file is, the
 application records in its database.
 
-`Locker` and `Queue` (an outbox) move to v0.3: both need a live Postgres to be
-tested honestly, which v0.2 does not have.
+A Postgres lock lives on the connection that took it, held out of the pool while
+the lock is; a connection that could not release its lock is ended, never
+returned to the pool, where it would hold the lock for ever. `Queue` (an outbox)
+is v0.4.
 
 ## 9. Database
 

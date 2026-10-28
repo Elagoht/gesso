@@ -13,6 +13,8 @@ import (
 	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/db"
 	"github.com/Elagoht/gesso/gessotest"
+	"github.com/Elagoht/gesso/lock"
+	"github.com/Elagoht/gesso/lock/locktest"
 	"github.com/Elagoht/gesso/migrate"
 	"github.com/Elagoht/gesso/token"
 	"github.com/Elagoht/gesso/token/tokentest"
@@ -127,4 +129,9 @@ func TestPostgresTestTransactionSurvivesAnError(t *testing.T) {
 	if n := gessotest.Decode[tagOut](c.Get("/tags/count").ExpectStatus(200)).ID; n != 2 {
 		t.Fatalf("count %d", n)
 	}
+}
+
+func TestPostgresLocker(t *testing.T) {
+	d := pgDB(t)
+	locktest.Run(t, func(*testing.T) lock.Locker { return lock.NewPostgres(d) })
 }
