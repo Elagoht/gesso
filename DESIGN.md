@@ -187,6 +187,10 @@ tested honestly, which v0.2 does not have.
   under a lock so two replicas never migrate at once. Dialects (Postgres, MySQL,
   SQLite) are SQL text plus driver-error translation, so the error mapper reads
   `Constraint` from the driver's error, never a regex.
+- **A library's migrations keep their own history.** A gesso package that brings
+  tables (`token`) has fixed versions; in the application's history they would
+  sort before migrations it already ran and stop `Up`. So each applies through its
+  own `Migrate` into its own table (`gesso_token_migrations`).
 - **Code generation**: typed query functions from annotated SQL. Generated files are
   never edited; `gesso add module` scaffolds once and then the code is the
   application's.
@@ -243,6 +247,9 @@ shared process.
   argon2id comes from `x/crypto`, in the one module (no `gesso/auth` split).
 - 2026-10-28 — `golang.org/x/crypto` (argon2) is gesso's first dependency; the
   go directive is 1.26.10, collage's floor.
+- 2026-10-28 — Tokens are `gso_` + 32 random bytes; only the SHA-256 is stored;
+  every request checks the store, so revocation is immediate. Bearer header only.
+  An Authorization header of another scheme is not gesso's and is anonymous.
 - 2026-10-28 — Two processes are acceptable and first-class; one process is not
   required.
 - 2026-10-28 — Mockable: consumer-side interfaces, fakes, `gessotest`.

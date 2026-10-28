@@ -10,12 +10,15 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/db"
 	"github.com/Elagoht/gesso/gessotest"
 	"github.com/Elagoht/gesso/integration/notes"
 	"github.com/Elagoht/gesso/migrate"
+	"github.com/Elagoht/gesso/token"
+	"github.com/Elagoht/gesso/token/tokentest"
 	"modernc.org/sqlite"
 )
 
@@ -233,3 +236,59 @@ func TestMigrations(t *testing.T) {
 		t.Fatal("the failed migration's first statement outlived it")
 	}
 }
+
+func TestTokenSQLStore(t *testing.T) {
+	d := openDB(t)
+	if err := token.Migrate(context.Background(), d, migrate.SQLite); err != nil {
+		t.Fatal(err)
+	}
+	tokentest.Run(t, func(t *testing.T) token.Store {
+		return token.NewSQLStore(gessotest.Tx(t, d), migrate.SQLite)
+	})
+}
+
+// A whole login flow through the app: issue at login, read with the bearer
+// header, refuse after logout.
+func TestBearerFlow(t *testing.T) {
+	// The application's migrations ran first and are newer; the token migrations
+	// keep a history of their own and still apply.
+	d := migrated(t)
+	if err := token.Migrate(context.Background(), d, migrate.SQLite); err != nil {
+		t.Fatal(err)
+	}
+	tx := gessotest.Tx(t, d)
+	iss := token.NewIssuer(token.NewSQLStore(tx, migrate.SQLite), nil, time.Hour)
+	type loginIn struct {
+		User string `json:"user" validate:"required"`
+	}
+	type loginOut struct {
+		Token string `json:"token"`
+	}
+	app := gessotest.New(t, gesso.Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}, moduleFunc(func(r *gesso.Router) {
+		r.Authenticate(iss)
+		r.Post("/login", gesso.Handle(func(ctx context.Context, in loginIn) (loginOut, error) {
+			raw, _, err := iss.Issue(ctx, in.User)
+			return loginOut{Token: raw}, err
+		}))
+		r.Post("/logout", gesso.Handle(func(ctx context.Context, _ gesso.Empty) (gesso.Empty, error) {
+			return gesso.Empty{}, iss.Revoke(ctx, token.FromRequest(gesso.Request(ctx)))
+		}, gesso.Guards(gesso.RequireIdentity)))
+		r.Get("/me", gesso.Handle(func(ctx context.Context, _ gesso.Empty) (loginOut, error) {
+			id, _ := gesso.IdentityFrom(ctx)
+			return loginOut{Token: id.Subject}, nil
+		}, gesso.Guards(gesso.RequireIdentity)))
+	}))
+	c := gessotest.NewClient(t, app)
+	c.Get("/me").ExpectProblem(401, "unauthenticated")
+	raw := gessotest.Decode[loginOut](c.Post("/login", gessotest.JSON(loginIn{User: "ada"})).ExpectStatus(200)).Token
+	authed := c.WithHeader("Authorization", "Bearer "+raw)
+	if got := gessotest.Decode[loginOut](authed.Get("/me").ExpectStatus(200)); got.Token != "ada" {
+		t.Fatalf("got %+v", got)
+	}
+	authed.Post("/logout", gessotest.Body{}).ExpectStatus(204)
+	authed.Get("/me").ExpectProblem(401, "invalid_token")
+}
+
+type moduleFunc func(r *gesso.Router)
+
+func (f moduleFunc) Routes(r *gesso.Router) { f(r) }
