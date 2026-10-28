@@ -1,0 +1,140 @@
+# The gate gesso has to pass before anyone depends on a commit.
+#
+# One job per question, so a red tick says which failed: does the library hold,
+# does it hold against a real PostgreSQL, does the CLI generate code that builds
+# and runs, and is it free of what the linter and the vulnerability database know.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  library:
+    name: library
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          # The newest 1.26 release, not whatever the runner image cached: a
+          # standard-library security fix is a patch release.
+          check-latest: true
+          cache: true
+
+      # The nested modules too: each is formatted, and each is vetted with its
+      # own go.mod.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: |
+          go vet ./...
+          (cd integration && go vet ./...)
+          (cd cmd/gesso && go vet ./...)
+
+      # -race is the point: the router, the caches, the locks and the worker are
+      # all shared between goroutines.
+      - name: go test -race
+        run: go test -race ./...
+
+  integration:
+    name: integration (PostgreSQL)
+    runs-on: ubuntu-latest
+    # A real server, given to the suites through GESSO_POSTGRES_DSN; without it
+    # they would start an embedded one. Each test creates a database of its own,
+    # so the user needs CREATEDB (the image's superuser has it).
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: gesso
+          POSTGRES_PASSWORD: gesso
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U gesso"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      GESSO_POSTGRES_DSN: postgres://gesso:gesso@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache: true
+          cache-dependency-path: integration/go.sum
+
+      # A skipped Postgres test here would mean "unverified", not "passed": with
+      # a server provided, a skip is a failure.
+      - name: go test
+        working-directory: integration
+        run: |
+          go test -count=1 -v ./... 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          if grep -q "POSTGRES UNVERIFIED" test.log; then
+            echo "a PostgreSQL test skipped although a server was given"
+            exit 1
+          fi
+          exit $status
+
+  cli:
+    name: cli
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache: true
+          cache-dependency-path: cmd/gesso/go.sum
+
+      # These tests scaffold and generate into temporary modules, then vet,
+      # test and run them — on SQLite and on an embedded PostgreSQL the
+      # generated tests download — so a template that stops compiling fails here.
+      - name: go test
+        working-directory: cmd/gesso
+        run: go test -count=1 ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache: true
+
+      # Pinned, so a new release of a tool cannot turn a commit red that was
+      # green yesterday without anything here changing.
+      - name: staticcheck
+        run: |
+          go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+          (cd integration && go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...)
+          (cd cmd/gesso && go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...)
+
+      # Not pinned to a database snapshot: a vulnerability published today should
+      # fail today's build. It reports only what the code calls. The integration
+      # module is test-only and ships nothing, so it is not scanned.
+      - name: govulncheck
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+          (cd cmd/gesso && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...)

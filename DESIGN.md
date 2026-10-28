@@ -370,8 +370,11 @@ shared process.
   violation classifier have unit tests only. PostgreSQL runs every suite:
   migrations with the advisory lock under contention, InTx and savepoints, the SQL
   token store, the pgx classifier through db.Errors.
-- **No CI** until the repository exists. The suites already take
-  `GESSO_POSTGRES_DSN`, so a CI job only needs a Postgres service.
+- **CI** (`.github/workflows/ci.yml`): library (gofmt, vet, `-race`),
+  integration against a `postgres:18` service through `GESSO_POSTGRES_DSN` (a
+  Postgres test that skips there fails the job), the CLI's generate-and-run tests,
+  and lint (staticcheck v0.7.0, govulncheck). No MySQL job: MySQL stays
+  unverified.
 - **Releasing the CLI.** `cmd/gesso` and `integration/` use gesso through a
   `replace` to `../`. `go install …/cmd/gesso@latest` refuses a module with a
   replace, so a release tags gesso first, then points `cmd/gesso` at that version.
