@@ -8,5 +8,5 @@ import (
 )
 
 func TestMemoryStore(t *testing.T) {
-	tokentest.Run(t, func(*testing.T) token.Store { return token.NewMemoryStore() })
+	tokentest.Run(t, func(*testing.T) token.Store { return token.NewMemory() })
 }

@@ -20,13 +20,18 @@ var migrations embed.FS
 // MigrationsTable is where Migrate records the rate limit's migrations.
 const MigrationsTable = "gesso_ratelimit_migrations"
 
-// Migrate creates the gesso_ratelimit table, in a history of its own.
-func Migrate(ctx context.Context, d *sql.DB, dialect migrate.Dialect) error {
+// Migrations create the gesso_ratelimit table in dialect.
+func Migrations(dialect migrate.Dialect) (fs.FS, error) {
 	dir := map[migrate.Dialect]string{migrate.Postgres: "postgres", migrate.MySQL: "mysql", migrate.SQLite: "sqlite"}[dialect]
 	if dir == "" {
-		return errors.New("ratelimit: no migrations for this dialect: PostgreSQL, MySQL or SQLite")
+		return nil, errors.New("ratelimit: no migrations for this dialect: PostgreSQL, MySQL or SQLite")
 	}
-	files, err := fs.Sub(migrations, "migrations/"+dir)
+	return fs.Sub(migrations, "migrations/"+dir)
+}
+
+// Migrate creates the gesso_ratelimit table, in a history of its own.
+func Migrate(ctx context.Context, d *sql.DB, dialect migrate.Dialect) error {
+	files, err := Migrations(dialect)
 	if err != nil {
 		return err
 	}

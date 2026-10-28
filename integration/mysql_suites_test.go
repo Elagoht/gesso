@@ -60,7 +60,7 @@ func TestMySQLTokenStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokentest.Run(t, func(t *testing.T) token.Store {
-		return token.NewSQLStore(gessotest.Tx(t, d), migrate.MySQL)
+		return token.NewSQL(gessotest.Tx(t, d), migrate.MySQL)
 	})
 }
 

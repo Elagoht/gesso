@@ -1,7 +1,7 @@
 // Package tokentest holds every token.Store to the same contract, through an
 // Issuer driven by a manual clock.
 //
-//	tokentest.Run(t, func(t *testing.T) token.Store { return token.NewSQLStore(tx, migrate.Postgres) })
+//	tokentest.Run(t, func(t *testing.T) token.Store { return token.NewSQL(tx, migrate.Postgres) })
 package tokentest
 
 import (
@@ -132,7 +132,7 @@ func Run(t *testing.T, open func(t *testing.T) token.Store) {
 				t.Errorf("%q: %v", bad, err)
 			}
 		}
-		other, _, _ := token.NewIssuer(token.NewMemoryStore(), nil, time.Hour).Issue(ctx, "ada")
+		other, _, _ := token.NewIssuer(token.NewMemory(), nil, time.Hour).Issue(ctx, "ada")
 		if _, err := iss.Verify(ctx, other); !errors.Is(err, token.ErrInvalid) {
 			t.Fatalf("a token this store never issued: %v", err)
 		}

@@ -58,7 +58,7 @@ func TestPostgresTokenStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokentest.Run(t, func(t *testing.T) token.Store {
-		return token.NewSQLStore(gessotest.Tx(t, d), migrate.Postgres)
+		return token.NewSQL(gessotest.Tx(t, d), migrate.Postgres)
 	})
 }
 

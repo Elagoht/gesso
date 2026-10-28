@@ -45,7 +45,7 @@ func uploadApp(t *testing.T) *App {
 			_, _ = io.ReadFull(rc, head)
 			return uploadOut{Title: in.Title, Tags: in.Tags, Filename: in.Avatar.Filename, Type: in.Avatar.ContentType,
 				Size: in.Avatar.Size, Head: string(head[1:]), Extra: len(in.Extra)}, nil
-		}, MaxBody(4<<10))
+		}, MaxBodyBytes(4<<10))
 	}))
 }
 

@@ -141,9 +141,6 @@ type SQL struct {
 	dialect migrate.Dialect
 }
 
-// Postgres is the queue in a PostgreSQL table, as NewPostgres makes it.
-type Postgres = SQL
-
 // NewPostgres claims and settles jobs through d (the pool); c tells the time (nil
 // for the system clock).
 func NewPostgres(d db.DB, c clock.Clock) *SQL { return newSQL(d, c, migrate.Postgres) }

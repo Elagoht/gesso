@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"errors"
+	"io/fs"
 	"slices"
 	"strings"
 	"sync"
@@ -14,12 +15,14 @@ import (
 	"github.com/Elagoht/gesso/migrate"
 )
 
-// Migrations create the table SQLStore uses. Apply them with Migrate, not beside
-// the application's own: their versions are fixed in gesso, so in the
-// application's history they would sort before migrations it already ran.
-//
 //go:embed migrations
-var Migrations embed.FS
+var migrations embed.FS
+
+// Migrations create the table SQL uses; one set serves every dialect. Apply
+// them with Migrate, not beside the application's own: their versions are fixed
+// in gesso, so in the application's history they would sort before migrations
+// it already ran.
+func Migrations(migrate.Dialect) (fs.FS, error) { return fs.Sub(migrations, "migrations") }
 
 // MigrationsTable is where Migrate records the token migrations: a history of
 // their own, apart from the application's.
@@ -27,7 +30,11 @@ const MigrationsTable = "gesso_token_migrations"
 
 // Migrate applies the token migrations to d.
 func Migrate(ctx context.Context, d *sql.DB, dialect migrate.Dialect) error {
-	m, err := migrate.New(d, dialect, Migrations)
+	files, err := Migrations(dialect)
+	if err != nil {
+		return err
+	}
+	m, err := migrate.New(d, dialect, files)
 	if err != nil {
 		return err
 	}
@@ -36,19 +43,19 @@ func Migrate(ctx context.Context, d *sql.DB, dialect migrate.Dialect) error {
 	return err
 }
 
-// SQLStore keeps records in the gesso_tokens table.
-type SQLStore struct {
+// SQL keeps records in the gesso_tokens table.
+type SQL struct {
 	db db.DB
 	ph func(int) string
 }
 
-// NewSQLStore keeps records in d, writing parameters as dialect does.
-func NewSQLStore(d db.DB, dialect migrate.Dialect) *SQLStore {
-	return &SQLStore{db: d, ph: dialect.Placeholder}
+// NewSQL keeps records in d, writing parameters as dialect does.
+func NewSQL(d db.DB, dialect migrate.Dialect) *SQL {
+	return &SQL{db: d, ph: dialect.Placeholder}
 }
 
 // Save stores r under hash.
-func (s *SQLStore) Save(ctx context.Context, hash string, r Record) error {
+func (s *SQL) Save(ctx context.Context, hash string, r Record) error {
 	_, err := s.db.ExecContext(ctx,
 		"INSERT INTO gesso_tokens (hash, subject, roles, created_at, expires_at) VALUES ("+
 			s.ph(1)+", "+s.ph(2)+", "+s.ph(3)+", "+s.ph(4)+", "+s.ph(5)+")",
@@ -57,7 +64,7 @@ func (s *SQLStore) Save(ctx context.Context, hash string, r Record) error {
 }
 
 // Find returns the record under hash.
-func (s *SQLStore) Find(ctx context.Context, hash string) (Record, error) {
+func (s *SQL) Find(ctx context.Context, hash string) (Record, error) {
 	var r Record
 	var roles string
 	var created, expires int64
@@ -79,19 +86,19 @@ func (s *SQLStore) Find(ctx context.Context, hash string) (Record, error) {
 }
 
 // Delete removes hash.
-func (s *SQLStore) Delete(ctx context.Context, hash string) error {
+func (s *SQL) Delete(ctx context.Context, hash string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM gesso_tokens WHERE hash = "+s.ph(1), hash)
 	return err
 }
 
 // DeleteSubject removes every record of subject.
-func (s *SQLStore) DeleteSubject(ctx context.Context, subject string) error {
+func (s *SQL) DeleteSubject(ctx context.Context, subject string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM gesso_tokens WHERE subject = "+s.ph(1), subject)
 	return err
 }
 
 // DeleteExpired removes the records expired at or before t.
-func (s *SQLStore) DeleteExpired(ctx context.Context, t time.Time) (int64, error) {
+func (s *SQL) DeleteExpired(ctx context.Context, t time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx, "DELETE FROM gesso_tokens WHERE expires_at <= "+s.ph(1), t.UnixMilli())
 	if err != nil {
 		return 0, err
@@ -99,18 +106,18 @@ func (s *SQLStore) DeleteExpired(ctx context.Context, t time.Time) (int64, error
 	return res.RowsAffected()
 }
 
-// MemoryStore keeps records in memory: for tests, and for a single process that
+// Memory keeps records in memory: for tests, and for a single process that
 // may forget its sessions on restart.
-type MemoryStore struct {
+type Memory struct {
 	mu      sync.Mutex
 	records map[string]Record
 }
 
-// NewMemoryStore is an empty store.
-func NewMemoryStore() *MemoryStore { return &MemoryStore{records: map[string]Record{}} }
+// NewMemory is an empty store.
+func NewMemory() *Memory { return &Memory{records: map[string]Record{}} }
 
 // Save stores r under hash.
-func (m *MemoryStore) Save(_ context.Context, hash string, r Record) error {
+func (m *Memory) Save(_ context.Context, hash string, r Record) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.records[hash]; ok {
@@ -122,7 +129,7 @@ func (m *MemoryStore) Save(_ context.Context, hash string, r Record) error {
 }
 
 // Find returns the record under hash.
-func (m *MemoryStore) Find(_ context.Context, hash string) (Record, error) {
+func (m *Memory) Find(_ context.Context, hash string) (Record, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.records[hash]
@@ -134,7 +141,7 @@ func (m *MemoryStore) Find(_ context.Context, hash string) (Record, error) {
 }
 
 // Delete removes hash.
-func (m *MemoryStore) Delete(_ context.Context, hash string) error {
+func (m *Memory) Delete(_ context.Context, hash string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.records, hash)
@@ -142,7 +149,7 @@ func (m *MemoryStore) Delete(_ context.Context, hash string) error {
 }
 
 // DeleteSubject removes every record of subject.
-func (m *MemoryStore) DeleteSubject(_ context.Context, subject string) error {
+func (m *Memory) DeleteSubject(_ context.Context, subject string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for h, r := range m.records {
@@ -154,7 +161,7 @@ func (m *MemoryStore) DeleteSubject(_ context.Context, subject string) error {
 }
 
 // DeleteExpired removes the records expired at or before t.
-func (m *MemoryStore) DeleteExpired(_ context.Context, t time.Time) (int64, error) {
+func (m *Memory) DeleteExpired(_ context.Context, t time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var n int64

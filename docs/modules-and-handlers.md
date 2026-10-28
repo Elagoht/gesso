@@ -48,7 +48,7 @@ type AvatarIn struct {
 	Extra  []*gesso.File `form:"extra" accept:"image/*"`
 }
 
-SetAvatar.Handle(r, m.setAvatar, gesso.MaxBody(10<<20)) // the route takes up to 10 MiB
+SetAvatar.Handle(r, m.setAvatar, gesso.MaxBodyBytes(10<<20)) // the route takes up to 10 MiB
 ```
 
 A file's `ContentType` is read from its first bytes, not from the client;

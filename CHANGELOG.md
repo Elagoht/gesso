@@ -18,6 +18,13 @@ change.
   while the app stops. **`Config.DrainDelay`** keeps serving that long after
   SIGTERM.
 - `gesso new` turns on the access log and health, with a database check.
+- *Change, before v1:* names made consistent across packages —
+  `token.MemoryStore`/`SQLStore` are `token.Memory`/`token.SQL`
+  (`NewMemory`, `NewSQL`), as in queue, ratelimit, cache and storage;
+  `token.Migrations` and the new `ratelimit.Migrations` are functions of the
+  dialect, as `queue.Migrations` is; the `queue.Postgres` alias is gone
+  (`queue.SQL`); the route option `MaxBody` is `MaxBodyBytes`, as the Config
+  field is.
 
 ## v0.8.0 — 2026-10-29
 

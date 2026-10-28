@@ -62,7 +62,7 @@ var ErrInvalidForm = BadRequest("invalid_form", "the body is not a valid form")
 
 // MaxBody bounds this route's request body to n bytes instead of the app's
 // MaxBodyBytes: an upload route needs more.
-func MaxBody(n int64) HandleOption {
+func MaxBodyBytes(n int64) HandleOption {
 	return func(c *handleConfig) { c.maxBody = n }
 }
 

@@ -3,7 +3,7 @@
 ## Bearer tokens
 
 ```go
-tokens := token.NewIssuer(token.NewSQLStore(pool, migrate.Postgres), nil, 30*24*time.Hour)
+tokens := token.NewIssuer(token.NewSQL(pool, migrate.Postgres), nil, 30*24*time.Hour)
 // token.Migrate(ctx, pool, migrate.Postgres) creates its table
 
 app, err := gesso.New(gesso.Config{Authenticator: tokens}, auth.New(tokens), notes.New(…))

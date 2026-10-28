@@ -269,7 +269,7 @@ func TestTokenSQLStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokentest.Run(t, func(t *testing.T) token.Store {
-		return token.NewSQLStore(gessotest.Tx(t, d), migrate.SQLite)
+		return token.NewSQL(gessotest.Tx(t, d), migrate.SQLite)
 	})
 }
 
@@ -283,7 +283,7 @@ func TestBearerFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	tx := gessotest.Tx(t, d)
-	iss := token.NewIssuer(token.NewSQLStore(tx, migrate.SQLite), nil, time.Hour)
+	iss := token.NewIssuer(token.NewSQL(tx, migrate.SQLite), nil, time.Hour)
 	type loginIn struct {
 		User string `json:"user" validate:"required"`
 	}
