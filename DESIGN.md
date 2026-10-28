@@ -126,15 +126,22 @@ runtime container never is.
 ## 7. Request pipeline
 
 ```
-middleware → guard → decode + validate → interceptor → handler → error mapper
+middleware → authenticate → guard → decode + validate → interceptor → handler → error mapper
 ```
 
 - **Middleware**: plain `func(http.Handler) http.Handler`.
-- **Guard**: decides whether the request may proceed (identity, role).
+- **Authenticate**: an `Authenticator` finds the identity (`gesso.IdentityFrom(ctx)`).
+  No credential is anonymous; a credential that is there but malformed, expired or
+  revoked is a 401, never anonymous.
+- **Guard**: decides whether the request may proceed (identity, role), before the
+  input is read, so a refused caller learns nothing of what the input should be.
+  Router guards cover plain handlers too; `gesso.Guards` adds a route's own.
 - **Decode + validate**: path, query and body into the handler's input type.
   Query fields are declarative: `query:"take" default:"20" validate:"max=50"`.
   A body cannot set a path, query or header field; such a key is rejected.
-- **Interceptor**: wraps the handler (timing, transactions, response shaping).
+- **Interceptor**: wraps a typed handler's call (timing, deadlines, logging,
+  translating its error). Not transactions: the DB is passed explicitly and
+  `db.InTx` is the service's to call.
 - **Error mapper**: typed errors to problem+json. Field names in validation errors
   are the JSON names, not the Go names; messages are i18n keys.
 
@@ -181,9 +188,10 @@ any implementation, the application's own included, must pass.
 
 Places it tries to creep in, and the answer for each:
 
-- problem+json extension fields: typed per error, `Problem[T]`.
+- problem+json extension members: `gesso.Extend(err, T)`, read back in tests with
+  `gessotest.Extension[T]`.
 - validation parameters: typed rules, not `map[string]any`.
-- context values: typed keys and typed accessors (`gesso.Identity(ctx)`).
+- context values: typed keys and typed accessors (`gesso.IdentityFrom(ctx)`).
 - handler output: generic `Out`, never `interface{}`.
 
 ## 11. Running with collage
@@ -196,9 +204,11 @@ shared process.
   `http.StripPrefix`. The OpenAPI server URL follows it.
 - **Lifecycle**: `gesso.Run` handles signals and shuts down in order: HTTP, then
   jobs, then connections. `Start` / `Shutdown` are exported for the mounted case.
-- **Identity**: an `Authenticator` interface behind `gesso.Identity(ctx)`, so where
-  the identity comes from (a token, a signed header from collage, a session) is the
-  application's choice.
+- **Identity across processes**: collage's login action calls gesso, receives an
+  opaque token, keeps it in collage's session, and sends it as
+  `Authorization: Bearer` on every server-to-server call. gesso reads bearer
+  tokens only — never a cookie, which would make a JSON API forgeable from another
+  site (a cross-site form can POST an empty body).
 - **Typed client**: generated from the same routes, for collage (or anything) to call
   gesso over HTTP.
 

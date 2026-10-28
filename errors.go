@@ -1,11 +1,11 @@
 package gesso
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -28,6 +28,7 @@ type Error struct {
 	Detail string
 	Fields []validate.FieldError
 	cause  error
+	ext    []byte // a JSON object of extension members, from Extend
 }
 
 // NewError declares an error answered with status.
@@ -73,6 +74,37 @@ func (e *Error) WithDetail(detail string) *Error {
 func (e *Error) WithFields(fields ...validate.FieldError) *Error {
 	c := *e
 	c.Fields = append(append([]validate.FieldError(nil), e.Fields...), fields...)
+	return &c
+}
+
+// Extend is a copy of e whose problem carries ext's fields as extension
+// members, beside type, title, status and the rest:
+//
+//	type retry struct{ RetryAfter int `json:"retryAfter"` }
+//	return gesso.Extend(ErrRateLimited, retry{RetryAfter: 30})
+//
+// ext must encode as a JSON object that does not redefine a standard member;
+// anything else is a programmer error, and Extend panics. Wrap, WithDetail and
+// WithFields keep the extension; errors.Is still matches the declaration.
+func Extend[T any](e *Error, ext T) *Error {
+	data, err := json.Marshal(ext)
+	if err != nil {
+		panic("gesso: Extend: " + err.Error())
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil || members == nil {
+		panic(fmt.Sprintf("gesso: Extend: %T does not encode as a JSON object", ext))
+	}
+	for _, std := range []string{"type", "title", "status", "code", "detail", "instance", "errors"} {
+		if _, ok := members[std]; ok {
+			panic(fmt.Sprintf("gesso: Extend: %T redefines the standard member %q", ext, std))
+		}
+	}
+	c := *e
+	c.ext = nil
+	if len(members) > 0 {
+		c.ext = data
+	}
 	return &c
 }
 
@@ -170,14 +202,21 @@ func (ew errorWriter) write(w http.ResponseWriter, r *http.Request, err error) {
 		Type: "about:blank", Title: http.StatusText(e.Status), Status: e.Status,
 		Code: e.Code, Detail: detail, Instance: r.URL.Path, Errors: e.Fields,
 	}
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(p); err != nil {
+	body, err := json.Marshal(p)
+	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+	if e.ext != nil {
+		// Both are JSON objects: splice the extension's members into the problem.
+		body = append(append(body[:len(body)-1], ','), e.ext[1:]...)
+	}
 	h := w.Header()
+	if e.Status == http.StatusUnauthorized && h.Get("WWW-Authenticate") == "" {
+		h.Set("WWW-Authenticate", "Bearer")
+	}
 	h.Set("Content-Type", "application/problem+json")
 	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(e.Status)
-	_, _ = w.Write(buf.Bytes())
+	_, _ = w.Write(append(body, '\n'))
 }

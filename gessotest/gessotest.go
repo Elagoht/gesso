@@ -215,6 +215,14 @@ func (r *Response) ExpectProblem(status int, code string) gesso.Problem {
 	return p
 }
 
+// Extension decodes a problem's extension members (gesso.Extend) as T, failing
+// the test if the answer is not a problem.
+func Extension[T any](r *Response) T {
+	r.t.Helper()
+	r.Problem()
+	return Decode[T](r)
+}
+
 // Decode decodes the answer's JSON body as T, failing the test if it cannot.
 func Decode[T any](r *Response) T {
 	r.t.Helper()

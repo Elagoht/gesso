@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -12,33 +13,82 @@ import (
 type Middleware func(http.Handler) http.Handler
 
 // Router registers routes on an App. A Group is a surface: routes under a prefix
-// with a middleware stack of their own (an app API, an admin API, a partner API
-// with signed requests).
+// with a pipeline of their own (an app API, an admin API, a partner API with
+// signed requests).
 //
-// Middleware applies to the routes registered after it, so Use comes first; a
-// Use after a route or a group in the same router is reported by New, because it
+// A request passes, in order: the middleware (Use), the authenticator
+// (Authenticate), the guards (Guard, then a route's own), the decoding and
+// validation of a typed handler's input, the interceptors (Intercept), and the
+// handler.
+//
+// Each of these applies to the routes registered after it, so they come first; one
+// after a route or a group in the same router is reported by New, because it
 // would silently skip what came before it.
 type Router struct {
 	app    *App
 	prefix string
 	mws    []Middleware
+	auth   Authenticator
+	guards []Guard
+	icpts  []Interceptor
 	used   bool // a route or group was registered here
 }
 
 // Use adds middleware to every route registered on this router and its groups
 // from now on.
 func (r *Router) Use(mws ...Middleware) {
-	if r.used {
-		r.app.fail(fmt.Errorf("gesso: Use under %q after its routes: register middleware first", r.full("")))
+	if r.late("Use") || hasNil(r, "middleware", mws) {
 		return
 	}
-	for _, mw := range mws {
-		if mw == nil {
-			r.app.fail(fmt.Errorf("gesso: nil middleware under %q", r.full("")))
-			return
+	r.mws = append(r.mws, mws...)
+}
+
+// Authenticate finds each request's identity with a, for IdentityFrom and the
+// guards. It replaces an authenticator the router inherited.
+func (r *Router) Authenticate(a Authenticator) {
+	if r.late("Authenticate") {
+		return
+	}
+	if a == nil {
+		r.app.fail(fmt.Errorf("gesso: nil authenticator under %q", r.full("")))
+		return
+	}
+	r.auth = a
+}
+
+// Guard adds guards to every route registered on this router and its groups
+// from now on, typed or not.
+func (r *Router) Guard(guards ...Guard) {
+	if r.late("Guard") || hasNil(r, "guard", guards) {
+		return
+	}
+	r.guards = append(r.guards, guards...)
+}
+
+// Intercept adds interceptors to every typed handler registered on this router
+// and its groups from now on. The first one added is the outermost.
+func (r *Router) Intercept(icpts ...Interceptor) {
+	if r.late("Intercept") || hasNil(r, "interceptor", icpts) {
+		return
+	}
+	r.icpts = append(r.icpts, icpts...)
+}
+
+func (r *Router) late(what string) bool {
+	if r.used {
+		r.app.fail(fmt.Errorf("gesso: %s under %q after its routes: set up the pipeline first", what, r.full("")))
+	}
+	return r.used
+}
+
+func hasNil[T any](r *Router, what string, fns []T) bool {
+	for _, fn := range fns {
+		if reflect.ValueOf(fn).IsNil() {
+			r.app.fail(fmt.Errorf("gesso: nil %s under %q", what, r.full("")))
+			return true
 		}
 	}
-	r.mws = append(r.mws, mws...)
+	return false
 }
 
 // Group registers a surface under prefix: fn adds its middleware and routes, which
@@ -49,7 +99,10 @@ func (r *Router) Group(prefix string, fn func(*Router)) {
 		return
 	}
 	r.used = true
-	fn(&Router{app: r.app, prefix: r.prefix + strings.TrimSuffix(prefix, "/"), mws: slices.Clone(r.mws)})
+	fn(&Router{
+		app: r.app, prefix: r.prefix + strings.TrimSuffix(prefix, "/"), auth: r.auth,
+		mws: slices.Clone(r.mws), guards: slices.Clone(r.guards), icpts: slices.Clone(r.icpts),
+	})
 }
 
 // Handle registers h for method and pattern. A pattern is net/http's: "/events",
@@ -67,10 +120,18 @@ func (r *Router) Handle(method, pattern string, h http.Handler) {
 	}
 	r.used = true
 	if b, ok := h.(binder); ok {
-		if err := b.bind(r.app, full); err != nil {
+		bound, err := b.bind(r.app, route{method: method, pattern: full, icpts: slices.Clone(r.icpts)})
+		if err != nil {
 			r.app.fail(fmt.Errorf("gesso: %s %s: %w", method, full, err))
 			return
 		}
+		h = bound
+	}
+	if len(r.guards) > 0 {
+		h = guarded{guards: slices.Clone(r.guards), next: h, errs: &r.app.errs}
+	}
+	if r.auth != nil {
+		h = authenticating{auth: r.auth, next: h, errs: &r.app.errs}
 	}
 	for _, mw := range slices.Backward(r.mws) {
 		h = mw(h)
@@ -107,9 +168,15 @@ func checkPath(p string) error {
 	return nil
 }
 
-// binder is a handler that learns its route when it is registered: the typed
-// handlers check their path fields against the pattern and take the app's
-// settings.
+// binder is a handler that learns its route when it is registered: a typed
+// handler checks its path fields against the pattern and returns a copy bound to
+// the route and the app's settings.
 type binder interface {
-	bind(app *App, pattern string) error
+	bind(app *App, rt route) (http.Handler, error)
+}
+
+type route struct {
+	method  string
+	pattern string
+	icpts   []Interceptor
 }
