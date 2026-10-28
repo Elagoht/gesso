@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.7.0 released** (2026-10-29). §12 lists the phases.
+Status: **v0.7.0 released; v0.8 on main** (2026-10-29). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -167,6 +167,7 @@ implementations are usual. Everything else the application defines, consumer-sid
 | `token.Store` | `token` | SQL | memory | `tokentest.Run` |
 | `Locker` | `lock` | `Postgres` (advisory locks), `MySQL` (`GET_LOCK`) | `Memory` | `locktest.Run` |
 | `Queue` | `queue` | `SQL`: PostgreSQL (`SKIP LOCKED`), MySQL, SQLite (outbox) | `Memory` | `queuetest.Run` |
+| `ratelimit.Store` | `ratelimit` | `SQL` (one table every replica shares) | `Memory` (per process, bounded) | `ratelimittest.Run` |
 
 Every suite runs against both the reference implementation and the fake, so the
 fake cannot drift from what it stands in for. Any implementation — gesso-s3, the
@@ -201,11 +202,18 @@ and SQLite, when the UPDATE's "still due" is removed. Plain `FOR UPDATE` would
 also take each once on PostgreSQL; `SKIP LOCKED` is there so claimers do not
 wait on each other, which no test measures.
 
-**Not contracts, but ready:** `ratelimit` (a token bucket per client, in memory,
-as middleware answering 429 with Retry-After; the client is the connection's
-address, or X-Forwarded-For's rightmost untrusted hop when the connection is from
-a trusted proxy — never the header's first entry, which the client writes) and
-`events` (a typed, in-process bus: `Topic[T]` declared by the publisher,
+`ratelimit` is middleware answering 429 with Retry-After. The client is the
+connection's address, or X-Forwarded-For's rightmost untrusted hop when the
+connection is from a trusted proxy — never the header's first entry, which the
+client writes. Its state is GCRA's one instant per client (when the bucket is
+next empty), so the SQL store decides a request with one UPDATE whose WHERE says
+"the request fits": the database serialises two at once, and the suite's twenty
+concurrent requests through two stores let exactly the burst in (all twenty,
+once the WHERE is removed). A store that fails lets the request through and
+logs: a limiter that cannot count must not take the API down. Purge deletes
+rows whose bucket is full again.
+
+**Not a contract, but ready:** `events` (a typed, in-process bus: `Topic[T]` declared by the publisher,
 subscribers run in order inside `Publish`, their errors and panics returned
 joined; durable work goes through a subscriber that enqueues a queue job in the
 publisher's transaction).
@@ -308,6 +316,7 @@ shared process.
 7. **v0.7** — `gesso new` and wiring generation (`add module` adds the module
    to the app), `events`, `ratelimit`, more validate rules and `dive`, the queue
    on MySQL and SQLite, the lock discard tested, CI actions on Node 24.
+8. **v0.8** — `ratelimit.Store`: Memory and SQL (shared by replicas), GCRA.
 
 ## 13. Decisions
 
@@ -457,12 +466,9 @@ shared process.
 
 ## 14. Open questions
 
-- **Rate limits across replicas.** `ratelimit` counts per process. A limit
-  shared by every replica needs a shared store (Redis, the database); the
-  interface for one waits for an application that needs it.
-- **Events across processes.** `events` is in-process. Across processes the
-  queue is the transport: a subscriber enqueues, a worker in the other process
-  handles.
+- **Events across processes** are not `events`' job: it is in-process, and
+  across processes the queue is the transport — a subscriber enqueues in the
+  publisher's transaction, a worker in the other process handles.
 - **CI** (`.github/workflows/ci.yml`): library (gofmt, vet, `-race`),
   integration against `postgres:18` and `mysql:8.4` services through
   `GESSO_POSTGRES_DSN` and `GESSO_MYSQL_DSN`, the CLI's generate-and-run tests

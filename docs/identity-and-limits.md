@@ -39,4 +39,19 @@ r.Group("/auth", func(g *gesso.Router) {
 
 Each client — its address, or behind `TrustedProxies` the address the nearest
 proxy saw — has a token bucket; over it, 429 `too_many_requests` with
-`Retry-After`. The buckets are per process.
+`Retry-After`.
+
+By default the buckets are in the process's memory, so N replicas let a client
+through N times as often. To share them:
+
+```go
+ratelimit.Migrate(ctx, pool, migrate.Postgres) // the gesso_ratelimit table
+limit := ratelimit.New(ratelimit.Options{
+	Requests: 5, Per: time.Minute,
+	Store:    ratelimit.NewSQL(pool, migrate.Postgres), // MySQL, SQLite too
+})
+```
+
+Run `store.Purge(ctx, time.Now())` now and then — from a scheduled job — to
+delete clients whose bucket is full again. If the database fails, requests are
+let through and the failure logged.

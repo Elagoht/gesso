@@ -3,6 +3,17 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## v0.8.0 (unreleased)
+
+- **Rate limits shared by replicas**: `ratelimit.Store`, with `NewMemory(max)`
+  (per process, as before) and `NewSQL(db, dialect)` (the gesso_ratelimit
+  table, `ratelimit.Migrate`; `Purge` deletes rows whose bucket is full again),
+  held to `ratelimittest.Run`. The algorithm is GCRA: the same limits, one
+  instant per client.
+- *Change:* `Limiter.Allow(key)` is `Allow(ctx, key)` and returns an error too;
+  `Options.MaxClients` is `Options.Store: ratelimit.NewMemory(max)`.
+- A store that fails lets the request through and logs (`Options.Logger`).
+
 ## v0.7.0 — 2026-10-29
 
 - **`gesso new <module path> [-dialect sqlite|postgres|mysql]`**: a project

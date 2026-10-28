@@ -1,6 +1,9 @@
-package ratelimit
+package ratelimit_test
 
 import (
+	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -9,66 +12,45 @@ import (
 	"time"
 
 	"github.com/Elagoht/gesso/clock"
+	"github.com/Elagoht/gesso/ratelimit"
+	"github.com/Elagoht/gesso/ratelimit/ratelimittest"
 )
 
-func TestBucket(t *testing.T) {
-	c := clock.NewManual(time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC))
-	l := New(Options{Requests: 5, Per: time.Minute, Burst: 2, Clock: c})
-	for i := range 2 {
-		if ok, _ := l.Allow("a"); !ok {
-			t.Fatalf("request %d of the burst refused", i+1)
+func TestMemory(t *testing.T) {
+	ratelimittest.Run(t, func() func(*testing.T) ratelimit.Store {
+		shared := map[*testing.T]*ratelimit.Memory{}
+		return func(t *testing.T) ratelimit.Store {
+			if m, ok := shared[t]; ok {
+				return m
+			}
+			shared[t] = ratelimit.NewMemory(0)
+			return shared[t]
 		}
-	}
-	ok, wait := l.Allow("a")
-	if ok || wait != 12*time.Second {
-		t.Fatalf("over the burst: %v, wait %v (one token per 12s)", ok, wait)
-	}
-	if ok, _ := l.Allow("b"); !ok {
-		t.Fatal("another client has its own bucket")
-	}
-	c.Advance(11 * time.Second)
-	if ok, wait := l.Allow("a"); ok || wait != time.Second {
-		t.Fatalf("11s later: %v %v", ok, wait)
-	}
-	c.Advance(time.Second)
-	if ok, _ := l.Allow("a"); !ok {
-		t.Fatal("12s later a token is back")
-	}
-	c.Advance(time.Hour)
-	for i := range 2 {
-		if ok, _ := l.Allow("a"); !ok {
-			t.Fatalf("an idle client has its whole burst again, not more: %d", i)
-		}
-	}
-	if ok, _ := l.Allow("a"); ok {
-		t.Fatal("the bucket holds no more than Burst")
-	}
+	}())
 }
 
-func TestMaxClients(t *testing.T) {
-	c := clock.NewManual(time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC))
-	l := New(Options{Requests: 1, Per: time.Hour, MaxClients: 2, Clock: c})
-	l.Allow("a")
-	c.Advance(time.Second)
-	l.Allow("b")
-	c.Advance(time.Second)
-	l.Allow("c") // forgets a, the one seen longest ago
-	if len(l.buckets) != 2 || l.buckets["a"] != nil {
-		t.Fatalf("buckets: %v", l.buckets)
+func TestMemoryForgets(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	m := ratelimit.NewMemory(2)
+	take := func(key string, at time.Time) bool {
+		ok, _, _ := m.Take(ctx, key, at, time.Hour, 1)
+		return ok
 	}
-	if ok, _ := l.Allow("b"); ok {
-		t.Fatal("b is still limited")
+	take("a", now)
+	take("b", now.Add(time.Second))
+	take("c", now.Add(2*time.Second)) // forgets a: its arrival time is the earliest
+	if !take("a", now.Add(3*time.Second)) {
+		t.Fatal("a was not forgotten")
 	}
-	c.Advance(2 * time.Hour)
-	l.Allow("d") // b and c are full again: both are forgotten, not just one
-	if len(l.buckets) != 1 {
-		t.Fatalf("full buckets were kept: %d", len(l.buckets))
+	if take("c", now.Add(3*time.Second)) {
+		t.Fatal("c, still limited, was forgotten")
 	}
 }
 
 func TestMiddleware(t *testing.T) {
-	c := clock.NewManual(time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC))
-	l := New(Options{Requests: 1, Per: 90 * time.Second, Clock: c})
+	c := clock.NewManual(time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC))
+	l := ratelimit.New(ratelimit.Options{Requests: 1, Per: 90 * time.Second, Clock: c})
 	h := l.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
 	do := func(remote string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/auth/login", nil)
@@ -90,14 +72,42 @@ func TestMiddleware(t *testing.T) {
 	}
 }
 
+type brokenStore struct{}
+
+func (brokenStore) Take(context.Context, string, time.Time, time.Duration, int) (bool, time.Duration, error) {
+	return false, 0, errors.New("database down")
+}
+
+type logs struct{ msgs []string }
+
+func (l *logs) Enabled(context.Context, slog.Level) bool { return true }
+func (l *logs) WithAttrs([]slog.Attr) slog.Handler       { return l }
+func (l *logs) WithGroup(string) slog.Handler            { return l }
+func (l *logs) Handle(_ context.Context, r slog.Record) error {
+	l.msgs = append(l.msgs, r.Message)
+	return nil
+}
+
+// A store that fails lets the request through, and says so.
+func TestMiddlewareFailsOpen(t *testing.T) {
+	lg := &logs{}
+	l := ratelimit.New(ratelimit.Options{Requests: 1, Per: time.Minute, Store: brokenStore{}, Logger: slog.New(lg)})
+	h := l.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if w.Code != 204 || len(lg.msgs) != 1 || !strings.Contains(lg.msgs[0], "store failed") {
+		t.Fatalf("%d %v", w.Code, lg.msgs)
+	}
+}
+
 func TestClientIP(t *testing.T) {
 	proxies := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	cases := []struct {
 		remote, xff, want string
 	}{
-		{"1.2.3.4:5", "9.9.9.9", "1.2.3.4"},                     // not a proxy: its header is ignored
-		{"10.0.0.1:5", "9.9.9.9", "9.9.9.9"},                    // a proxy: the client it saw
-		{"10.0.0.1:5", "6.6.6.6, 9.9.9.9, 10.0.0.2", "9.9.9.9"}, // the rightmost untrusted hop, not a forged first one
+		{"1.2.3.4:5", "9.9.9.9", "1.2.3.4"},
+		{"10.0.0.1:5", "9.9.9.9", "9.9.9.9"},
+		{"10.0.0.1:5", "6.6.6.6, 9.9.9.9, 10.0.0.2", "9.9.9.9"},
 		{"10.0.0.1:5", "", "10.0.0.1"},
 		{"10.0.0.1:5", "garbage, 9.9.9.9", "9.9.9.9"},
 		{"10.0.0.1:5", "9.9.9.9, garbage", "10.0.0.1"},
@@ -109,7 +119,7 @@ func TestClientIP(t *testing.T) {
 		if c.xff != "" {
 			r.Header.Set("X-Forwarded-For", c.xff)
 		}
-		if got := ClientIP(r, proxies); got != c.want {
+		if got := ratelimit.ClientIP(r, proxies); got != c.want {
 			t.Errorf("%s %q: got %s, want %s", c.remote, c.xff, got, c.want)
 		}
 	}
