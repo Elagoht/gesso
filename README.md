@@ -19,7 +19,10 @@ nothing from it. The standard library and `golang.org/x/crypto`, nothing else.
   database — no time zone to shift it by a day.
 - **An outbox queue** on PostgreSQL, MySQL or SQLite: jobs commit with the data
   they are about; at-least-once, leased, fenced.
-- **Events** between modules, typed, in process; **rate limits** per client.
+- **Events** between modules, typed, in process; **rate limits** per client,
+  shared by replicas through the database.
+- **Uploads** typed like the rest (`*gesso.File`, type read from the bytes),
+  **CORS**, request ids, an access log, health probes and a graceful drain.
 - **Validation** with go-playground's rule names — `gt`, `slug`, `unique`,
   `dive` and the rest — written into the OpenAPI schema too.
 - **Contracts with fakes**: storage, cache, mail, clock, password hashing, locks — each

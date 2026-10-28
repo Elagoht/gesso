@@ -340,7 +340,10 @@ func (g *schemaGen) operation(rt docRoute, path string, ids map[string]int) *oaO
 				"application/json": {Schema: bodySchema},
 			}}
 		}
-		if len(o.plan.params) > 0 || o.plan.hasBody {
+		if len(o.plan.form) > 0 {
+			op.RequestBody = g.formBody(o.in, o.plan.form)
+		}
+		if len(o.plan.params) > 0 || o.plan.hasBody || len(o.plan.form) > 0 {
 			op.Responses["400"] = problemResponse("The input failed decoding or validation")
 		}
 	}
@@ -361,6 +364,31 @@ func (g *schemaGen) operation(rt docRoute, path string, ids map[string]int) *oaO
 		op.Responses["403"] = problemResponse("The credential does not allow this")
 	}
 	return op
+}
+
+// formBody is a form input's body: multipart/form-data, a file being a binary
+// string.
+func (g *schemaGen) formBody(in reflect.Type, form []formPlan) *oaBody {
+	s := &Schema{Type: typ("object"), Properties: map[string]*Schema{}}
+	for _, fp := range form {
+		f := in.FieldByIndex(fp.index)
+		var fs *Schema
+		switch {
+		case fp.file && fp.multi:
+			fs = &Schema{Type: typ("array"), Items: &Schema{Type: typ("string"), Format: "binary"}}
+		case fp.file:
+			fs = &Schema{Type: typ("string"), Format: "binary"}
+		default:
+			fs = g.schema(f.Type)
+			applyRules(fs, f.Type, f.Tag.Get("validate"))
+		}
+		s.Properties[fp.name] = fs
+		if hasRule(f.Tag.Get("validate"), "required") {
+			s.Required = append(s.Required, fp.name)
+		}
+	}
+	slices.Sort(s.Required)
+	return &oaBody{Required: len(s.Required) > 0, Content: map[string]oaMediaType{"multipart/form-data": {Schema: s}}}
 }
 
 func (g *schemaGen) param(in reflect.Type, pp paramPlan) oaParam {

@@ -91,6 +91,10 @@ func build(ctx context.Context, d *sql.DB, cfg Config) (*gesso.App, error) {
 		Logger:       cfg.Logger,
 		ErrorMappers: []gesso.ErrorMapper{db.Errors(classify, constraints)},
 		OpenAPI:      &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json"},
+		AccessLog:    true,
+		// /healthz answers while the process runs; /readyz while the database
+		// does too, and turns 503 when the app begins to stop.
+		Health: &gesso.Health{Checks: map[string]func(context.Context) error{"database": d.PingContext}},
 	}, modules(Deps{DB: d})...)
 }
 {{if eq .Dialect "sqlite"}}

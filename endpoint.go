@@ -216,12 +216,19 @@ func (e Endpoint[In, Out]) request(ctx context.Context, rm *Remote, in In) (*htt
 		target += "?" + query.Encode()
 	}
 	var body io.Reader
+	contentType := "application/json"
 	if plan.hasBody {
 		data, err := encodeBody(v)
 		if err != nil {
 			return nil, fmt.Errorf("gesso: %s %s: body: %w", e.Method, e.Pattern, err)
 		}
 		body = bytes.NewReader(data)
+	} else if len(plan.form) > 0 {
+		var err error
+		body, contentType, err = encodeForm(plan, v)
+		if err != nil {
+			return nil, fmt.Errorf("gesso: %s %s: form: %w", e.Method, e.Pattern, err)
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, e.Method, target, body)
 	if err != nil {
@@ -231,7 +238,7 @@ func (e Endpoint[In, Out]) request(ctx context.Context, rm *Remote, in In) (*htt
 		req.Header[k] = vs
 	}
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	req.Header.Set("Accept", "application/json, application/problem+json")
 	return req, nil

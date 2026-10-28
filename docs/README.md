@@ -6,12 +6,13 @@ it, with the reasons.
 
 1. [Getting started](getting-started.md) — `gesso new`, a first module, running it
 2. [Modules and handlers](modules-and-handlers.md) — routes, typed handlers,
-   input, errors, endpoints
+   input, uploads, errors, endpoints
 3. [Validation](validation.md) — the rules, `dive`, your own checks
 4. [The database](database.md) — `db.DB`, transactions, migrations, dialects,
    `gesso gen`, dates
 5. [Identity and limits](identity-and-limits.md) — bearer tokens, guards,
-   rate limits
+   rate limits, CORS
 6. [Work outside the request](background.md) — the queue, events, locks
 7. [Testing](testing.md) — `gessotest`, fakes and suites
 8. [With collage](collage.md) — one process or two
+9. [Running it](operations.md) — request ids, the access log, health, stopping

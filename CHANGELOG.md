@@ -3,6 +3,22 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## v0.9.0 (unreleased)
+
+- **Uploads**: `form` tags read `multipart/form-data` (or a urlencoded form):
+  `*gesso.File` and `[]*gesso.File`, typed by their first bytes, held to
+  `accept` and `maxsize` tags; `gesso.MaxBody(n)` per route; `gesso.NewFile` for
+  `Endpoint.Call`, which sends forms; OpenAPI describes them.
+- **CORS**: `Config.CORS` answers preflights for routes that exist and marks the
+  answers for the origins allowed.
+- **Request ids**: every answer has `X-Request-ID`, failures are logged with it,
+  `gesso.RequestIDFrom(ctx)`; `Config.TrustRequestID` keeps a proxy's.
+- **`Config.AccessLog`**: a line per request.
+- **`Config.Health`**: `/healthz` and `/readyz` with checks; readiness turns 503
+  while the app stops. **`Config.DrainDelay`** keeps serving that long after
+  SIGTERM.
+- `gesso new` turns on the access log and health, with a database check.
+
 ## v0.8.0 — 2026-10-29
 
 - **Rate limits shared by replicas**: `ratelimit.Store`, with `NewMemory(max)`

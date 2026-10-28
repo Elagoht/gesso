@@ -200,7 +200,8 @@ func (ew errorWriter) write(w http.ResponseWriter, r *http.Request, err error) {
 	e := ew.resolve(err)
 	if e.Status >= 500 {
 		ew.logger.ErrorContext(r.Context(), "request failed",
-			"method", r.Method, "path", r.URL.Path, "status", e.Status, "error", err)
+			"method", r.Method, "path", r.URL.Path, "status", e.Status, "error", err,
+			"request_id", RequestIDFrom(r.Context()))
 	}
 	detail := e.Detail
 	if e.Status >= 500 && e.Code == ErrInternal.Code {

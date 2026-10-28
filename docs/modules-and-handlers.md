@@ -35,6 +35,29 @@ a missing query or header value. The input is validated (see
 [Validation](validation.md)) before the handler runs. Out is written as JSON;
 `gesso.Empty` answers 204.
 
+## Uploads
+
+An input with `form` tags reads a form — `multipart/form-data`, or
+`application/x-www-form-urlencoded` when there are no files — instead of JSON:
+
+```go
+type AvatarIn struct {
+	UserID int64         `path:"id"`
+	Title  string        `form:"title" validate:"max=100"`
+	Image  *gesso.File   `form:"image" accept:"image/png,image/jpeg" maxsize:"2MiB" validate:"required"`
+	Extra  []*gesso.File `form:"extra" accept:"image/*"`
+}
+
+SetAvatar.Handle(r, m.setAvatar, gesso.MaxBody(10<<20)) // the route takes up to 10 MiB
+```
+
+A file's `ContentType` is read from its first bytes, not from the client;
+`accept` and `maxsize` refuse a file with 400 and the field's error. `Filename`
+is the client's name for it without folders — never a path to write to. The
+files live until the handler returns: store what you keep (`storage`), from
+`file.Open()`. `Endpoint.Call` sends a form the same way: `gesso.NewFile(name,
+data)` makes a file to send.
+
 ## Endpoints
 
 An `Endpoint` declares a route once, so the server and a caller share its types:

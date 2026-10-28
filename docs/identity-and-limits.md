@@ -55,3 +55,19 @@ limit := ratelimit.New(ratelimit.Options{
 Run `store.Purge(ctx, time.Now())` now and then — from a scheduled job — to
 delete clients whose bucket is full again. If the database fails, requests are
 let through and the failure logged.
+
+## CORS
+
+A browser page on another origin — a single-page app on `app.example.com`
+calling `api.example.com` — needs the API's leave:
+
+```go
+gesso.New(gesso.Config{CORS: &gesso.CORS{
+	Origins: []string{"https://app.example.com"},
+}}, …)
+```
+
+gesso answers the browser's preflight (`OPTIONS`) for a route that exists, and
+marks the answers to the origins listed. `"*"` allows any origin, but not with
+`Credentials` (cookies), which would let any site act as the signed-in user. A
+collage site serving its pages and the API from one origin needs no CORS.

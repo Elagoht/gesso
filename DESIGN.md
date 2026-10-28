@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.8.0 released** (2026-10-29). §12 lists the phases.
+Status: **v0.8.0 released; v0.9 on main** (2026-10-29). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -151,6 +151,26 @@ middleware → authenticate → guard → decode + validate → interceptor → 
 
 **Surfaces** are first-class: a group of routes under a prefix with its own
 middleware stack (an app API, an admin API, a partner API with signed requests).
+
+## 7b. Around the pipeline
+
+What runs before routing, in `App.ServeHTTP`, because no route would see it:
+the request id (made, or a trusted proxy's), the access log, the health probes,
+and CORS — a preflight is an OPTIONS request no route has, so route middleware
+never meets it. A preflight is answered only for a path and method a route
+has; anything else falls through to the router's own 404 or 405, so CORS cannot
+make a route appear. `"*"` with credentials is refused at New.
+
+Uploads are input like the rest: `form` tags, a `*File` whose ContentType is
+sniffed (`http.DetectContentType`) rather than believed, a Filename with its
+folders cut off, `accept` and `maxsize` checked while decoding, the route's
+`MaxBody` bounding the whole body before parsing, and the multipart temporary
+files removed when the handler returns. An input reads a form or a JSON body,
+never both — New refuses the type.
+
+Health is the app's, not a module's: readiness must know the app is stopping.
+Its answer names the failed checks, never their errors (a probe needs no more,
+and an attacker would like the database's address).
 
 ## 8. Contracts and implementations
 
@@ -318,6 +338,8 @@ shared process.
    on MySQL and SQLite, the lock discard tested, CI actions on Node 24.
 8. **v0.8** — `ratelimit.Store`: Memory and SQL (shared by replicas), GCRA.
    `gesso init` (internal/api in a collage site), the API package named `api`.
+9. **v0.9** — what a JSON API meets in production: uploads, CORS, request ids,
+   an access log, health probes, a drain.
 
 ## 13. Decisions
 

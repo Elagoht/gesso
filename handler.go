@@ -32,6 +32,7 @@ type handleConfig struct {
 	summary     string
 	description string
 	tags        []string
+	maxBody     int64
 }
 
 // Status answers a success with code instead of 200 (or 204 for Empty):
@@ -98,8 +99,12 @@ func (h *typed[In, Out]) bind(app *App, rt route) (http.Handler, error) {
 			return nil, errors.New("nil guard")
 		}
 	}
+	max := app.cfg.MaxBodyBytes
+	if h.cfg.maxBody > 0 {
+		max = h.cfg.maxBody
+	}
 	return &typed[In, Out]{
-		fn: h.fn, cfg: h.cfg, plan: h.plan, errs: app.errs, max: app.cfg.MaxBodyBytes,
+		fn: h.fn, cfg: h.cfg, plan: h.plan, errs: app.errs, max: max,
 		call: Call{Method: rt.method, Pattern: rt.pattern}, icpts: rt.icpts, bound: true,
 	}, nil
 }
@@ -128,6 +133,9 @@ func (h *typed[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.err = h.prepare()
 			h.errs = errorWriter{logger: slog.Default()}
 			h.max = defaultMaxBody
+			if h.cfg.maxBody > 0 {
+				h.max = h.cfg.maxBody
+			}
 		})
 	}
 	if h.err != nil {
@@ -142,6 +150,11 @@ func (h *typed[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := context.WithValue(r.Context(), exchangeKey{}, &exchange{r: r, w: w})
 	var in In
+	defer func() {
+		if r.MultipartForm != nil {
+			_ = r.MultipartForm.RemoveAll() // an upload's temporary files
+		}
+	}()
 	if err := h.plan.decode(r, reflect.ValueOf(&in).Elem(), h.max); err != nil {
 		h.errs.write(w, r, err)
 		return

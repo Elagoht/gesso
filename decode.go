@@ -33,6 +33,7 @@ import (
 
 type inputPlan struct {
 	params  []paramPlan
+	form    []formPlan
 	hasBody bool
 }
 
@@ -71,6 +72,9 @@ func planInput(t reflect.Type) (*inputPlan, error) {
 	if err := planFields(t, nil, p); err != nil {
 		return nil, err
 	}
+	if p.hasBody && len(p.form) > 0 {
+		return nil, fmt.Errorf("input %s reads a form and a JSON body: give every body field a form tag, or none", t)
+	}
 	return p, nil
 }
 
@@ -85,6 +89,14 @@ func planFields(t reflect.Type, prefix []int, p *inputPlan) error {
 			continue
 		}
 		if !f.IsExported() {
+			continue
+		}
+		if hasTag(f, "form") {
+			fp, err := planForm(f, index)
+			if err != nil {
+				return fmt.Errorf("input %s.%s: %w", t, f.Name, err)
+			}
+			p.form = append(p.form, fp)
 			continue
 		}
 		pp, ok, err := planParam(f, index)
@@ -216,6 +228,11 @@ func parserFor(t reflect.Type) (func(string) (reflect.Value, error), error) {
 // decode fills dst from r. Its error is an *Error ready to answer.
 func (p *inputPlan) decode(r *http.Request, dst reflect.Value, maxBody int64) error {
 	var fields []validate.FieldError
+	if len(p.form) > 0 {
+		if err := p.decodeForm(r, dst, maxBody); err != nil {
+			return err
+		}
+	}
 	if p.hasBody {
 		if err := decodeBody(r, dst, maxBody); err != nil {
 			return err

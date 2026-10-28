@@ -36,10 +36,12 @@ func TestNew(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	rec := httptest.NewRecorder()
-	a.ServeHTTP(rec, httptest.NewRequest("GET", "/openapi.json", nil))
-	if rec.Code != 200 {
-		t.Fatalf("GET /openapi.json: %d %s", rec.Code, rec.Body)
+	for _, path := range []string{"/openapi.json", "/healthz", "/readyz"} {
+		rec := httptest.NewRecorder()
+		a.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != 200 {
+			t.Fatalf("GET %s: %d %s", path, rec.Code, rec.Body)
+		}
 	}
 }
 

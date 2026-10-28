@@ -133,10 +133,10 @@ func selfValidator(rv reflect.Value) (SelfValidator, bool) {
 }
 
 // FieldName is the name a client knows a struct field by: its json tag, else its
-// query, path or header tag, else its Go name. gesso's decoder names fields the
+// form, query, path or header tag, else its Go name. gesso's decoder names fields the
 // same way.
 func FieldName(f reflect.StructField) string {
-	for _, key := range []string{"json", "query", "path", "header"} {
+	for _, key := range []string{"json", "form", "query", "path", "header"} {
 		if tag, ok := f.Tag.Lookup(key); ok {
 			name, _, _ := strings.Cut(tag, ",")
 			if name != "" && name != "-" {

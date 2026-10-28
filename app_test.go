@@ -412,7 +412,7 @@ func TestServeShutsDownInOrder(t *testing.T) {
 	a.OnShutdown(func(context.Context) error { trail = append(trail, "close db"); return nil })
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- a.serve(ctx, &http.Server{Addr: "127.0.0.1:0", Handler: a}) }()
+	go func() { done <- a.run(ctx, &http.Server{Addr: "127.0.0.1:0", Handler: a}) }()
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 	if err := <-done; err != nil {

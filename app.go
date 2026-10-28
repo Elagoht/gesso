@@ -46,6 +46,22 @@ type Config struct {
 	// Middleware wraps every module's routes, outermost first, outside what a
 	// module adds with Router.Use.
 	Middleware []Middleware
+	// CORS, when set, lets browser pages on other origins call the app.
+	CORS *CORS
+	// AccessLog logs every request at Info: method, path, status, bytes,
+	// duration and request id.
+	AccessLog bool
+	// Health, when set, answers liveness and readiness probes.
+	Health *Health
+	// DrainDelay is how long Run keeps serving after SIGTERM, readiness already
+	// answering 503, before it stops: time for a load balancer to stop sending.
+	// Default 0.
+	DrainDelay time.Duration
+	// TrustRequestID takes a request's X-Request-ID as its id, when it is a
+	// short run of safe characters, instead of making one: for a proxy in front
+	// that sets it. Leave it off when clients reach the app directly — they
+	// could then name their requests after someone else's.
+	TrustRequestID bool
 }
 
 // Module is a feature: it registers its routes. A module that also implements
@@ -72,6 +88,7 @@ type App struct {
 	mux      *http.ServeMux
 	errs     errorWriter
 	modules  []Module
+	cors     *corsPlan
 	errList  []error
 	docs     []docRoute
 	openapi  []byte
@@ -82,6 +99,7 @@ type App struct {
 	running  bool
 	shutdown bool
 	failed   atomic.Bool // Start failed: every request is answered ErrUnavailable
+	draining atomic.Bool // Run is stopping: readiness answers 503
 }
 
 // New builds an app from its modules. Every route problem — a bad pattern, two
@@ -100,11 +118,29 @@ func New(cfg Config, modules ...Module) (*App, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if h := cfg.Health; h != nil {
+		c := *h
+		if c.Timeout <= 0 {
+			c.Timeout = 2 * time.Second
+		}
+		if c.LivePath == "" {
+			c.LivePath = "/healthz"
+		}
+		if c.ReadyPath == "" {
+			c.ReadyPath = "/readyz"
+		}
+		cfg.Health = &c
+	}
 	a := &App{
 		cfg:  cfg,
 		mux:  http.NewServeMux(),
 		errs: errorWriter{logger: cfg.Logger, mappers: slices.Clone(cfg.ErrorMappers)},
 	}
+	cors, err := newCORS(cfg.CORS)
+	if err != nil {
+		return nil, err
+	}
+	a.cors = cors
 	if bp := strings.TrimSuffix(cfg.BasePath, "/"); bp != "" {
 		if !strings.HasPrefix(bp, "/") {
 			return nil, fmt.Errorf("gesso: BasePath %q must begin with \"/\"", cfg.BasePath)
@@ -145,9 +181,31 @@ func (a *App) register(pattern string, h http.Handler) {
 	a.mux.Handle(pattern, h)
 }
 
-// ServeHTTP answers a request. The router's own 404 and 405 are problem+json like
-// every other error, and a panic is a logged 500, not a dropped connection.
+// ServeHTTP answers a request. Every answer carries X-Request-ID. The router's
+// own 404 and 405 are problem+json like every other error, and a panic is a
+// logged 500, not a dropped connection.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	id := a.requestID(r)
+	r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id))
+	w.Header().Set("X-Request-ID", id)
+	if a.cfg.AccessLog {
+		rec := &recorded{ResponseWriter: w}
+		defer a.logRequest(r, rec, time.Now())
+		w = rec
+	}
+	if a.probe(w, r) {
+		return
+	}
+	if a.cors != nil {
+		if a.preflight(w, r) {
+			return
+		}
+		a.actual(w, r)
+	}
+	a.serve(w, r)
+}
+
+func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if p := recover(); p != nil {
 			if p == http.ErrAbortHandler {
@@ -255,6 +313,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 	}
 	a.shutdown = true
 	a.running = false
+	a.draining.Store(true)
 	errs := []error{a.stopModules(ctx)}
 	for _, fn := range slices.Backward(a.hooks) {
 		errs = append(errs, fn(ctx))
@@ -281,10 +340,10 @@ func (a *App) stopModules(ctx context.Context) error {
 func (a *App) Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return a.serve(ctx, &http.Server{Addr: a.cfg.Addr, Handler: a, ReadHeaderTimeout: 10 * time.Second})
+	return a.run(ctx, &http.Server{Addr: a.cfg.Addr, Handler: a, ReadHeaderTimeout: 10 * time.Second})
 }
 
-func (a *App) serve(ctx context.Context, srv *http.Server) error {
+func (a *App) run(ctx context.Context, srv *http.Server) error {
 	if err := a.Start(ctx); err != nil {
 		return err
 	}
@@ -300,6 +359,11 @@ func (a *App) serve(ctx context.Context, srv *http.Server) error {
 			errs = append(errs, err)
 		}
 	case <-ctx.Done():
+		a.draining.Store(true)
+		if d := a.cfg.DrainDelay; d > 0 {
+			a.cfg.Logger.Info("gesso: draining", "for", d)
+			time.Sleep(d)
+		}
 	}
 	sctx, cancel := context.WithTimeout(context.Background(), a.cfg.ShutdownTimeout)
 	defer cancel()
