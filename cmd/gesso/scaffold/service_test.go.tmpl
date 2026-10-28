@@ -27,11 +27,30 @@ func (f *fakeStore) ByID(_ context.Context, id int64) ({{.Entity}}, error) {
 	return {{.Entity}}{}, sql.ErrNoRows
 }
 
-func (f *fakeStore) List(_ context.Context, take, skip int) ([]{{.Entity}}, error) {
-	if skip >= len(f.records) {
-		return []{{.Entity}}{}, nil
+func (f *fakeStore) List(_ context.Context, afterID int64, take int) ([]{{.Entity}}, error) {
+	out := []{{.Entity}}{}
+	for _, e := range f.records {
+		if e.ID > afterID && len(out) < take {
+			out = append(out, e)
+		}
 	}
-	return f.records[skip:min(len(f.records), skip+take)], nil
+	return out, nil
+}
+
+func (f *fakeStore) Patch(_ context.Context, in PatchIn) error {
+	for i, e := range f.records {
+		if e.ID != in.ID {
+			continue
+		}
+{{- range .Fields}}
+		if in.{{.Go}}.Set {
+			e.{{.Go}} = in.{{.Go}}.Value
+		}
+{{- end}}
+		f.records[i] = e
+		return nil
+	}
+	return sql.ErrNoRows
 }
 
 func (f *fakeStore) Update(_ context.Context, in UpdateIn) ({{.Entity}}, error) {
@@ -64,13 +83,24 @@ func TestService(t *testing.T) {
 	if got, err := svc.Get(ctx, created.ID); err != nil || got != created {
 		t.Fatalf("got %+v %v", got, err)
 	}
-	if page, err := svc.List(ctx, 10, 0); err != nil || len(page) != 1 {
-		t.Fatalf("got %+v %v", page, err)
+	second, _ := svc.Create(ctx, CreateIn{})
+	page, err := svc.List(ctx, "", 1)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != created.ID || page.Next == "" {
+		t.Fatalf("first page: %+v %v", page, err)
+	}
+	if page, err = svc.List(ctx, page.Next, 1); err != nil || len(page.Items) != 1 || page.Items[0].ID != second.ID || page.Next != "" {
+		t.Fatalf("last page: %+v %v", page, err)
+	}
+	if _, err := svc.Patch(ctx, PatchIn{ID: created.ID}); err != nil {
+		t.Fatalf("a patch that sets nothing: %v", err)
+	}
+	if _, err := svc.Patch(ctx, PatchIn{ID: 999}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("patching a missing record: %v", err)
 	}
 	if _, err := svc.Update(ctx, UpdateIn{ID: created.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Update(ctx, UpdateIn{ID: created.ID + 1}); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := svc.Update(ctx, UpdateIn{ID: 999}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("updating a missing record: %v", err)
 	}
 	if err := svc.Delete(ctx, created.ID); err != nil {

@@ -430,6 +430,17 @@ func (g *schemaGen) schema(t reflect.Type) *Schema {
 		}
 		return inner
 	}
+	if elem, ok := optionalType(t); ok {
+		// Optional[T] is T or null.
+		inner := g.schema(elem)
+		if inner.Ref != "" {
+			return &Schema{AnyOf: []*Schema{inner, {Type: typ("null")}}}
+		}
+		if len(inner.Type) == 1 {
+			inner.Type = append(inner.Type, "null")
+		}
+		return inner
+	}
 	switch {
 	case t == timeTypeOA:
 		return &Schema{Type: typ("string"), Format: "date-time"}
@@ -578,6 +589,9 @@ func applyRules(s *Schema, t reflect.Type, rules string) {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
+	if elem, ok := optionalType(t); ok {
+		t = elem
+	}
 	if dive {
 		target := s
 		if len(s.AnyOf) > 0 {
@@ -670,6 +684,8 @@ func applyRules(s *Schema, t reflect.Type, rules string) {
 			s.Format = code
 		case "unique":
 			s.UniqueItems = true
+		case "notnull":
+			s.Type = slices.DeleteFunc(slices.Clone(s.Type), func(t string) bool { return t == "null" })
 		case "alpha":
 			pattern("^[A-Za-z]+$")
 		case "alphanum":

@@ -402,6 +402,12 @@ func bodyMembers(v reflect.Value, members map[string]json.RawMessage) error {
 		if slices.Contains(strings.Split(opts, ","), "omitempty") && isEmptyJSON(fv) {
 			continue
 		}
+		if _, opt := optionalType(fv.Type()); opt && !fv.FieldByName("Set").Bool() {
+			continue // left out: the server leaves the field as it is
+		}
+		if slices.Contains(strings.Split(opts, ","), "omitzero") && isZeroJSON(fv) {
+			continue
+		}
 		if name == "" {
 			name = f.Name
 		}
@@ -412,6 +418,15 @@ func bodyMembers(v reflect.Value, members map[string]json.RawMessage) error {
 		members[name] = data
 	}
 	return nil
+}
+
+// isZeroJSON is encoding/json's omitzero test: the value's IsZero method, or
+// its zero value.
+func isZeroJSON(v reflect.Value) bool {
+	if z, ok := v.Interface().(interface{ IsZero() bool }); ok {
+		return z.IsZero()
+	}
+	return v.IsZero()
 }
 
 // isEmptyJSON is encoding/json's omitempty test.

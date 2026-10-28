@@ -28,6 +28,7 @@ var scaffold = template.Must(template.New("").Funcs(template.FuncMap{
 		return "?"
 	},
 	"add": func(a, b int) int { return a + b },
+	"mul": func(a, b int) int { return a * b },
 	// lit is SQL written inside a Go string literal: a quoted identifier's
 	// double quotes escaped.
 	"lit": func(sql string) string { return strings.ReplaceAll(sql, `"`, `\"`) },
@@ -41,6 +42,7 @@ type field struct {
 	Ident  string // the column as SQL names it: title, or "order", quoted where it is a keyword
 	Type   string // string
 	Rule   string // required,max=255
+	Patch  string // notnull,max=255: the rules of a PATCH, where the field may be left out
 	SQL    string // TEXT NOT NULL
 }
 
@@ -214,6 +216,8 @@ func newField(col, typ, dialect string) (field, error) {
 	case "time":
 		f.Type, f.Rule = "time.Time", "required"
 	}
+	// A PATCH may leave a field out, but not clear it: the column is NOT NULL.
+	f.Patch = strings.TrimSuffix("notnull,"+strings.TrimPrefix(strings.TrimPrefix(f.Rule, "required"), ","), ",")
 	return f, nil
 }
 

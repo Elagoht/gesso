@@ -1,14 +1,21 @@
 package {{.Pkg}}
 
-import "context"
+import (
+	"context"
+
+	"github.com/Elagoht/gesso"
+)
 
 // Store is what the service needs from storage, declared here, where it is used;
 // a unit test hands the service a fake one.
 type Store interface {
 	Insert(ctx context.Context, in CreateIn) ({{.Entity}}, error)
 	ByID(ctx context.Context, id int64) ({{.Entity}}, error)
-	List(ctx context.Context, take, skip int) ([]{{.Entity}}, error)
+	// List is up to take records with an id above afterID, by id.
+	List(ctx context.Context, afterID int64, take int) ([]{{.Entity}}, error)
 	Update(ctx context.Context, in UpdateIn) ({{.Entity}}, error)
+	// Patch changes the fields in sets, and leaves the rest.
+	Patch(ctx context.Context, in PatchIn) error
 	Delete(ctx context.Context, id int64) error
 }
 
@@ -30,9 +37,32 @@ func (s *Service) Get(ctx context.Context, id int64) ({{.Entity}}, error) {
 	return s.store.ByID(ctx, id)
 }
 
-// List returns a page of {{.Table}}, oldest first.
-func (s *Service) List(ctx context.Context, take, skip int) ([]{{.Entity}}, error) {
-	return s.store.List(ctx, take, skip)
+// List returns a page of {{.Table}}, oldest first, after the cursor.
+func (s *Service) List(ctx context.Context, after string, take int) (gesso.Page[{{.Entity}}], error) {
+	afterID, err := gesso.DecodeCursor[int64](after)
+	if err != nil {
+		return gesso.Page[{{.Entity}}]{}, err
+	}
+	// One more than the page: whether it comes says whether a page follows.
+	items, err := s.store.List(ctx, afterID, take+1)
+	if err != nil {
+		return gesso.Page[{{.Entity}}]{}, err
+	}
+	page := gesso.Page[{{.Entity}}]{Items: items}
+	if len(items) > take {
+		page.Items = items[:take]
+		page.Next = gesso.EncodeCursor(items[take-1].ID)
+	}
+	return page, nil
+}
+
+// Patch changes some of a {{.Entity}} and returns it whole; sql.ErrNoRows
+// reaches gesso as a 404.
+func (s *Service) Patch(ctx context.Context, in PatchIn) ({{.Entity}}, error) {
+	if err := s.store.Patch(ctx, in); err != nil {
+		return {{.Entity}}{}, err
+	}
+	return s.store.ByID(ctx, in.ID)
 }
 
 // Update replaces a {{.Entity}}; sql.ErrNoRows reaches gesso as a 404.

@@ -194,9 +194,23 @@ func exercise(t *testing.T, d *sql.DB, dialect migrate.Dialect) {
 	if _, err := r.Update(ctx, UpdateIn{ID: 999_999, StartsAt: at, Day: day}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("update of a missing row: %v", err)
 	}
-	page, err := r.List(ctx, 1, 1)
+	page, err := r.List(ctx, a.ID, 1)
 	if err != nil || len(page) != 1 || page[0].ID != b.ID {
-		t.Fatalf("list: %+v %v", page, err)
+		t.Fatalf("list after a: %+v %v", page, err)
+	}
+	// A patch writes what it sets — the keyword column, a date — and keeps
+	// the rest.
+	if err := r.Patch(ctx, PatchIn{ID: b.ID, Order: gesso.Some(int64(7)), Day: gesso.Some(day.AddDays(2))}); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	if got, _ := r.ByID(ctx, b.ID); got.Order != 7 || got.Day != day.AddDays(2) || got.Title != "Talk" || !got.StartsAt.Equal(at) {
+		t.Fatalf("patched: %+v", got)
+	}
+	if err := r.Patch(ctx, PatchIn{ID: b.ID}); err != nil {
+		t.Fatalf("a patch that sets nothing still finds the row: %v", err)
+	}
+	if err := r.Patch(ctx, PatchIn{ID: 999_999, Title: gesso.Some("x")}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("patch of a missing row: %v", err)
 	}
 	if err := r.Delete(ctx, a.ID); err != nil {
 		t.Fatal(err)
@@ -221,6 +235,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/date"
 	"github.com/Elagoht/gesso/migrate"
 	_ "modernc.org/sqlite"
@@ -250,6 +265,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/date"
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -291,6 +307,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/date"
 	"github.com/Elagoht/gesso/migrate"
 	"github.com/go-sql-driver/mysql"

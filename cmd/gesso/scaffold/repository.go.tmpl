@@ -42,8 +42,8 @@ func (r *repository) ByID(ctx context.Context, id int64) ({{.Entity}}, error) {
 	return e, err
 }
 
-func (r *repository) List(ctx context.Context, take, skip int) ([]{{.Entity}}, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT "+columns+" FROM {{.Table}} ORDER BY id LIMIT {{ph .Dialect 1}} OFFSET {{ph .Dialect 2}}", take, skip)
+func (r *repository) List(ctx context.Context, afterID int64, take int) ([]{{.Entity}}, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT "+columns+" FROM {{.Table}} WHERE id > {{ph .Dialect 1}} ORDER BY id LIMIT {{ph .Dialect 2}}", afterID, take)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +78,28 @@ func (r *repository) Update(ctx context.Context, in UpdateIn) ({{.Entity}}, erro
 	return e, r.db.QueryRowContext(ctx, "SELECT 1 FROM {{.Table}} WHERE id = ?", in.ID).Scan(&one)
 {{- else}}
 	return e, sql.ErrNoRows
+{{- end}}
+}
+
+// Patch writes each field that is set and keeps the rest: one statement, the
+// same whatever is set — a field's flag says whether its value is taken.
+func (r *repository) Patch(ctx context.Context, in PatchIn) error {
+	res, err := r.db.ExecContext(ctx,
+		"UPDATE {{.Table}} SET {{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}} = CASE WHEN {{ph $.Dialect (add (mul $i 2) 1)}} THEN {{ph $.Dialect (add (mul $i 2) 2)}} ELSE {{lit $f.Ident}} END{{end}} WHERE id = {{ph .Dialect (add (mul (len .Fields) 2) 1)}}",
+		{{range .Fields}}in.{{.Go}}.Set, in.{{.Go}}.Value, {{end}}in.ID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n > 0 {
+		return err
+	}
+{{- if eq .Dialect "mysql"}}
+	// MySQL counts the rows it changed, not the rows it found.
+	var one int
+	return r.db.QueryRowContext(ctx, "SELECT 1 FROM {{.Table}} WHERE id = ?", in.ID).Scan(&one)
+{{- else}}
+	return sql.ErrNoRows
 {{- end}}
 }
 

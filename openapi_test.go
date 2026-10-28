@@ -28,7 +28,7 @@ type Note struct {
 	Due     date.Date  `json:"due" validate:"required"`
 }
 
-type Page[T any] struct {
+type Listing[T any] struct {
 	Items []T `json:"items"`
 	Total int `json:"total"`
 }
@@ -46,7 +46,7 @@ type updateIn struct {
 
 func openAPIApp(t *testing.T) *App {
 	return mustNew(t, Config{BasePath: "/api", OpenAPI: &OpenAPIConfig{Title: "Notes", Version: "1.2.0", Path: "/openapi.json"}}, moduleFunc(func(r *Router) {
-		r.Get("/notes", Handle(func(context.Context, listNotesIn) (Page[Note], error) { return Page[Note]{}, nil },
+		r.Get("/notes", Handle(func(context.Context, listNotesIn) (Listing[Note], error) { return Listing[Note]{}, nil },
 			Summary("List notes"), Tags("notes")))
 		r.Put("/notes/{id}", Handle(func(context.Context, updateIn) (Note, error) { return Note{}, nil },
 			Guards(RequireIdentity)))
@@ -82,7 +82,7 @@ func TestOpenAPIDocument(t *testing.T) {
 	}
 
 	list := doc.Paths["/notes"]["get"]
-	if list.Summary != "List notes" || list.Security == nil || len(*list.Security) != 0 || list.Responses["200"].Content["application/json"].Schema.Ref != "#/components/schemas/Page_Note" {
+	if list.Summary != "List notes" || list.Security == nil || len(*list.Security) != 0 || list.Responses["200"].Content["application/json"].Schema.Ref != "#/components/schemas/Listing_Note" {
 		t.Fatalf("list: %+v", list)
 	}
 	byName := map[string]oaParam{}

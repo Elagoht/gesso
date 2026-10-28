@@ -32,6 +32,8 @@
 //	unique     a slice or array whose elements are all different
 //	dive       the rules after it apply to each element of a slice, array or
 //	           map: `validate:"max=10,dive,required,max=40"`
+//	notnull    a gesso.Optional that is given is not null: a PATCH may leave
+//	           the field out, not clear it (gesso's own)
 //
 // Nested structs, pointers to structs and slices of structs are checked too. A
 // field is named in an error by its json tag, else its query, path or header tag,
@@ -221,18 +223,25 @@ func addFields(t reflect.Type, prefix []int, p *typePlan, building map[reflect.T
 			continue
 		}
 		fp := fieldPlan{index: index, name: FieldName(f)}
+		ruleType := f.Type
+		if elem, ok := optionalElem(f.Type); ok {
+			ruleType = elem // the rules are about the value an Optional holds
+		}
 		if tag := f.Tag.Get("validate"); tag != "" && tag != "-" {
 			own, elem, dive := strings.Cut(tag, ",dive")
 			if strings.HasPrefix(tag, "dive") {
 				own, elem, dive = "", strings.TrimPrefix(tag, "dive"), true
 			}
-			rules, err := parseRules(own, f.Type)
+			rules, err := parseRules(own, ruleType)
 			if err != nil {
 				return fmt.Errorf("validate: %s.%s: %w", t, f.Name, err)
 			}
+			if _, opt := optionalElem(f.Type); !opt && slices.ContainsFunc(rules, func(r rule) bool { return r.code == "notnull" }) {
+				return fmt.Errorf("validate: %s.%s: notnull is for gesso.Optional fields", t, f.Name)
+			}
 			fp.rules = rules
 			if dive {
-				et, err := elemType(f.Type)
+				et, err := elemType(ruleType)
 				if err != nil {
 					return fmt.Errorf("validate: %s.%s: %w", t, f.Name, err)
 				}
@@ -248,7 +257,7 @@ func addFields(t reflect.Type, prefix []int, p *typePlan, building map[reflect.T
 				}
 			}
 		}
-		if st := structBeneath(f.Type); st != nil {
+		if st := structBeneath(ruleType); st != nil {
 			nested, err := build(st, building)
 			if err != nil {
 				return err
@@ -260,6 +269,25 @@ func addFields(t reflect.Type, prefix []int, p *typePlan, building map[reflect.T
 		}
 	}
 	return nil
+}
+
+// optionalElem is T for a gesso.Optional[T] — a struct with OptionalPresent
+// and OptionalNull methods and a Value field — and whether t is one.
+func optionalElem(t reflect.Type) (reflect.Type, bool) {
+	if t.Kind() != reflect.Struct {
+		return nil, false
+	}
+	if _, ok := t.MethodByName("OptionalPresent"); !ok {
+		return nil, false
+	}
+	if _, ok := t.MethodByName("OptionalNull"); !ok {
+		return nil, false
+	}
+	f, ok := t.FieldByName("Value")
+	if !ok {
+		return nil, false
+	}
+	return f.Type, true
 }
 
 // structBeneath is the struct type a field holds through pointers and slices, or
@@ -287,6 +315,22 @@ func (p *typePlan) check(rv reflect.Value, prefix string, out *[]FieldError) {
 		name := fp.name
 		if prefix != "" {
 			name = prefix + "." + name
+		}
+		if _, ok := optionalElem(fv.Type()); ok {
+			// An Optional left out, or null, has no value to check; "required"
+			// asks for one.
+			present := fv.MethodByName("OptionalPresent").Call(nil)[0].Bool()
+			null := fv.MethodByName("OptionalNull").Call(nil)[0].Bool()
+			if !present || null {
+				for _, r := range fp.rules {
+					if r.code == "required" || (r.code == "notnull" && present) {
+						*out = append(*out, fail(name, r, fv))
+						break
+					}
+				}
+				continue
+			}
+			fv = fv.FieldByName("Value")
 		}
 		if !checkRules(fv, fp.rules, name, out) {
 			continue
@@ -411,6 +455,12 @@ func parseRules(tag string, t reflect.Type) ([]rule, error) {
 		code, param, hasParam := strings.Cut(strings.TrimSpace(part), "=")
 		r := rule{code: code}
 		switch code {
+		case "notnull":
+			if hasParam {
+				return nil, fmt.Errorf("%q takes no parameter", code)
+			}
+			r.check = func(reflect.Value, rule) bool { return true } // checked where the Optional is seen
+			r.msg = func(rule, reflect.Value) string { return "must not be null" }
 		case "omitempty", "required":
 			if hasParam {
 				return nil, fmt.Errorf("%q takes no parameter", code)
