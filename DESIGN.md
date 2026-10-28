@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.2 implemented, not released** (2026-10-28). §12 lists the phases.
+Status: **v0.3 implemented, not released** (2026-10-28). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -333,7 +333,11 @@ shared process.
   violation classifier have unit tests only. PostgreSQL runs every suite:
   migrations with the advisory lock under contention, InTx and savepoints, the SQL
   token store, the pgx classifier through db.Errors.
-- **No CI** until the repository exists.
+- **No CI** until the repository exists. The suites already take
+  `GESSO_POSTGRES_DSN`, so a CI job only needs a Postgres service.
+- **Releasing the CLI.** `cmd/gesso` and `integration/` use gesso through a
+  `replace` to `../`. `go install …/cmd/gesso@latest` refuses a module with a
+  replace, so a release tags gesso first, then points `cmd/gesso` at that version.
 - **One process, lifecycle.** Mounted in collage, nothing calls the app's Start or
   Shutdown: collage gives an application no shutdown hook, only plugins. Until the
   bridge exists, run modules with Starter/Stopper as their own process.
