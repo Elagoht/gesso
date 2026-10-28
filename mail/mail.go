@@ -1,6 +1,5 @@
-// Package mail sends email behind one small interface. Log (for development)
-// and Capture (for tests) are here; a provider (SMTP, Resend, SES) is its own
-// module.
+// Package mail sends email behind one small interface: SMTP sends it, Log (for
+// development) logs it, Capture (for tests) keeps it.
 package mail
 
 import (
