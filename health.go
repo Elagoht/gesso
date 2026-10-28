@@ -65,7 +65,9 @@ func (a *App) probe(w http.ResponseWriter, r *http.Request) bool {
 		var wg sync.WaitGroup
 		for name, check := range h.Checks {
 			wg.Go(func() {
-				ctx, cancel := context.WithTimeout(r.Context(), h.Timeout)
+				// Not the prober's ctx: one who hangs up mid-check must not
+				// leave a failure cached for the load balancer to see.
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), h.Timeout)
 				defer cancel()
 				result := "ok"
 				if err := check(ctx); err != nil {

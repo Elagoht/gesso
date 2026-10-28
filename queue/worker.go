@@ -135,8 +135,17 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 			errs = append(errs, fmt.Errorf("queue: claim %s: %w", kind, err))
 			continue
 		}
-		for _, j := range jobs {
-			if time.Until(deadline) <= 0 {
+		for i, j := range jobs {
+			// Leave a margin: a job started on the lease's last instant could
+			// only fail on its deadline.
+			if time.Until(deadline) <= w.opt.Lease/10 {
+				for _, rest := range jobs[i:] {
+					// Never run, so its attempt was not spent: back to the
+					// queue, ready now.
+					if err := w.q.Release(ctx, rest); err != nil && !errors.Is(err, ErrLeaseLost) {
+						errs = append(errs, fmt.Errorf("queue: release %s %d: %w", kind, rest.ID, err))
+					}
+				}
 				break
 			}
 			w.run(ctx, j, deadline)

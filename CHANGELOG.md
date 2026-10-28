@@ -49,6 +49,16 @@ change.
   - Scaffolds say that writes are open and OpenAPI is public until guarded.
   - Success answers carry `X-Content-Type-Options: nosniff`; `Extend` refuses
     standard members in any case; `lock.Memory` forgets names nobody holds.
+  - A second pass, re-running the proofs on the fixes, found two issues they
+    made and one gap, fixed too: readiness checks no longer run on the
+    prober's ctx (a hung-up probe left a failure cached: anyone could fail
+    every replica's readiness); a path, query, header or form tag anywhere
+    inside a body field is refused at New, not only in an embedded pointer;
+    jobs a worker skips at its batch's deadline are handed back with
+    **`Queue.Release`** (*Change:* a new method of the interface) rather than
+    spending an attempt they never ran; `ClientAddr` unmaps IPv4-mapped
+    addresses; a multipart form with no file is bounded like a urlencoded
+    one.
 - *Change, before v1:* names made consistent across packages —
   `token.MemoryStore`/`SQLStore` are `token.Memory`/`token.SQL`
   (`NewMemory`, `NewSQL`), as in queue, ratelimit, cache and storage;

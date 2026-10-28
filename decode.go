@@ -112,25 +112,47 @@ func planFields(t reflect.Type, prefix []int, p *inputPlan) error {
 		if ok {
 			p.params = append(p.params, pp)
 		} else if f.Tag.Get("json") != "-" {
+			if st := structUnder(f.Type); st != nil && readsParams(st) {
+				// The body would fill them: gesso reads the path, query,
+				// headers and forms only at the input's top level.
+				return fmt.Errorf("input %s.%s: %s is read from the body, but has path, query, header or form fields: move them to the input itself", t, f.Name, st)
+			}
 			p.hasBody = true
 		}
 	}
 	return nil
 }
 
-// readsParams reports whether t, or a struct it embeds, has a field read from
-// the path, query, header or a form.
-func readsParams(t reflect.Type) bool {
+// structUnder is the struct a field holds through pointers, slices and maps,
+// or nil.
+func structUnder(t reflect.Type) reflect.Type {
+	for {
+		switch t.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map:
+			t = t.Elem()
+		case reflect.Struct:
+			return t
+		default:
+			return nil
+		}
+	}
+}
+
+// readsParams reports whether t, or any struct inside it, has a field read
+// from the path, query, header or a form.
+func readsParams(t reflect.Type) bool { return readsParamsIn(t, map[reflect.Type]bool{}) }
+
+func readsParamsIn(t reflect.Type, seen map[reflect.Type]bool) bool {
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
 	for i := range t.NumField() {
 		f := t.Field(i)
 		if hasTag(f, "path") || hasTag(f, "query") || hasTag(f, "header") || hasTag(f, "form") {
 			return true
 		}
-		ft := f.Type
-		if ft.Kind() == reflect.Pointer {
-			ft = ft.Elem()
-		}
-		if f.Anonymous && ft.Kind() == reflect.Struct && readsParams(ft) {
+		if st := structUnder(f.Type); st != nil && readsParamsIn(st, seen) {
 			return true
 		}
 	}

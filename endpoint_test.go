@@ -300,6 +300,9 @@ func TestLocalCallIsARequestOfItsOwn(t *testing.T) {
 	if out, _ := where.Call(ctx, local, Empty{}); out.Subject != "127.0.0.1:0" {
 		t.Fatalf("no ClientAddr: %q", out.Subject)
 	}
+	if out, _ := where.Call(ctx, local, Empty{}, ClientAddr("::ffff:203.0.113.9")); out.Subject != "203.0.113.9:0" {
+		t.Fatalf("an IPv4-mapped address is the IPv4 one: %q", out.Subject)
+	}
 	if out, _ := where.Call(ctx, local, Empty{}, ClientAddr("not an ip")); out.Subject != "127.0.0.1:0" {
 		t.Fatalf("a bad ClientAddr: %q", out.Subject)
 	}

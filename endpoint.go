@@ -155,6 +155,7 @@ func ClientAddr(ip string) CallOption {
 		if err != nil {
 			return
 		}
+		addr = addr.Unmap() // ::ffff:203.0.113.2 is 203.0.113.2
 		r.Header.Set(clientAddrHeader, addr.String())
 		r.Header.Set("X-Forwarded-For", addr.String())
 	}

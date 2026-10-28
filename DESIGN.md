@@ -365,11 +365,23 @@ Rules the fixes added, which later code keeps:
   lock names, readiness checks per second; and **time** is bounded too: the
   server's read, write and idle timeouts.
 
+A second pass re-ran the proofs against the fixes and probed each for
+bypasses — encoded dots in path values, a remote error wrapped or joined, the
+local-address header sent from outside, IPv4-mapped addresses — and found the
+fixes held; it found two issues the fixes made (a readiness cache an aborted
+probe could fill with a failure; skipped jobs spending an attempt) and one
+gap (a param tag nested in a body struct), all fixed. A released job keeps
+its attempt number and gains one allowed attempt, because a number given back
+would be reused and stop fencing.
+
 Known and left, in the docs: `storage.Disk` on a case-insensitive filesystem
 (macOS) maps `a.png` and `A.png` to one file; a field error from a type's
 UnmarshalText repeats that type's message to the client; forms are "simple"
 requests a browser sends cross-site without preflight, harmless while gesso
-reads bearer tokens only, and never to be paired with a cookie Authenticator.
+reads bearer tokens only, and never to be paired with a cookie Authenticator; a
+proxy in front that decodes %2F before routing could turn an escaped path value
+back into a traversal, which Go's mux alone never does; a local call without
+ClientAddr comes from 127.0.0.1, so an app that trusts loopback trusts it.
 
 ## 13. Decisions
 

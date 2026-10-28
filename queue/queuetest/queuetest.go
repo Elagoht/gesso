@@ -132,6 +132,35 @@ func Run(t *testing.T, open func(t *testing.T, c clock.Clock) (queue.Queue, db.D
 		}
 	})
 
+	t.Run("release gives the attempt back", func(t *testing.T) {
+		q, d, clk := setup(t)
+		enqueue(t, q, d, queue.NewJob{Kind: "mail", MaxAttempts: 1})
+		j := claim(t, q, "mail", 1)[0]
+		if err := q.Release(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+		if err := q.Release(ctx, j); !errors.Is(err, queue.ErrLeaseLost) {
+			t.Fatalf("a released job is not the claimer's any more: %v", err)
+		}
+		again := claim(t, q, "mail", 1)
+		if len(again) != 1 || again[0].Attempt != 2 || again[0].MaxAttempts != 2 || !again[0].Last() {
+			t.Fatalf("released, then claimed: %+v — a new attempt number, and still one attempt to run", again)
+		}
+		// After its lease, while nobody has taken it, a release still holds;
+		// once another claimer has, the attempt number fences it out.
+		clk.Advance(time.Hour)
+		if err := q.Release(ctx, again[0]); err != nil {
+			t.Fatalf("a release after the lease, before anyone took it: %v", err)
+		}
+		taken := claim(t, q, "mail", 1)[0]
+		clk.Advance(time.Hour)
+		enqueue(t, q, d, queue.NewJob{Kind: "other"})
+		if err := q.Release(ctx, again[0]); !errors.Is(err, queue.ErrLeaseLost) {
+			t.Fatalf("a stale release: %v", err)
+		}
+		_ = taken
+	})
+
 	t.Run("fail retries, then the job is dead", func(t *testing.T) {
 		q, d, clk := setup(t)
 		enqueue(t, q, d, queue.NewJob{Kind: "mail", MaxAttempts: 2})

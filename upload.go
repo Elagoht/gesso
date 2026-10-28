@@ -174,6 +174,11 @@ func (p *inputPlan) decodeForm(r *http.Request, dst reflect.Value, maxBody int64
 	var files map[string][]*multipart.FileHeader
 	switch {
 	case mt == "multipart/form-data":
+		if !p.hasFiles() {
+			// Fields only: they are kept in memory, so the route's larger
+			// limit, which is for files, does not apply.
+			maxBody = min(maxBody, urlencodedMax)
+		}
 		r.Body = http.MaxBytesReader(nil, r.Body, maxBody)
 		err = r.ParseMultipartForm(min(formMemory, maxBody))
 		if err == nil {

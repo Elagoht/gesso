@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -99,5 +100,27 @@ func TestReadinessIsCached(t *testing.T) {
 	}
 	if runs != 1 {
 		t.Fatalf("50 probes ran the check %d times", runs)
+	}
+}
+
+// A prober that hangs up mid-check does not fail the check for everyone the
+// cache answers next.
+func TestReadinessIgnoresTheProbersHangUp(t *testing.T) {
+	a := mustNew(t, Config{Health: &Health{Checks: map[string]func(context.Context) error{
+		"db": func(ctx context.Context) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(30 * time.Millisecond):
+				return nil
+			}
+		},
+	}}})
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest("GET", "/readyz", nil).WithContext(ctx)
+	go func() { time.Sleep(5 * time.Millisecond); cancel() }()
+	a.ServeHTTP(httptest.NewRecorder(), r)
+	if w := send(a, "GET", "/readyz", nil); w.Code != 200 {
+		t.Fatalf("after a hung-up probe: %d %s", w.Code, w.Body)
 	}
 }

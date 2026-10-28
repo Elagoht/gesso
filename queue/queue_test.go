@@ -147,21 +147,23 @@ func TestWorkerBacksOffWhenClaimsFail(t *testing.T) {
 	}
 }
 
-// A batch shares one lease, from its claim: a job whose lease ran out while
-// the ones before it ran is left for the next claim, not run late beside the
-// worker that has taken it since.
+// A batch shares one lease, from its claim: the jobs the first leaves no time
+// for are handed back, unrun and with their attempt given back — not run late
+// beside the worker that may take them, nor dead for never having run.
 func TestWorkerLeaseRunsFromTheClaim(t *testing.T) {
 	ctx := context.Background()
 	q := queue.NewMemory(nil)
-	w := queue.NewWorker(q, queue.WorkerOptions{Lease: 100 * time.Millisecond, Batch: 3, Logger: slog.New(slog.DiscardHandler)})
-	kind := queue.Kind[int]{Name: "slow"}
+	const lease = time.Second
+	w := queue.NewWorker(q, queue.WorkerOptions{Lease: lease, Batch: 3, Logger: slog.New(slog.DiscardHandler)})
+	kind := queue.Kind[int]{Name: "slow", MaxAttempts: 1}
 	var ran []int
-	var deadlines []time.Duration
 	queue.Handle(w, kind, func(ctx context.Context, n int) error {
-		dl, _ := ctx.Deadline()
-		deadlines = append(deadlines, time.Until(dl))
+		dl, ok := ctx.Deadline()
+		if !ok || time.Until(dl) > lease {
+			t.Errorf("the job's deadline is past the batch's lease: %v", time.Until(dl))
+		}
 		ran = append(ran, n)
-		time.Sleep(120 * time.Millisecond)
+		time.Sleep(time.Until(dl) - 50*time.Millisecond) // most of what is left
 		return nil
 	})
 	for i := range 3 {
@@ -169,11 +171,16 @@ func TestWorkerLeaseRunsFromTheClaim(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	n, err := w.RunOnce(ctx)
-	if err != nil || n != 1 || len(ran) != 1 {
-		t.Fatalf("ran %d (%v) after the first used up the lease: %v", n, ran, err)
+	for round := range 3 {
+		n, err := w.RunOnce(ctx)
+		if err != nil || n != 1 {
+			t.Fatalf("round %d ran %d: %v", round, n, err)
+		}
 	}
-	if deadlines[0] > 100*time.Millisecond {
-		t.Fatalf("the job's deadline was past the lease: %v", deadlines[0])
+	if len(ran) != 3 {
+		t.Fatalf("ran %v", ran)
+	}
+	if dead, _ := q.Dead(ctx, "slow", 10); len(dead) != 0 {
+		t.Fatalf("dead though they ran in time: %+v", dead)
 	}
 }

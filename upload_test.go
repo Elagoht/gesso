@@ -223,3 +223,23 @@ func TestEmbeddedPointerWithParams(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+type ownerBody struct {
+	UID string `path:"uid"`
+}
+
+type nestedIn struct {
+	Who  ownerBody `json:"who"`
+	Name string    `json:"name"`
+}
+
+// A path, query, header or form tag inside a body field would be filled from
+// the body: refused, however deep.
+func TestNestedParamTagsRefused(t *testing.T) {
+	_, err := New(Config{Logger: quiet()}, moduleFunc(func(r *Router) {
+		r.Post("/users/{uid}", Handle(func(context.Context, nestedIn) (Empty, error) { return Empty{}, nil }))
+	}))
+	if err == nil || !strings.Contains(err.Error(), "is read from the body, but has path") {
+		t.Fatalf("got %v", err)
+	}
+}

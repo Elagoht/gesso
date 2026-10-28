@@ -69,6 +69,12 @@ type Queue interface {
 	// Bury makes a job dead on this attempt, whatever attempts it had left: a
 	// payload that will never decode. ErrLeaseLost as for Complete.
 	Bury(ctx context.Context, j Job, reason string) error
+	// Release hands back a job its claimer never ran: ready again at once, with
+	// one attempt more allowed for the one its claim counted. Attempt numbers
+	// are never reused, so they keep fencing: a Release may come after the
+	// lease ran out, and is ErrLeaseLost once another claimer has taken the
+	// job since.
+	Release(ctx context.Context, j Job) error
 	// Dead lists up to n dead jobs of kind, newest first, for a person to look at.
 	Dead(ctx context.Context, kind string, n int) ([]DeadJob, error)
 }
@@ -357,6 +363,15 @@ func (p *SQL) Bury(ctx context.Context, j Job, reason string) error {
 	return fenced(res, err)
 }
 
+// Release hands the job back, unrun.
+func (p *SQL) Release(ctx context.Context, j Job) error {
+	res, err := p.db.ExecContext(ctx,
+		`UPDATE gesso_jobs SET status = 'ready', max_attempts = max_attempts + 1, locked_until = NULL
+		WHERE id = `+p.ph(1)+` AND attempts = `+p.ph(2)+` AND status = 'running'`,
+		j.ID, j.Attempt)
+	return fenced(res, err)
+}
+
 // Dead lists dead jobs.
 func (p *SQL) Dead(ctx context.Context, kind string, n int) ([]DeadJob, error) {
 	rows, err := p.db.QueryContext(ctx, `
@@ -506,6 +521,18 @@ func (m *Memory) Bury(_ context.Context, j Job, reason string) error {
 		return ErrLeaseLost
 	}
 	cur.status, cur.lockedUntil, cur.lastError = "dead", time.Time{}, reason
+	return nil
+}
+
+// Release hands the job back, unrun.
+func (m *Memory) Release(_ context.Context, j Job) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.jobs[j.ID]
+	if !ok || cur.Attempt != j.Attempt || cur.status != "running" {
+		return ErrLeaseLost
+	}
+	cur.status, cur.MaxAttempts, cur.lockedUntil = "ready", cur.MaxAttempts+1, time.Time{}
 	return nil
 }
 
