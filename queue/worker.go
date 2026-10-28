@@ -48,7 +48,9 @@ func (k Kind[T]) EnqueueAt(ctx context.Context, q Queue, d db.DB, payload T, at 
 // since no retry can mend it.
 var ErrBadPayload = errors.New("queue: the payload does not decode")
 
-// Handle runs fn for every job of kind k that w claims.
+// Handle runs fn for every job of kind k that w claims. fn must stop when its
+// ctx ends — the lease's end: a job run past it may be run again by another
+// worker, and the jobs claimed with it may be lost to the next claim.
 func Handle[T any](w *Worker, k Kind[T], fn func(ctx context.Context, payload T) error) {
 	w.handlers[k.Name] = func(ctx context.Context, j Job) error {
 		var p T
@@ -142,7 +144,13 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 				for _, rest := range jobs[i:] {
 					// Never run, so its attempt was not spent: back to the
 					// queue, ready now.
-					if err := w.q.Release(ctx, rest); err != nil && !errors.Is(err, ErrLeaseLost) {
+					err := w.q.Release(ctx, rest)
+					if errors.Is(err, ErrLeaseLost) {
+						// Another worker took it, or buried it, while the job
+						// before it ran past the lease — a handler that does not
+						// stop when its ctx ends.
+						w.opt.Logger.Warn("queue: a job skipped at the lease's end was another's by then", "kind", kind, "id", rest.ID)
+					} else if err != nil {
 						errs = append(errs, fmt.Errorf("queue: release %s %d: %w", kind, rest.ID, err))
 					}
 				}

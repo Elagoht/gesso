@@ -243,3 +243,23 @@ func TestNestedParamTagsRefused(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+type hiddenOwner struct {
+	UID string `path:"uid"`
+}
+
+type hiddenIn struct {
+	hiddenOwner `json:"owner"`
+	Name        string `json:"name"`
+}
+
+// Unexported, embedded, with a json tag: encoding/json fills it from the body,
+// so its path field is refused too.
+func TestUnexportedEmbeddedParamTagsRefused(t *testing.T) {
+	_, err := New(Config{Logger: quiet()}, moduleFunc(func(r *Router) {
+		r.Post("/users/{uid}", Handle(func(context.Context, hiddenIn) (Empty, error) { return Empty{}, nil }))
+	}))
+	if err == nil || !strings.Contains(err.Error(), "is read from the body") {
+		t.Fatalf("got %v", err)
+	}
+}

@@ -94,6 +94,13 @@ func planFields(t reflect.Type, prefix []int, p *inputPlan) error {
 			// pointer has nowhere to put them.
 			return fmt.Errorf("input %s: embed %s, not a pointer to it: it has path, query, header or form fields", t, f.Type.Elem())
 		}
+		if f.Anonymous && f.Tag.Get("json") != "-" {
+			// encoding/json fills an embedded struct with a json tag as a field
+			// of the body, exported or not.
+			if st := structUnder(f.Type); st != nil && readsParams(st) {
+				return fmt.Errorf("input %s: embedded %s is read from the body, but has path, query, header or form fields: move them to the input itself", t, st)
+			}
+		}
 		if !f.IsExported() {
 			continue
 		}

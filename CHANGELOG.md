@@ -58,7 +58,9 @@ change.
     **`Queue.Release`** (*Change:* a new method of the interface) rather than
     spending an attempt they never ran; `ClientAddr` unmaps IPv4-mapped
     addresses; a multipart form with no file is bounded like a urlencoded
-    one.
+    one. A third pass closed the last corner (an unexported embedded struct
+    with a json tag) and logs a skipped job lost to a handler that outran its
+    lease.
 - *Change, before v1:* names made consistent across packages —
   `token.MemoryStore`/`SQLStore` are `token.Memory`/`token.SQL`
   (`NewMemory`, `NewSQL`), as in queue, ratelimit, cache and storage;
