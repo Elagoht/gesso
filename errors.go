@@ -180,6 +180,7 @@ func WriteProblem(w http.ResponseWriter, r *http.Request, e *Error) {
 type errorWriter struct {
 	logger  *slog.Logger
 	mappers []ErrorMapper
+	langs   map[string]Language
 }
 
 func (ew errorWriter) resolve(err error) *Error {
@@ -222,10 +223,10 @@ func (ew errorWriter) write(w http.ResponseWriter, r *http.Request, err error) {
 	if e.Status >= 500 && e.Code == ErrInternal.Code {
 		detail = ErrInternal.Detail // never send the cause of an unknown failure
 	}
-	p := Problem{
+	p := translate(r, ew.langs, Problem{
 		Type: "about:blank", Title: http.StatusText(e.Status), Status: e.Status,
 		Code: e.Code, Detail: detail, Instance: r.URL.Path, Errors: e.Fields,
-	}
+	}, w.Header())
 	body, err := json.Marshal(p)
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

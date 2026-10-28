@@ -72,7 +72,14 @@ type FieldError struct {
 	Params []string `json:"params,omitempty"`
 	// Message is an English sentence for the failure.
 	Message string `json:"message"`
+	// unit is what a size rule counted: "characters", "items", or "" for a
+	// number's value — for a translation to say.
+	unit string
 }
+
+// Unit is what a size rule (min, max, len, gt, …) counted: "characters",
+// "items", or "" when it compared a number's value.
+func (e FieldError) Unit() string { return e.unit }
 
 func (e FieldError) Error() string { return e.Field + " " + e.Message }
 
@@ -439,7 +446,16 @@ func isEmpty(v reflect.Value) bool {
 }
 
 func fail(name string, r rule, v reflect.Value) FieldError {
-	return FieldError{Field: name, Code: r.code, Params: r.params, Message: r.msg(r, v)}
+	fe := FieldError{Field: name, Code: r.code, Params: r.params, Message: r.msg(r, v)}
+	if v.IsValid() {
+		if _, counted := size(v); counted {
+			fe.unit = "items"
+			if v.Kind() == reflect.String {
+				fe.unit = "characters"
+			}
+		}
+	}
+	return fe
 }
 
 func parseRules(tag string, t reflect.Type) ([]rule, error) {

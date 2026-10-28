@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
@@ -59,6 +60,9 @@ type Config struct {
 	AccessLog bool
 	// Health, when set, answers liveness and readiness probes.
 	Health *Health
+	// Languages translate problem answers for a request whose Accept-Language
+	// asks for one of them: "tr": gesso.Turkish.
+	Languages map[string]Language
 	// Metrics, when set, counts and times requests and serves the counts to
 	// Prometheus.
 	Metrics *Metrics
@@ -167,7 +171,7 @@ func New(cfg Config, modules ...Module) (*App, error) {
 		metrics: newMetrics(),
 		cfg:     cfg,
 		mux:     http.NewServeMux(),
-		errs:    errorWriter{logger: cfg.Logger, mappers: slices.Clone(cfg.ErrorMappers)},
+		errs:    errorWriter{logger: cfg.Logger, mappers: slices.Clone(cfg.ErrorMappers), langs: maps.Clone(cfg.Languages)},
 	}
 	cors, err := newCORS(cfg.CORS)
 	if err != nil {
