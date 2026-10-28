@@ -1,6 +1,6 @@
 // Package storage keeps files — uploads, exports, generated images — behind one
-// small interface. Disk and Memory are here; S3 and the like are their own
-// modules (gesso-s3), and every implementation passes storagetest.Run.
+// small interface. Disk and Memory are here, S3 (and what speaks its API:
+// MinIO, R2, B2) in storage/s3; every implementation passes storagetest.Run.
 //
 // Storage holds bytes under keys. What a file is (its type, its owner, its
 // original name) the application records itself, in its database. Make keys

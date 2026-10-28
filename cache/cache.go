@@ -1,6 +1,7 @@
 // Package cache keeps computed values for a while. The contract is bytes, so any
-// store can hold them (gesso-redis is one); GetOrLoad adds the types back, as
-// JSON. Memory is here, and every implementation passes cachetest.Run.
+// store can hold them; GetOrLoad adds the types back, as JSON. Memory is here,
+// Redis (shared by replicas) in cache/redis, and every implementation passes
+// cachetest.Run.
 package cache
 
 import (

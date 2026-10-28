@@ -53,7 +53,7 @@ jobs:
         run: go test -race ./...
 
   integration:
-    name: integration (PostgreSQL, MySQL)
+    name: integration (PostgreSQL, MySQL, Redis, S3)
     runs-on: ubuntu-latest
     # Real servers, given to the suites through GESSO_POSTGRES_DSN and
     # GESSO_MYSQL_DSN; without the first they would start an embedded
@@ -82,9 +82,28 @@ jobs:
           --health-interval 2s
           --health-timeout 5s
           --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+      # An S3 that checks signatures: Zenko CloudServer, its default keys.
+      s3:
+        image: zenko/cloudserver
+        env:
+          REMOTE_MANAGEMENT_DISABLE: '1'
+        ports: ['8000:8000']
     env:
       GESSO_POSTGRES_DSN: postgres://gesso:gesso@localhost:5432/postgres?sslmode=disable
       GESSO_MYSQL_DSN: root:gesso@tcp(127.0.0.1:3306)/
+      GESSO_REDIS_ADDR: 127.0.0.1:6379
+      GESSO_S3_ENDPOINT: http://127.0.0.1:8000
+      GESSO_S3_BUCKET: gesso-test
+      GESSO_S3_ACCESS_KEY: accessKey1
+      GESSO_S3_SECRET_KEY: verySecretKey1
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -93,6 +112,16 @@ jobs:
           check-latest: true
           cache: true
           cache-dependency-path: integration/go.sum
+
+      - name: S3 bucket
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/ || true)
+            [ "$code" != "000" ] && break
+            sleep 2
+          done
+          curl -sf --aws-sigv4 "aws:amz:us-east-1:s3" --user accessKey1:verySecretKey1 \
+            -X PUT http://127.0.0.1:8000/gesso-test
 
       # A skipped database test here would mean "unverified", not "passed":
       # with servers provided, a skip is a failure.
