@@ -17,7 +17,7 @@ import (
 	"unicode"
 )
 
-//go:embed scaffold/*.tmpl
+//go:embed scaffold/*.tmpl scaffold/new/*.tmpl
 var scaffoldFS embed.FS
 
 var scaffold = template.Must(template.New("").Funcs(template.FuncMap{
@@ -61,7 +61,7 @@ var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 func addModule(args []string, dir string, stdout io.Writer, now func() time.Time) error {
 	fs := flag.NewFlagSet("add module", flag.ContinueOnError)
 	fields := fs.String("fields", "name:string", "the entity's fields, name:type, comma-separated; types: string, text, int, bool, float, time, date")
-	dialect := fs.String("dialect", "postgres", "the SQL the repository and migration are written in: postgres, sqlite or mysql")
+	dialect := fs.String("dialect", "postgres", "the SQL the repository and migration are written in: postgres, sqlite or mysql (default: the app's, in a gesso new project)")
 	parent := fs.String("dir", "internal", "the folder the module's folder goes in")
 	entity := fs.String("entity", "", "the entity's Go name (default: the module name, singular, capitalised)")
 	pos, err := parseFlags(fs, args)
@@ -70,6 +70,15 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	}
 	if len(pos) != 1 {
 		return errors.New("add module takes one name: gesso add module events")
+	}
+	appGo := filepath.Join(dir, *parent, "app", "app.go")
+	app, appErr := os.ReadFile(appGo)
+	given := false
+	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "dialect" })
+	if appErr == nil && !given {
+		if d := appDialect(app); d != "" {
+			*dialect = d
+		}
 	}
 	spec, err := newSpec(pos[0], *entity, *fields, *dialect)
 	if err != nil {
@@ -104,11 +113,27 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	if err := scaffold.ExecuteTemplate(&down, "down.sql.tmpl", spec); err != nil {
 		return err
 	}
-	paths, err := writeMigration(filepath.Join(target, "migrations"), "create_"+spec.Table, up.String(), down.String(), now)
+	paths, err := writeMigration(dir, filepath.Join(target, "migrations"), "create_"+spec.Table, up.String(), down.String(), now)
 	for _, p := range paths {
 		fmt.Fprintln(stdout, "created", p)
 	}
-	return err
+	if err != nil || appErr != nil {
+		return err // no gesso new app here: wiring the module is the user's
+	}
+	mod, err := readModule(dir)
+	if err != nil {
+		return err
+	}
+	importPath := mod + "/" + filepath.ToSlash(filepath.Join(*parent, spec.Pkg))
+	wired, err := wireModule(app, spec.Pkg, importPath)
+	if err != nil {
+		return fmt.Errorf("%s: %w; add %s.New and %s.Migrations to it by hand", appGo, err, spec.Pkg, spec.Pkg)
+	}
+	if err := os.WriteFile(appGo, wired, 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "wired", appGo)
+	return nil
 }
 
 func newSpec(name, entity, fieldList, dialect string) (moduleSpec, error) {

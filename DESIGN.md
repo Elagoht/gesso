@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.6.0 released** (2026-10-28). §12 lists the phases.
+Status: **v0.6.0 released; v0.7 on main** (2026-10-28). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -165,8 +165,8 @@ implementations are usual. Everything else the application defines, consumer-sid
 | `Clock` | `clock` | `System` | `Manual` | — |
 | `Hasher` | `password` | `Argon2id` (`x/crypto`, PHC) | `Argon2id{Cheap}` | — |
 | `token.Store` | `token` | SQL | memory | `tokentest.Run` |
-| `Locker` | `lock` | `Postgres` (session advisory locks) | `Memory` | `locktest.Run` |
-| `Queue` | `queue` | `Postgres` (outbox, `SKIP LOCKED`) | `Memory` | `queuetest.Run` |
+| `Locker` | `lock` | `Postgres` (advisory locks), `MySQL` (`GET_LOCK`) | `Memory` | `locktest.Run` |
+| `Queue` | `queue` | `SQL`: PostgreSQL (`SKIP LOCKED`), MySQL, SQLite (outbox) | `Memory` | `queuetest.Run` |
 
 Every suite runs against both the reference implementation and the fake, so the
 fake cannot drift from what it stands in for. Any implementation — gesso-s3, the
@@ -179,17 +179,36 @@ application records in its database.
 A Postgres lock lives on the connection that took it, held out of the pool while
 the lock is; a connection that could not release its lock is ended, never
 returned to the pool, where it would hold the lock for ever. Tested: contention,
-waits, cancelled waits, and a holder whose session dies. Not reached by a test: a
-live session whose unlock fails (no way found to make one fail on demand).
+waits, cancelled waits, a holder whose session dies, and — with a database/sql
+driver that grants every lock and refuses every unlock — a live connection whose
+unlock fails or reports nothing released, which is closed, not pooled. MySQL's
+`GET_LOCK` locks follow the same rules.
 `Queue` is an outbox: `Enqueue` writes through the db.DB the caller passes, so
 a job commits or rolls back with the data it is about (tested on Postgres; the
 Memory fake has no transactions and says so). Delivery is at least once: a claim
 holds a job for a lease, and `Complete`, `Fail` and `Bury` are fenced by the
 attempt number — a worker whose lease ran out gets `ErrLeaseLost` and cannot
-settle a job another worker now holds. Tested on Postgres: the suite, atomicity,
-and four claimers over 200 jobs taking each exactly once. Plain `FOR UPDATE`
-would also take each once (it waits and re-checks); `SKIP LOCKED` is there so
-claimers do not wait on each other, which no test measures.
+settle a job another worker now holds. PostgreSQL claims in one statement
+(`UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED) RETURNING`). MySQL
+cannot update a table it selects from in a subquery, and SQLite has no row
+locks, so there `queue.SQL` picks due jobs and takes each with an UPDATE whose
+WHERE repeats "still due": of two claimers, one changes the row and the other
+changes nothing and skips it; when every pick was taken it picks again, so an
+empty claim means nothing was due. Times there are Unix nanoseconds (BIGINT),
+as the token store keeps them. Tested on all three: the suite, atomicity, and
+four claimers over 200 jobs taking each exactly once — which fails, on MySQL
+and SQLite, when the UPDATE's "still due" is removed. Plain `FOR UPDATE` would
+also take each once on PostgreSQL; `SKIP LOCKED` is there so claimers do not
+wait on each other, which no test measures.
+
+**Not contracts, but ready:** `ratelimit` (a token bucket per client, in memory,
+as middleware answering 429 with Retry-After; the client is the connection's
+address, or X-Forwarded-For's rightmost untrusted hop when the connection is from
+a trusted proxy — never the header's first entry, which the client writes) and
+`events` (a typed, in-process bus: `Topic[T]` declared by the publisher,
+subscribers run in order inside `Publish`, their errors and panics returned
+joined; durable work goes through a subscriber that enqueues a queue job in the
+publisher's transaction).
 
 ## 9. Database
 
@@ -286,8 +305,9 @@ shared process.
    `Config.Authenticator` / `Config.Middleware`, scaffold `text` / `date` /
    update / keyword columns. MySQL verified against a server: `lock.MySQL`,
    `gesso gen :execlastid`, CI on `mysql:8.4`.
-7. **later** — event bus, wiring generation, `gesso new` (the main and the wiring
-   a first module needs: the trial wrote ~100 lines of it by hand).
+7. **v0.7** — `gesso new` and wiring generation (`add module` adds the module
+   to the app), `events`, `ratelimit`, more validate rules and `dive`, the queue
+   on MySQL and SQLite, the lock discard tested, CI actions on Node 24.
 
 ## 13. Decisions
 
@@ -393,6 +413,27 @@ shared process.
   embedded one). Each Postgres or MySQL test gets a database of its own;
   without a server they skip, saying "POSTGRES UNVERIFIED" / "MYSQL
   UNVERIFIED", and CI fails on either.
+- 2026-10-28 — **`gesso new` writes the wiring, `add module` keeps it.** A new
+  project is `main.go` (settings from ADDR, BASE_PATH, DATABASE_URL) and
+  `internal/app/app.go`, which opens the database for its dialect (SQLite with
+  foreign keys, WAL and a busy timeout; MySQL with multiStatements and
+  parseTime), runs every module's migrations as one history, maps the driver's
+  violations, serves OpenAPI at /openapi.json and closes the database at
+  shutdown; `app_test.go` starts it. `app.go` declares `modules`, `migrations`
+  and `var dialect = migrate.X`: `add module` reads the dialect from it, inserts
+  the module into both lists before their closing braces (the rest of the file
+  untouched) and adds the import. Not a generator that owns the file: the code
+  is the application's, and a list `add module` cannot find is reported, for
+  the user to wire by hand. A migration's version is the first second, from
+  now, that no migration in the project has: two modules scaffolded in one
+  second used to collide in the one history.
+- 2026-10-28 — **validate's rules**: go-playground's names (gt, gte, lt, lte, eq,
+  ne, ip, ipv4, ipv6, hostname, alpha, alphanum, numeric, lowercase, uppercase,
+  contains, excludes, startswith, endswith, unique, dive), plus gesso's `slug`.
+  No regex rule: a pattern with a comma breaks the tag, and a SelfValidator says
+  it in Go. OpenAPI carries each: pattern (the first only — a schema has one),
+  exclusiveMinimum/Maximum, uniqueItems, formats, and the rules after dive on
+  `items`.
 - 2026-10-28 — **MySQL verified** (8.4) by every suite PostgreSQL runs:
   migrations with GET_LOCK under contention, InTx and savepoints, the token
   store, the classifier through db.Errors, `lock.MySQL` (GET_LOCK, one
@@ -404,7 +445,7 @@ shared process.
   commits each CREATE, ALTER and DROP by itself, so a migration that fails
   after one leaves it applied and unrecorded. The rows a failed migration wrote
   are still rolled back. Keep one DDL statement per MySQL migration. The queue
-  stays PostgreSQL-only.
+  runs on all three (see §8).
 - 2026-10-28 — **Each request in a test transaction runs in a savepoint.**
   PostgreSQL fails a whole transaction at its first error, so a test that expected
   a 409 could send nothing after it. `gessotest.Tx` returns a `TxDB`, and a Client
@@ -416,8 +457,12 @@ shared process.
 
 ## 14. Open questions
 
-- **The queue on MySQL.** `queue` is PostgreSQL-only. MySQL 8 has
-  `FOR UPDATE SKIP LOCKED` too; nobody has asked yet.
+- **Rate limits across replicas.** `ratelimit` counts per process. A limit
+  shared by every replica needs a shared store (Redis, the database); the
+  interface for one waits for an application that needs it.
+- **Events across processes.** `events` is in-process. Across processes the
+  queue is the transport: a subscriber enqueues, a worker in the other process
+  handles.
 - **CI** (`.github/workflows/ci.yml`): library (gofmt, vet, `-race`),
   integration against `postgres:18` and `mysql:8.4` services through
   `GESSO_POSTGRES_DSN` and `GESSO_MYSQL_DSN`, the CLI's generate-and-run tests

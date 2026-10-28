@@ -9,16 +9,18 @@
 // dies, or runs past its lease, loses the job to another, so the same job may
 // run twice. Handlers must be idempotent.
 //
-// Postgres is the queue (FOR UPDATE SKIP LOCKED); Memory is its fake, held to the
-// same suite. MySQL and SQLite have no implementation.
+// SQL is the queue in a database table — PostgreSQL, MySQL or SQLite — and
+// Memory is its fake, held to the same suite.
 package queue
 
 import (
 	"cmp"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"embed"
 	"errors"
+	"io/fs"
 	"slices"
 	"sync"
 	"time"
@@ -82,18 +84,40 @@ var ErrLeaseLost = errors.New("queue: the lease ran out; the job is another's")
 
 const defaultMaxAttempts = 5
 
-// Migrations create the gesso_jobs table (PostgreSQL). Apply them with Migrate.
-//
 //go:embed migrations
-var Migrations embed.FS
+var migrations embed.FS
+
+// Migrations are the gesso_jobs table's migrations for dialect.
+func Migrations(dialect migrate.Dialect) (fs.FS, error) {
+	dir, err := dialectDir(dialect)
+	if err != nil {
+		return nil, err
+	}
+	return fs.Sub(migrations, "migrations/"+dir)
+}
+
+func dialectDir(dialect migrate.Dialect) (string, error) {
+	switch dialect {
+	case migrate.Postgres:
+		return "postgres", nil
+	case migrate.MySQL:
+		return "mysql", nil
+	case migrate.SQLite:
+		return "sqlite", nil
+	}
+	return "", errors.New("queue: no migrations for this dialect: PostgreSQL, MySQL or SQLite")
+}
 
 // MigrationsTable is where Migrate records the queue migrations.
 const MigrationsTable = "gesso_queue_migrations"
 
-// Migrate applies the queue migrations to a PostgreSQL database, in a history of
-// their own.
-func Migrate(ctx context.Context, d *sql.DB) error {
-	m, err := migrate.New(d, migrate.Postgres, Migrations)
+// Migrate applies the queue migrations, in a history of their own.
+func Migrate(ctx context.Context, d *sql.DB, dialect migrate.Dialect) error {
+	files, err := Migrations(dialect)
+	if err != nil {
+		return err
+	}
+	m, err := migrate.New(d, dialect, files)
 	if err != nil {
 		return err
 	}
@@ -102,33 +126,70 @@ func Migrate(ctx context.Context, d *sql.DB) error {
 	return err
 }
 
-// Postgres is the queue in a PostgreSQL table.
+// SQL is the queue in the gesso_jobs table.
+//
+// PostgreSQL claims with one statement (FOR UPDATE SKIP LOCKED). MySQL and
+// SQLite claim job by job, each with an UPDATE that only takes a job still due,
+// so two claimers never take the same one. There, times are stored as Unix
+// nanoseconds; in PostgreSQL as timestamptz.
 //
 // Times come from its clock, not the database's, so tests can move them; across
 // replicas the clocks must agree to well within a lease.
-type Postgres struct {
-	db    db.DB
-	clock clock.Clock
+type SQL struct {
+	db      db.DB
+	clock   clock.Clock
+	dialect migrate.Dialect
 }
+
+// Postgres is the queue in a PostgreSQL table, as NewPostgres makes it.
+type Postgres = SQL
 
 // NewPostgres claims and settles jobs through d (the pool); c tells the time (nil
 // for the system clock).
-func NewPostgres(d db.DB, c clock.Clock) *Postgres {
+func NewPostgres(d db.DB, c clock.Clock) *SQL { return newSQL(d, c, migrate.Postgres) }
+
+// NewMySQL is the queue in a MySQL table.
+func NewMySQL(d db.DB, c clock.Clock) *SQL { return newSQL(d, c, migrate.MySQL) }
+
+// NewSQLite is the queue in a SQLite table.
+func NewSQLite(d db.DB, c clock.Clock) *SQL { return newSQL(d, c, migrate.SQLite) }
+
+func newSQL(d db.DB, c clock.Clock, dialect migrate.Dialect) *SQL {
 	if c == nil {
 		c = clock.System
 	}
-	return &Postgres{db: d, clock: c}
+	return &SQL{db: d, clock: c, dialect: dialect}
+}
+
+func (p *SQL) pg() bool { return p.dialect == migrate.Postgres }
+
+// ph is the n-th placeholder.
+func (p *SQL) ph(n int) string { return p.dialect.Placeholder(n) }
+
+// at is t as the table stores it.
+func (p *SQL) at(t time.Time) driver.Value {
+	if p.pg() {
+		return t
+	}
+	return t.UnixNano()
 }
 
 // Enqueue inserts the job through d.
-func (p *Postgres) Enqueue(ctx context.Context, d db.DB, j NewJob) (int64, error) {
+func (p *SQL) Enqueue(ctx context.Context, d db.DB, j NewJob) (int64, error) {
 	now := p.clock.Now()
 	j = defaults(j, now)
-	var id int64
-	err := d.QueryRowContext(ctx,
-		`INSERT INTO gesso_jobs (kind, payload, max_attempts, run_at, created_at) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		j.Kind, j.Payload, j.MaxAttempts, j.RunAt, now).Scan(&id)
-	return id, err
+	insert := `INSERT INTO gesso_jobs (kind, payload, max_attempts, run_at, created_at, last_error) VALUES (` +
+		p.ph(1) + `, ` + p.ph(2) + `, ` + p.ph(3) + `, ` + p.ph(4) + `, ` + p.ph(5) + `, '')`
+	if p.pg() {
+		var id int64
+		err := d.QueryRowContext(ctx, insert+` RETURNING id`, j.Kind, j.Payload, j.MaxAttempts, p.at(j.RunAt), p.at(now)).Scan(&id)
+		return id, err
+	}
+	res, err := d.ExecContext(ctx, insert, j.Kind, j.Payload, j.MaxAttempts, p.at(j.RunAt), p.at(now))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 func defaults(j NewJob, now time.Time) NewJob {
@@ -145,7 +206,10 @@ func defaults(j NewJob, now time.Time) NewJob {
 }
 
 // Claim takes due jobs, skipping those another claimer is taking right now.
-func (p *Postgres) Claim(ctx context.Context, kind string, n int, lease time.Duration) ([]Job, error) {
+func (p *SQL) Claim(ctx context.Context, kind string, n int, lease time.Duration) ([]Job, error) {
+	if !p.pg() {
+		return p.claimEach(ctx, kind, n, lease)
+	}
 	now := p.clock.Now()
 	rows, err := p.db.QueryContext(ctx, `
 		UPDATE gesso_jobs SET status = 'running', attempts = attempts + 1, locked_until = $3
@@ -175,39 +239,114 @@ func (p *Postgres) Claim(ctx context.Context, kind string, n int, lease time.Dur
 	return jobs, rows.Err()
 }
 
+// claimEach is Claim without UPDATE … RETURNING over a locked subquery, which
+// MySQL cannot do: it picks due jobs, then takes each with an UPDATE that only
+// matches a job still due. A job another claimer took in between is skipped, and
+// when every pick was taken it picks again, so "nothing claimed" means nothing
+// was due.
+func (p *SQL) claimEach(ctx context.Context, kind string, n int, lease time.Duration) ([]Job, error) {
+	now := p.clock.Now()
+	due := `kind = ? AND ((status = 'ready' AND run_at <= ?) OR (status = 'running' AND locked_until <= ?))`
+	for {
+		ids, err := p.dueIDs(ctx, due, kind, now, n)
+		if err != nil || len(ids) == 0 {
+			return nil, err
+		}
+		var jobs []Job
+		for _, id := range ids {
+			res, err := p.db.ExecContext(ctx,
+				`UPDATE gesso_jobs SET status = 'running', attempts = attempts + 1, locked_until = ? WHERE id = ? AND `+due,
+				p.at(now.Add(lease)), id, kind, p.at(now), p.at(now))
+			if err != nil {
+				return jobs, err
+			}
+			if got, err := res.RowsAffected(); err != nil || got == 0 {
+				if err != nil {
+					return jobs, err
+				}
+				continue
+			}
+			var j Job
+			err = p.db.QueryRowContext(ctx, `SELECT id, kind, payload, attempts, max_attempts FROM gesso_jobs WHERE id = ?`, id).
+				Scan(&j.ID, &j.Kind, &j.Payload, &j.Attempt, &j.MaxAttempts)
+			if err != nil {
+				return jobs, err
+			}
+			jobs = append(jobs, j)
+		}
+		if len(jobs) > 0 {
+			return jobs, nil
+		}
+	}
+}
+
+func (p *SQL) dueIDs(ctx context.Context, due, kind string, now time.Time, n int) ([]int64, error) {
+	rows, err := p.db.QueryContext(ctx, `SELECT id FROM gesso_jobs WHERE `+due+` ORDER BY run_at, id LIMIT ?`,
+		kind, p.at(now), p.at(now), n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// held is the WHERE that fences a settle to the claimer still holding the job:
+// placeholders 1 to 3 are the id, the attempt and now.
+func (p *SQL) held() string {
+	return `id = ` + p.ph(1) + ` AND attempts = ` + p.ph(2) + ` AND status = 'running' AND locked_until > ` + p.ph(3)
+}
+
 // Complete deletes the job, if its claimer still holds it.
-func (p *Postgres) Complete(ctx context.Context, j Job) error {
-	res, err := p.db.ExecContext(ctx,
-		`DELETE FROM gesso_jobs WHERE id = $1 AND attempts = $2 AND status = 'running' AND locked_until > $3`,
-		j.ID, j.Attempt, p.clock.Now())
+func (p *SQL) Complete(ctx context.Context, j Job) error {
+	res, err := p.db.ExecContext(ctx, `DELETE FROM gesso_jobs WHERE `+p.held(), j.ID, j.Attempt, p.at(p.clock.Now()))
 	return fenced(res, err)
 }
 
 // Fail schedules the job again, or buries it.
-func (p *Postgres) Fail(ctx context.Context, j Job, reason string, retryAt time.Time) error {
-	res, err := p.db.ExecContext(ctx, `
-		UPDATE gesso_jobs SET
-			status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'ready' END,
-			run_at = $4, locked_until = NULL, last_error = $5
-		WHERE id = $1 AND attempts = $2 AND status = 'running' AND locked_until > $3`,
-		j.ID, j.Attempt, p.clock.Now(), retryAt, reason)
+func (p *SQL) Fail(ctx context.Context, j Job, reason string, retryAt time.Time) error {
+	set := `UPDATE gesso_jobs SET
+		status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'ready' END,
+		run_at = ` + p.ph(4) + `, locked_until = NULL, last_error = ` + p.ph(5) + ` WHERE ` + p.held()
+	now := p.at(p.clock.Now())
+	var res sql.Result
+	var err error
+	if p.pg() {
+		// Numbered: the fence's $1 to $3, then the SET's $4 and $5.
+		res, err = p.db.ExecContext(ctx, set, j.ID, j.Attempt, now, p.at(retryAt), reason)
+	} else {
+		// Positional: the SET's ? come first.
+		res, err = p.db.ExecContext(ctx, set, p.at(retryAt), reason, j.ID, j.Attempt, now)
+	}
 	return fenced(res, err)
 }
 
 // Bury makes the job dead now.
-func (p *Postgres) Bury(ctx context.Context, j Job, reason string) error {
-	res, err := p.db.ExecContext(ctx, `
-		UPDATE gesso_jobs SET status = 'dead', locked_until = NULL, last_error = $4
-		WHERE id = $1 AND attempts = $2 AND status = 'running' AND locked_until > $3`,
-		j.ID, j.Attempt, p.clock.Now(), reason)
+func (p *SQL) Bury(ctx context.Context, j Job, reason string) error {
+	set := `UPDATE gesso_jobs SET status = 'dead', locked_until = NULL, last_error = ` + p.ph(4) + ` WHERE ` + p.held()
+	now := p.at(p.clock.Now())
+	var res sql.Result
+	var err error
+	if p.pg() {
+		res, err = p.db.ExecContext(ctx, set, j.ID, j.Attempt, now, reason)
+	} else {
+		res, err = p.db.ExecContext(ctx, set, reason, j.ID, j.Attempt, now)
+	}
 	return fenced(res, err)
 }
 
 // Dead lists dead jobs.
-func (p *Postgres) Dead(ctx context.Context, kind string, n int) ([]DeadJob, error) {
+func (p *SQL) Dead(ctx context.Context, kind string, n int) ([]DeadJob, error) {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT id, kind, payload, attempts, max_attempts, last_error FROM gesso_jobs
-		WHERE kind = $1 AND status = 'dead' ORDER BY id DESC LIMIT $2`, kind, n)
+		WHERE kind = `+p.ph(1)+` AND status = 'dead' ORDER BY id DESC LIMIT `+p.ph(2), kind, n)
 	if err != nil {
 		return nil, err
 	}

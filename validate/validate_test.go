@@ -140,3 +140,106 @@ func TestPointerAndNil(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+// one runs a single field's tag over each value and reports which pass.
+func one[T any](t *testing.T, tag string, values ...T) []bool {
+	t.Helper()
+	typ := reflect.StructOf([]reflect.StructField{{Name: "V", Type: reflect.TypeFor[T](), Tag: reflect.StructTag(`json:"v" validate:"` + tag + `"`)}})
+	if _, err := planFor(typ); err != nil {
+		t.Fatalf("%s: %v", tag, err)
+	}
+	var out []bool
+	for _, v := range values {
+		rv := reflect.New(typ).Elem()
+		rv.Field(0).Set(reflect.ValueOf(v))
+		p, _ := planFor(typ)
+		var errs []FieldError
+		p.check(rv, "", &errs)
+		out = append(out, len(errs) == 0)
+	}
+	return out
+}
+
+func TestRules(t *testing.T) {
+	cases := []struct {
+		name string
+		got  []bool
+		want []bool
+	}{
+		{"gt int", one(t, "gt=3", 3, 4), []bool{false, true}},
+		{"gte int", one(t, "gte=3", 2, 3), []bool{false, true}},
+		{"lt string length", one(t, "lt=3", "ab", "abc"), []bool{true, false}},
+		{"lte float", one(t, "lte=1.5", 1.5, 1.6), []bool{true, false}},
+		{"eq string", one(t, "eq=yes", "yes", "no"), []bool{true, false}},
+		{"ne int", one(t, "ne=0", 0, 7), []bool{false, true}},
+		{"eq slice length", one(t, "eq=2", []int{1, 2}, []int{1}), []bool{true, false}},
+		{"alpha", one(t, "alpha", "abcXYZ", "abc1", "ç"), []bool{true, false, false}},
+		{"alphanum", one(t, "alphanum", "abc123", "abc-1"), []bool{true, false}},
+		{"numeric", one(t, "numeric", "-42", "+7", "4.2", "--1", "-"), []bool{true, true, false, false, false}},
+		{"lowercase", one(t, "lowercase", "çay 1", "Çay"), []bool{true, false}},
+		{"uppercase", one(t, "uppercase", "ÇAY", "ÇAy"), []bool{true, false}},
+		{"contains", one(t, "contains=@", "a@b", "ab"), []bool{true, false}},
+		{"excludes", one(t, "excludes=/", "ab", "a/b"), []bool{true, false}},
+		{"startswith", one(t, "startswith=gso_", "gso_x", "x_gso_"), []bool{true, false}},
+		{"endswith", one(t, "endswith=.md", "a.md", "a.mdx"), []bool{true, false}},
+		{"slug", one(t, "slug", "getting-started", "v2", "Getting", "a--b", "-a", "a-", "a_b"), []bool{true, true, false, false, false, false, false}},
+		{"ip", one(t, "ip", "10.0.0.1", "::1", "10.0.0"), []bool{true, true, false}},
+		{"ipv4", one(t, "ipv4", "10.0.0.1", "::1"), []bool{true, false}},
+		{"ipv6", one(t, "ipv6", "::1", "10.0.0.1", "::ffff:10.0.0.1"), []bool{true, false, false}},
+		{"hostname", one(t, "hostname", "api.example.com", "localhost", "a_b.com", "-a.com", "example.com."), []bool{true, true, false, false, true}},
+		{"unique", one(t, "unique", []string{"a", "b"}, []string{"a", "a"}), []bool{true, false}},
+		{"omitempty then slug", one(t, "omitempty,slug", "", "Bad"), []bool{true, false}},
+	}
+	for _, c := range cases {
+		if !reflect.DeepEqual(c.got, c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, c.got, c.want)
+		}
+	}
+}
+
+type dived struct {
+	Tags  []string          `json:"tags" validate:"max=3,dive,required,max=4"`
+	Slugs []string          `json:"slugs" validate:"unique,dive,slug"`
+	Names map[string]string `json:"names" validate:"dive,required"`
+}
+
+func TestDive(t *testing.T) {
+	in := dived{
+		Tags:  []string{"go", "", "toolong"},
+		Slugs: []string{"a", "B"},
+		Names: map[string]string{"tr": "Merhaba", "en": ""},
+	}
+	got := codes(Struct(context.Background(), in))
+	want := []string{"tags[1]:required", "tags[2]:max", "slugs[1]:slug", "names[en]:required"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	// A rule before dive that fails stops the elements from being checked.
+	in = dived{Tags: []string{"", "", "", ""}}
+	if got := codes(Struct(context.Background(), in)); !reflect.DeepEqual(got, []string{"tags:max"}) {
+		t.Fatalf("got %v", got)
+	}
+}
+
+type badDive struct {
+	N int `validate:"dive,required"`
+}
+
+type badAfterDive struct {
+	Tags []string `validate:"dive,uuid=4"`
+}
+
+type badUnique struct {
+	S string `validate:"unique"`
+}
+
+func TestCompileReportsBadNewRules(t *testing.T) {
+	for _, err := range []error{Compile[badDive](), Compile[badAfterDive](), Compile[badUnique]()} {
+		if err == nil {
+			t.Error("a bad tag compiled")
+		}
+	}
+	if err := Compile[dived](); err != nil {
+		t.Fatal(err)
+	}
+}

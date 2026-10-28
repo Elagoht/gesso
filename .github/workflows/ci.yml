@@ -21,8 +21,8 @@ jobs:
     name: library
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           # The newest 1.26 release, not whatever the runner image cached: a
@@ -86,8 +86,8 @@ jobs:
       GESSO_POSTGRES_DSN: postgres://gesso:gesso@localhost:5432/postgres?sslmode=disable
       GESSO_MYSQL_DSN: root:gesso@tcp(127.0.0.1:3306)/
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           check-latest: true
@@ -124,8 +124,8 @@ jobs:
     env:
       GESSO_MYSQL_DSN: root:gesso@tcp(127.0.0.1:3306)/
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           check-latest: true
@@ -152,8 +152,8 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           check-latest: true

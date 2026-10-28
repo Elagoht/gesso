@@ -141,6 +141,7 @@ var (
 	ErrTimeout          = NewError(http.StatusServiceUnavailable, "timeout", "the request took too long")
 	ErrInternal         = NewError(http.StatusInternalServerError, "internal", "something went wrong")
 	ErrUnavailable      = NewError(http.StatusServiceUnavailable, "unavailable", "the service could not start")
+	ErrTooManyRequests  = NewError(http.StatusTooManyRequests, "too_many_requests", "too many requests: try again later")
 )
 
 // ErrorMapper turns an error gesso does not know into one it can answer, or
@@ -162,6 +163,12 @@ type Problem struct {
 
 // errorWriter answers errors the same way everywhere: handlers, the router's own
 // 404 and 405, a recovered panic.
+// WriteProblem answers r with e as problem+json, as a handler's error would be:
+// for middleware that refuses a request before any handler runs (a rate limit).
+func WriteProblem(w http.ResponseWriter, r *http.Request, e *Error) {
+	errorWriter{logger: slog.Default()}.write(w, r, e)
+}
+
 type errorWriter struct {
 	logger  *slog.Logger
 	mappers []ErrorMapper

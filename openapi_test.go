@@ -205,3 +205,48 @@ func TestOpenAPIOff(t *testing.T) {
 		t.Fatal("no document unless asked for")
 	}
 }
+
+type ruled struct {
+	Slug  string   `json:"slug" validate:"required,slug"`
+	Code  string   `json:"code" validate:"startswith=gso_"`
+	Score float64  `json:"score" validate:"gt=0,lt=10"`
+	Name  string   `json:"name" validate:"gt=2,lte=8"`
+	Host  string   `json:"host" validate:"hostname"`
+	Tags  []string `json:"tags" validate:"unique,max=5,dive,required,max=20,alphanum"`
+	Count int      `json:"count" validate:"gte=1"`
+	Kind  string   `json:"kind" validate:"eq=note"`
+	Seats []int    `json:"seats" validate:"dive,gt=0"`
+}
+
+func TestOpenAPIRules(t *testing.T) {
+	a := mustNew(t, Config{OpenAPI: &OpenAPIConfig{Title: "R", Version: "1"}}, moduleFunc(func(r *Router) {
+		r.Post("/r", Handle(func(context.Context, ruled) (Empty, error) { return Empty{}, nil }))
+	}))
+	var doc oaDoc
+	if err := json.Unmarshal(a.OpenAPI(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	s := doc.Components.Schemas["ruled"]
+	if s == nil {
+		t.Fatalf("schemas: %v", keys(doc.Components.Schemas))
+	}
+	p := s.Properties
+	checks := map[string]bool{
+		"slug pattern":       p["slug"].Pattern == "^[a-z0-9]+(-[a-z0-9]+)*$",
+		"startswith pattern": p["code"].Pattern == "^gso_",
+		"gt exclusive":       p["score"].ExclusiveMinimum != nil && *p["score"].ExclusiveMinimum == 0,
+		"lt exclusive":       p["score"].ExclusiveMaximum != nil && *p["score"].ExclusiveMaximum == 10,
+		"gt on a string":     p["name"].MinLength != nil && *p["name"].MinLength == 3 && *p["name"].MaxLength == 8,
+		"hostname format":    p["host"].Format == "hostname",
+		"unique items":       p["tags"].UniqueItems && *p["tags"].MaxItems == 5,
+		"dive to items":      p["tags"].Items.MaxLength != nil && *p["tags"].Items.MaxLength == 20 && p["tags"].Items.Pattern == "^[A-Za-z0-9]+$",
+		"gte minimum":        *p["count"].Minimum == 1,
+		"eq enum":            len(p["kind"].Enum) == 1 && string(p["kind"].Enum[0]) == `"note"`,
+		"dive number":        p["seats"].Items.ExclusiveMinimum != nil && p["seats"].MinItems == nil,
+	}
+	for name, ok := range checks {
+		if !ok {
+			t.Errorf("%s: %+v", name, p)
+		}
+	}
+}

@@ -2,7 +2,7 @@
 //
 //	queuetest.Run(t, func(t *testing.T, c clock.Clock) (queue.Queue, db.DB) {
 //	    tx := gessotest.Tx(t, pool)
-//	    return queue.NewPostgres(tx, c), tx
+//	    return queue.NewPostgres(tx, c), tx // or NewMySQL, NewSQLite
 //	})
 //
 // open returns a fresh, empty queue whose time is c's, and the db.DB jobs are

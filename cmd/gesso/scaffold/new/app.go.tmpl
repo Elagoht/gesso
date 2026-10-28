@@ -1,0 +1,141 @@
+// Package app builds the API from its configuration: the database, the modules'
+// migrations, the modules, and the mapping from database errors to answers.
+// Scaffolded by gesso new; it is yours now. gesso add module adds each new
+// module to modules and migrations below.
+package app
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+
+	"github.com/Elagoht/gesso"
+	"github.com/Elagoht/gesso/db"
+	"github.com/Elagoht/gesso/migrate"
+{{- if eq .Dialect "sqlite"}}
+	"modernc.org/sqlite"
+{{- else if eq .Dialect "postgres"}}
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
+{{- else}}
+	"github.com/go-sql-driver/mysql"
+{{- end}}
+)
+
+// Config is what the app takes from its environment.
+type Config struct {
+	Addr     string // where Run listens: ":8080"
+	BasePath string // "/api" when collage mounts the app at /api/; "" on its own
+	Database string // {{.DSNDoc}}
+	Logger   *slog.Logger
+}
+
+// Deps is what the modules are built from.
+type Deps struct {
+	DB db.DB
+}
+
+// modules are the application's features, in order.
+func modules(d Deps) []gesso.Module {
+	return []gesso.Module{}
+}
+
+// migrations are the modules' migrations, applied as one history: their
+// timestamped versions sort across modules.
+func migrations() []fs.FS {
+	return []fs.FS{}
+}
+
+// constraints name the field each database constraint guards, so that a
+// violation is answered as that field's error: {{.ConstraintExample}}.
+var constraints = map[string]string{}
+
+// dialect is the SQL the migrations and the repositories are written in.
+var dialect = migrate.{{.DialectGo}}
+
+// New opens the database, brings its schema up to date and builds the app. The
+// app closes the database when it shuts down.
+func New(ctx context.Context, cfg Config) (*gesso.App, error) {
+	d, err := open(cfg.Database)
+	if err != nil {
+		return nil, err
+	}
+	app, err := build(ctx, d, cfg)
+	if err != nil {
+		return nil, errors.Join(err, d.Close())
+	}
+	app.OnShutdown(func(context.Context) error { return d.Close() })
+	return app, nil
+}
+
+func build(ctx context.Context, d *sql.DB, cfg Config) (*gesso.App, error) {
+	if err := d.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("app: database: %w", err)
+	}
+	m, err := migrate.New(d, dialect, migrations()...)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := m.Up(ctx); err != nil {
+		return nil, fmt.Errorf("app: migrations: %w", err)
+	}
+	return gesso.New(gesso.Config{
+		Addr:         cfg.Addr,
+		BasePath:     cfg.BasePath,
+		Logger:       cfg.Logger,
+		ErrorMappers: []gesso.ErrorMapper{db.Errors(classify, constraints)},
+		OpenAPI:      &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json"},
+	}, modules(Deps{DB: d})...)
+}
+{{if eq .Dialect "sqlite"}}
+// open opens the SQLite file at path: foreign keys enforced, readers beside
+// the one writer (WAL), and a writer that waits for the lock instead of failing.
+func open(path string) (*sql.DB, error) {
+	return sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+}
+
+func classify(err error) (db.Violation, bool) {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return db.Violation{}, false
+	}
+	return db.SQLiteViolation(se.Code(), se.Error())
+}
+{{else if eq .Dialect "postgres"}}
+// open opens a PostgreSQL pool through pgx.
+func open(dsn string) (*sql.DB, error) { return sql.Open("pgx", dsn) }
+
+func classify(err error) (db.Violation, bool) {
+	var pe *pgconn.PgError
+	if !errors.As(err, &pe) {
+		return db.Violation{}, false
+	}
+	return db.PostgresViolation(pe.Code, pe.ConstraintName)
+}
+{{else}}
+// open opens a MySQL pool. A migration file runs as one Exec, so the
+// connection takes several statements at once; DATETIME scans into time.Time.
+func open(dsn string) (*sql.DB, error) {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.MultiStatements, cfg.ParseTime = true, true
+	c, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return sql.OpenDB(c), nil
+}
+
+func classify(err error) (db.Violation, bool) {
+	var me *mysql.MySQLError
+	if !errors.As(err, &me) {
+		return db.Violation{}, false
+	}
+	return db.MySQLViolation(me.Number, me.Message)
+}
+{{end -}}

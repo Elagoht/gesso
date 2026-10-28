@@ -17,8 +17,11 @@ nothing from it. The standard library and `golang.org/x/crypto`, nothing else.
   no ORM, and no driver chosen for you.
 - **Calendar dates**: `date.Date` is "2026-10-28" in JSON, parameters and the
   database — no time zone to shift it by a day.
-- **An outbox queue**: jobs commit with the data they are about; at-least-once,
-  leased, fenced.
+- **An outbox queue** on PostgreSQL, MySQL or SQLite: jobs commit with the data
+  they are about; at-least-once, leased, fenced.
+- **Events** between modules, typed, in process; **rate limits** per client.
+- **Validation** with go-playground's rule names — `gt`, `slug`, `unique`,
+  `dive` and the rest — written into the OpenAPI schema too.
 - **Contracts with fakes**: storage, cache, mail, clock, password hashing, locks — each
   fake held to the same conformance suite as the real implementation.
 - **gessotest**: in-process client, problem assertions, rolled-back test
@@ -55,7 +58,7 @@ note, err := notes.GetNote.Call(ctx, api, notes.GetIn{Slug: "jam"}, gesso.Bearer
 api, err := gesso.New(gesso.Config{BasePath: "/api"}, notes.New(notes.Deps{DB: pool}))
 err = site.Handle("/api/", api)
 // …the collage-gesso plugin runs its lifecycle, in plugins.go:
-gessoplugin.New(gessoplugin.Options{App: api})
+gesso.New(gesso.Options{App: api}) // collage-gesso, imported as gesso there
 // …and pages call it in the same process, with the same code:
 note, err := notes.GetNote.Call(ctx, gesso.NewLocal(api), notes.GetIn{Slug: "jam"}, gesso.Bearer(tok))
 ```
@@ -66,10 +69,14 @@ the OnShutdown hooks, after collage's server has stopped.
 
 ```sh
 go install github.com/Elagoht/gesso/cmd/gesso@latest
+gesso new example.com/events -dialect postgres   # main, app wiring, a test
+cd events && go mod tidy
 gesso add module events -fields title:string,seats:int,starts_at:time,day:date,body:text
+                       # scaffolded under internal/, and wired into internal/app
 gesso migrate new add_event_city -dir internal/events/migrations
 gesso gen              # queries.sql → typed queries.gen.go; gen -check in CI
 gesso check            # database calls without ctx, service methods without ctx
 ```
 
-`integration/notes` is a complete module; [DESIGN.md](DESIGN.md) is the spec.
+`integration/notes` is a complete module; [docs/](docs/README.md) is the guide,
+[DESIGN.md](DESIGN.md) the spec, [CHANGELOG.md](CHANGELOG.md) what changed.

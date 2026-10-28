@@ -10,9 +10,28 @@
 //	max=N      the same, at most
 //	len=N      exactly N characters or elements
 //	oneof=a b  the value is one of the space-separated words
+//	gt=N gte=N lt=N lte=N
+//	           greater than, at least, less than, at most N — counted as min
+//	           and max count: characters, elements, or the number's value
+//	eq=x ne=x  equal or not equal to x: a string's value, a number's value, a
+//	           collection's length
 //	email      a bare address: "a@b.c", not "Name <a@b.c>"
 //	url        an absolute URL with a scheme and a host
 //	uuid       the canonical 8-4-4-4-12 hexadecimal form
+//	ip ipv4 ipv6
+//	           an IP address, of either or one family
+//	hostname   a DNS host name (RFC 1123): labels of letters, digits and hyphens
+//	alpha alphanum numeric
+//	           ASCII letters; letters and digits; an optional sign and digits
+//	lowercase uppercase
+//	           no upper-case (lower-case) letter
+//	contains=x excludes=x startswith=x endswith=x
+//	           the string holds, does not hold, begins or ends with x
+//	slug       lower-case words of ASCII letters and digits joined by single
+//	           hyphens: "getting-started" (gesso's own; not go-playground's)
+//	unique     a slice or array whose elements are all different
+//	dive       the rules after it apply to each element of a slice, array or
+//	           map: `validate:"max=10,dive,required,max=40"`
 //
 // Nested structs, pointers to structs and slices of structs are checked too. A
 // field is named in an error by its json tag, else its query, path or header tag,
@@ -29,8 +48,10 @@ import (
 	"encoding"
 	"fmt"
 	"net/mail"
+	"net/netip"
 	"net/url"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -139,6 +160,8 @@ type fieldPlan struct {
 	index []int
 	name  string
 	rules []rule
+	// elem holds the rules after "dive", for each element.
+	elem []rule
 	// nested is set for a field whose value (through pointers and slices) is a
 	// struct to check in turn.
 	nested *typePlan
@@ -199,11 +222,31 @@ func addFields(t reflect.Type, prefix []int, p *typePlan, building map[reflect.T
 		}
 		fp := fieldPlan{index: index, name: FieldName(f)}
 		if tag := f.Tag.Get("validate"); tag != "" && tag != "-" {
-			rules, err := parseRules(tag, f.Type)
+			own, elem, dive := strings.Cut(tag, ",dive")
+			if strings.HasPrefix(tag, "dive") {
+				own, elem, dive = "", strings.TrimPrefix(tag, "dive"), true
+			}
+			rules, err := parseRules(own, f.Type)
 			if err != nil {
 				return fmt.Errorf("validate: %s.%s: %w", t, f.Name, err)
 			}
 			fp.rules = rules
+			if dive {
+				et, err := elemType(f.Type)
+				if err != nil {
+					return fmt.Errorf("validate: %s.%s: %w", t, f.Name, err)
+				}
+				elem = strings.TrimPrefix(elem, ",")
+				if strings.Contains(","+elem+",", ",dive,") {
+					return fmt.Errorf("validate: %s.%s: one dive per field", t, f.Name)
+				}
+				if fp.elem, err = parseRules(elem, et); err != nil {
+					return fmt.Errorf("validate: %s.%s: after dive: %w", t, f.Name, err)
+				}
+				if fp.elem == nil {
+					fp.elem = []rule{}
+				}
+			}
 		}
 		if st := structBeneath(f.Type); st != nil {
 			nested, err := build(st, building)
@@ -212,7 +255,7 @@ func addFields(t reflect.Type, prefix []int, p *typePlan, building map[reflect.T
 			}
 			fp.nested = nested
 		}
-		if fp.rules != nil || fp.nested != nil {
+		if fp.rules != nil || fp.elem != nil || fp.nested != nil {
 			p.fields = append(p.fields, fp)
 		}
 	}
@@ -247,6 +290,9 @@ func (p *typePlan) check(rv reflect.Value, prefix string, out *[]FieldError) {
 		}
 		if !checkRules(fv, fp.rules, name, out) {
 			continue
+		}
+		if fp.elem != nil {
+			checkElems(fv, fp.elem, name, out)
 		}
 		if fp.nested != nil {
 			checkNested(fv, fp.nested, name, out)
@@ -286,6 +332,41 @@ func checkRules(fv reflect.Value, rules []rule, name string, out *[]FieldError) 
 	return true
 }
 
+// checkElems applies the rules after dive to each element: "tags[2]" for a
+// slice, "names[en]" for a map.
+func checkElems(fv reflect.Value, rules []rule, name string, out *[]FieldError) {
+	for fv.Kind() == reflect.Pointer {
+		if fv.IsNil() {
+			return
+		}
+		fv = fv.Elem()
+	}
+	switch fv.Kind() {
+	case reflect.Slice, reflect.Array:
+		for i := range fv.Len() {
+			checkRules(fv.Index(i), rules, name+"["+strconv.Itoa(i)+"]", out)
+		}
+	case reflect.Map:
+		keys := fv.MapKeys()
+		slices.SortFunc(keys, func(a, b reflect.Value) int { return strings.Compare(fmt.Sprint(a), fmt.Sprint(b)) })
+		for _, k := range keys {
+			checkRules(fv.MapIndex(k), rules, name+"["+fmt.Sprint(k)+"]", out)
+		}
+	}
+}
+
+// elemType is what dive reaches: the element of a slice, array or map.
+func elemType(t reflect.Type) (reflect.Type, error) {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return t.Elem(), nil
+	}
+	return nil, fmt.Errorf("dive does not apply to %s", t)
+}
+
 func checkNested(fv reflect.Value, p *typePlan, name string, out *[]FieldError) {
 	for fv.Kind() == reflect.Pointer {
 		if fv.IsNil() {
@@ -323,6 +404,9 @@ func parseRules(tag string, t reflect.Type) ([]rule, error) {
 		base = base.Elem()
 	}
 	var rules []rule
+	if strings.TrimSpace(tag) == "" {
+		return nil, nil
+	}
 	for part := range strings.SplitSeq(tag, ",") {
 		code, param, hasParam := strings.Cut(strings.TrimSpace(part), "=")
 		r := rule{code: code}
@@ -332,7 +416,7 @@ func parseRules(tag string, t reflect.Type) ([]rule, error) {
 				return nil, fmt.Errorf("%q takes no parameter", code)
 			}
 			r.msg = func(rule, reflect.Value) string { return "is required" }
-		case "min", "max", "len":
+		case "min", "max", "len", "gt", "gte", "lt", "lte":
 			n, err := strconv.ParseFloat(param, 64)
 			if !hasParam || err != nil {
 				return nil, fmt.Errorf("%q needs a number, got %q", code, param)
@@ -357,7 +441,53 @@ func parseRules(tag string, t reflect.Type) ([]rule, error) {
 			r.msg = func(r rule, _ reflect.Value) string {
 				return "must be one of: " + strings.Join(r.params, ", ")
 			}
-		case "email", "url", "uuid":
+		case "eq", "ne":
+			if !hasParam {
+				return nil, fmt.Errorf("%q needs a value", code)
+			}
+			if base.Kind() != reflect.String && !sized(base) {
+				return nil, fmt.Errorf("%q does not apply to %s", code, base)
+			}
+			if base.Kind() != reflect.String {
+				n, err := strconv.ParseFloat(param, 64)
+				if err != nil {
+					return nil, fmt.Errorf("%q needs a number for %s, got %q", code, base, param)
+				}
+				r.n = n
+			}
+			r.params = []string{param}
+			r.check = checkEq
+			r.msg = func(r rule, _ reflect.Value) string {
+				if r.code == "eq" {
+					return "must be " + r.params[0]
+				}
+				return "must not be " + r.params[0]
+			}
+		case "contains", "excludes", "startswith", "endswith":
+			if !hasParam || param == "" {
+				return nil, fmt.Errorf("%q needs a value", code)
+			}
+			if base.Kind() != reflect.String {
+				return nil, fmt.Errorf("%q does not apply to %s", code, base)
+			}
+			r.params = []string{param}
+			r.check = checkText
+			r.msg = func(r rule, _ reflect.Value) string {
+				verb := map[string]string{"contains": "must contain", "excludes": "must not contain",
+					"startswith": "must start with", "endswith": "must end with"}[r.code]
+				return verb + " " + strconv.Quote(r.params[0])
+			}
+		case "unique":
+			if hasParam {
+				return nil, fmt.Errorf("%q takes no parameter", code)
+			}
+			if (base.Kind() != reflect.Slice && base.Kind() != reflect.Array) || !base.Elem().Comparable() {
+				return nil, fmt.Errorf("%q does not apply to %s", code, base)
+			}
+			r.check = checkUnique
+			r.msg = func(rule, reflect.Value) string { return "must not hold the same value twice" }
+		case "email", "url", "uuid", "ip", "ipv4", "ipv6", "hostname",
+			"alpha", "alphanum", "numeric", "lowercase", "uppercase", "slug":
 			if hasParam {
 				return nil, fmt.Errorf("%q takes no parameter", code)
 			}
@@ -365,7 +495,7 @@ func parseRules(tag string, t reflect.Type) ([]rule, error) {
 				return nil, fmt.Errorf("%q does not apply to %s", code, base)
 			}
 			r.check = stringChecks[code]
-			r.msg = func(r rule, _ reflect.Value) string { return "must be a valid " + r.code }
+			r.msg = func(r rule, _ reflect.Value) string { return stringMessages[r.code] }
 		default:
 			return nil, fmt.Errorf("unknown rule %q", code)
 		}
@@ -411,10 +541,14 @@ func size(v reflect.Value) (n float64, counted bool) {
 func checkSize(v reflect.Value, r rule) bool {
 	n, _ := size(v)
 	switch r.code {
-	case "min":
+	case "min", "gte":
 		return n >= r.n
-	case "max":
+	case "max", "lte":
 		return n <= r.n
+	case "gt":
+		return n > r.n
+	case "lt":
+		return n < r.n
 	default:
 		return n == r.n
 	}
@@ -430,10 +564,14 @@ func sizeMessage(r rule, v reflect.Value) string {
 		}
 	}
 	switch r.code {
-	case "min":
+	case "min", "gte":
 		return "must be at least " + r.params[0] + unit
-	case "max":
+	case "max", "lte":
 		return "must be at most " + r.params[0] + unit
+	case "gt":
+		return "must be more than " + r.params[0] + unit
+	case "lt":
+		return "must be less than " + r.params[0] + unit
 	default:
 		return "must be exactly " + r.params[0] + unit
 	}
@@ -457,7 +595,100 @@ func checkOneOf(v reflect.Value, r rule) bool {
 	return false
 }
 
+func checkEq(v reflect.Value, r rule) bool {
+	var same bool
+	if v.Kind() == reflect.String {
+		same = v.String() == r.params[0]
+	} else {
+		n, _ := size(v)
+		same = n == r.n
+	}
+	return same == (r.code == "eq")
+}
+
+func checkText(v reflect.Value, r rule) bool {
+	s, x := v.String(), r.params[0]
+	switch r.code {
+	case "contains":
+		return strings.Contains(s, x)
+	case "excludes":
+		return !strings.Contains(s, x)
+	case "startswith":
+		return strings.HasPrefix(s, x)
+	default:
+		return strings.HasSuffix(s, x)
+	}
+}
+
+func checkUnique(v reflect.Value, _ rule) bool {
+	for i := range v.Len() {
+		for j := range i {
+			if v.Index(i).Equal(v.Index(j)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func allASCII(s string, ok func(c byte) bool) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if !ok(s[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLetter(c byte) bool { return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' }
+func isDigit(c byte) bool  { return '0' <= c && c <= '9' }
+
+var stringMessages = map[string]string{
+	"email": "must be a valid email", "url": "must be a valid url", "uuid": "must be a valid uuid",
+	"ip": "must be an IP address", "ipv4": "must be an IPv4 address", "ipv6": "must be an IPv6 address",
+	"hostname": "must be a host name", "alpha": "must hold only letters",
+	"alphanum": "must hold only letters and digits", "numeric": "must be a number",
+	"lowercase": "must be lower-case", "uppercase": "must be upper-case",
+	"slug": "must be lower-case words joined by hyphens",
+}
+
 var stringChecks = map[string]func(reflect.Value, rule) bool{
+	"ip": func(v reflect.Value, _ rule) bool {
+		_, err := netip.ParseAddr(v.String())
+		return err == nil
+	},
+	"ipv4": func(v reflect.Value, _ rule) bool {
+		a, err := netip.ParseAddr(v.String())
+		return err == nil && a.Is4()
+	},
+	"ipv6": func(v reflect.Value, _ rule) bool {
+		a, err := netip.ParseAddr(v.String())
+		return err == nil && a.Is6() && !a.Is4In6()
+	},
+	"hostname": func(v reflect.Value, _ rule) bool { return IsHostname(v.String()) },
+	"alpha":    func(v reflect.Value, _ rule) bool { return allASCII(v.String(), isLetter) },
+	"alphanum": func(v reflect.Value, _ rule) bool {
+		return allASCII(v.String(), func(c byte) bool { return isLetter(c) || isDigit(c) })
+	},
+	"numeric": func(v reflect.Value, _ rule) bool {
+		s := strings.TrimLeft(v.String(), "+-")
+		if len(s) < len(v.String())-1 {
+			return false
+		}
+		return allASCII(s, isDigit)
+	},
+	"lowercase": func(v reflect.Value, _ rule) bool {
+		s := v.String()
+		return s != "" && s == strings.ToLower(s)
+	},
+	"uppercase": func(v reflect.Value, _ rule) bool {
+		s := v.String()
+		return s != "" && s == strings.ToUpper(s)
+	},
+	"slug": func(v reflect.Value, _ rule) bool { return IsSlug(v.String()) },
 	"email": func(v reflect.Value, _ rule) bool {
 		s := v.String()
 		a, err := mail.ParseAddress(s)
@@ -468,6 +699,34 @@ var stringChecks = map[string]func(reflect.Value, rule) bool{
 		return err == nil && u.Scheme != "" && u.Host != ""
 	},
 	"uuid": func(v reflect.Value, _ rule) bool { return IsUUID(v.String()) },
+}
+
+// IsSlug reports whether s is lower-case words of ASCII letters and digits
+// joined by single hyphens: "getting-started", "v2".
+func IsSlug(s string) bool {
+	if s == "" || s[0] == '-' || s[len(s)-1] == '-' || strings.Contains(s, "--") {
+		return false
+	}
+	return allASCII(s, func(c byte) bool { return 'a' <= c && c <= 'z' || isDigit(c) || c == '-' })
+}
+
+// IsHostname reports whether s is a DNS host name as RFC 1123 has it: dot-
+// separated labels of 1 to 63 letters, digits and inner hyphens, 253 characters
+// at most; a trailing dot is allowed.
+func IsHostname(s string) bool {
+	s = strings.TrimSuffix(s, ".")
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for label := range strings.SplitSeq(s, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		if !allASCII(label, func(c byte) bool { return isLetter(c) || isDigit(c) || c == '-' }) {
+			return false
+		}
+	}
+	return true
 }
 
 // IsUUID reports whether s is a UUID in its canonical 8-4-4-4-12 form.

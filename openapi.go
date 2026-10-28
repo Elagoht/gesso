@@ -198,6 +198,10 @@ type Schema struct {
 	Maximum              *float64           `json:"maximum,omitempty"`
 	MinItems             *int               `json:"minItems,omitempty"`
 	MaxItems             *int               `json:"maxItems,omitempty"`
+	ExclusiveMinimum     *float64           `json:"exclusiveMinimum,omitempty"`
+	ExclusiveMaximum     *float64           `json:"exclusiveMaximum,omitempty"`
+	UniqueItems          bool               `json:"uniqueItems,omitempty"`
+	Pattern              string             `json:"pattern,omitempty"`
 }
 
 // schemaType is one type name, or several ("string", "null").
@@ -532,45 +536,92 @@ func hasRule(rules, name string) bool {
 
 // applyRules writes a field's validate rules into its schema as JSON Schema
 // keywords. A $ref schema takes no keywords beside it, so a struct field keeps
-// only its reference.
+// only its reference. The rules after "dive" go to the items' schema. A schema
+// has one pattern: of several pattern rules (alpha, slug, startswith…) the
+// first is written, and the rest are checked but not described.
 func applyRules(s *Schema, t reflect.Type, rules string) {
-	if s.Ref != "" || len(s.AnyOf) > 0 || rules == "" {
+	if rules == "" {
 		return
+	}
+	own, elem, dive := strings.Cut(rules, ",dive")
+	if strings.HasPrefix(rules, "dive") {
+		own, elem, dive = "", strings.TrimPrefix(rules, "dive"), true
 	}
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	for r := range strings.SplitSeq(rules, ",") {
+	if dive {
+		target := s
+		if len(s.AnyOf) > 0 {
+			target = nil
+		}
+		if target != nil && (t.Kind() == reflect.Slice || t.Kind() == reflect.Array) && target.Items != nil {
+			applyRules(target.Items, t.Elem(), strings.TrimPrefix(elem, ","))
+		}
+		if target != nil && t.Kind() == reflect.Map && target.AdditionalProperties != nil {
+			applyRules(target.AdditionalProperties, t.Elem(), strings.TrimPrefix(elem, ","))
+		}
+	}
+	if s.Ref != "" || len(s.AnyOf) > 0 {
+		return
+	}
+	pattern := func(p string) {
+		if s.Pattern == "" {
+			s.Pattern = p
+		}
+	}
+	for r := range strings.SplitSeq(own, ",") {
 		code, param, _ := strings.Cut(strings.TrimSpace(r), "=")
 		n, numErr := strconv.ParseFloat(param, 64)
 		switch code {
-		case "min", "max", "len":
+		case "min", "max", "len", "gte", "lte", "gt", "lt":
 			if numErr != nil {
 				continue
 			}
-			i := int(n)
+			lower := code == "min" || code == "len" || code == "gte" || code == "gt"
+			upper := code == "max" || code == "len" || code == "lte" || code == "lt"
 			switch t.Kind() {
-			case reflect.String:
-				if code != "max" {
-					s.MinLength = &i
+			case reflect.String, reflect.Slice, reflect.Array, reflect.Map:
+				// Counts are whole: more than 3 is at least 4.
+				i := int(n)
+				lo, hi := i, i
+				if code == "gt" {
+					lo = i + 1
 				}
-				if code != "min" {
-					s.MaxLength = &i
+				if code == "lt" {
+					hi = i - 1
 				}
-			case reflect.Slice, reflect.Array, reflect.Map:
-				if code != "max" {
-					s.MinItems = &i
+				minp, maxp := &s.MinLength, &s.MaxLength
+				if t.Kind() != reflect.String {
+					minp, maxp = &s.MinItems, &s.MaxItems
 				}
-				if code != "min" {
-					s.MaxItems = &i
+				if lower {
+					*minp = &lo
+				}
+				if upper {
+					*maxp = &hi
 				}
 			default:
-				if code != "max" {
-					s.Minimum = &n
+				switch {
+				case code == "gt":
+					s.ExclusiveMinimum = &n
+				case code == "lt":
+					s.ExclusiveMaximum = &n
+				default:
+					if lower {
+						s.Minimum = &n
+					}
+					if upper {
+						s.Maximum = &n
+					}
 				}
-				if code != "min" {
-					s.Maximum = &n
-				}
+			}
+		case "eq":
+			if t.Kind() == reflect.String {
+				data, _ := json.Marshal(param)
+				s.Enum = []json.RawMessage{data}
+			} else if numErr == nil && t.Kind() != reflect.Slice && t.Kind() != reflect.Array && t.Kind() != reflect.Map {
+				s.Enum = []json.RawMessage{json.RawMessage(param)}
 			}
 		case "oneof":
 			for _, w := range strings.Fields(param) {
@@ -587,6 +638,24 @@ func applyRules(s *Schema, t reflect.Type, rules string) {
 			s.Format = "uri"
 		case "uuid":
 			s.Format = "uuid"
+		case "ipv4", "ipv6", "hostname":
+			s.Format = code
+		case "unique":
+			s.UniqueItems = true
+		case "alpha":
+			pattern("^[A-Za-z]+$")
+		case "alphanum":
+			pattern("^[A-Za-z0-9]+$")
+		case "numeric":
+			pattern("^[+-]?[0-9]+$")
+		case "slug":
+			pattern("^[a-z0-9]+(-[a-z0-9]+)*$")
+		case "startswith":
+			pattern("^" + regexp.QuoteMeta(param))
+		case "endswith":
+			pattern(regexp.QuoteMeta(param) + "$")
+		case "contains":
+			pattern(regexp.QuoteMeta(param))
 		}
 	}
 }

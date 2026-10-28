@@ -137,8 +137,9 @@ func TestPostgresLocker(t *testing.T) {
 }
 
 // When the holder's session dies, its lock is freed for the next replica and
-// unlock says it failed. (database/sql drops a dead connection by itself; the
-// discard of a live connection whose unlock failed is not reached here.)
+// unlock says it failed. (database/sql drops a dead connection by itself; a
+// live connection whose unlock failed is discarded too, which lock's own
+// TestUnlockFailureDiscardsTheConnection shows with a driver that refuses.)
 func TestPostgresLockerDiscardsADeadSession(t *testing.T) {
 	d := pgDB(t)
 	ctx := context.Background()

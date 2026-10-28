@@ -58,7 +58,15 @@ func TestMigrateNew(t *testing.T) {
 		}
 	}
 	if code := run([]string{"migrate", "new", "add_events", "-dir", "db/migrations"}, dir, &out, &errOut, fixedNow); code == 0 {
-		t.Fatal("an existing migration is never overwritten")
+		t.Fatal("a second migration of the same name is refused")
+	}
+	// Another in the same second takes the next one: the versions are one
+	// history across the project.
+	if code := run([]string{"migrate", "new", "add_city", "-dir", "other/migrations"}, dir, &out, &errOut, fixedNow); code != 0 {
+		t.Fatalf("code %d: %s", code, errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "other/migrations/20261028153001_add_city.up.sql")); err != nil {
+		t.Fatal(err)
 	}
 	if code := run([]string{"migrate", "new", "Add Events"}, dir, &out, &errOut, fixedNow); code != 2 {
 		t.Fatal("a bad name is refused")
@@ -83,6 +91,13 @@ func goIn(t *testing.T, dir string, args ...string) string {
 // it resolves is one whose checksum our go.sum already holds.
 func newApp(t *testing.T, require string) string {
 	dir := t.TempDir()
+	seedModule(t, dir, require)
+	return dir
+}
+
+// seedModule writes dir's go.mod and go.sum as newApp describes.
+func seedModule(t *testing.T, dir, require string) {
+	t.Helper()
 	mod := "module example.com/app\n\ngo 1.26.10\n\nrequire github.com/Elagoht/gesso v0.0.0\n" + require +
 		ourRequires(t) + "\nreplace github.com/Elagoht/gesso => " + gessoRoot(t) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(mod), 0o644); err != nil {
@@ -96,7 +111,6 @@ func newApp(t *testing.T, require string) string {
 	if err := os.WriteFile(filepath.Join(dir, "go.sum"), sums, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return dir
 }
 
 // order is a keyword in every dialect, so its column is quoted.
