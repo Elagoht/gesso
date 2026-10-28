@@ -284,7 +284,8 @@ shared process.
    failed Start.
 6. **v0.6** — from the first trial (a documents API on SQLite): `date.Date`,
    `Config.Authenticator` / `Config.Middleware`, scaffold `text` / `date` /
-   update / keyword columns.
+   update / keyword columns. MySQL verified against a server: `lock.MySQL`,
+   `gesso gen :execlastid`, CI on `mysql:8.4`.
 7. **later** — event bus, wiring generation, `gesso new` (the main and the wiring
    a first module needs: the trial wrote ~100 lines of it by hand).
 
@@ -382,15 +383,28 @@ shared process.
   update (PUT, the record whole) and delete. A column named after an SQL keyword
   (`order`, `group`, `user`) is quoted in the SQL it writes, per dialect; MySQL's
   UPDATE counts changed rows, not found ones, so its scaffold asks whether a row
-  that changed nothing exists before answering 404. Its tests generate a module, vet and test it with
-  `-count=1`, pass it through `check`, and run its repository against SQLite and a
-  real PostgreSQL. The MySQL scaffold compiles and passes its own tests; its SQL is
-  unverified.
+  that changed nothing exists before answering 404. Its tests generate a module,
+  vet and test it with `-count=1`, pass it through `check`, and run its
+  repository against SQLite, a real PostgreSQL and a real MySQL.
 - 2026-10-28 — gesso's own tests that need a database live in a nested
   `integration/` module, so their drivers never reach gesso's `go.mod`: SQLite
   (`modernc.org/sqlite`) and a real PostgreSQL (embedded-postgres, or
-  `GESSO_POSTGRES_DSN` in CI). Each Postgres test gets a database of its own;
-  without a server they skip, saying "POSTGRES UNVERIFIED".
+  `GESSO_POSTGRES_DSN` in CI) and a real MySQL (`GESSO_MYSQL_DSN`; there is no
+  embedded one). Each Postgres or MySQL test gets a database of its own;
+  without a server they skip, saying "POSTGRES UNVERIFIED" / "MYSQL
+  UNVERIFIED", and CI fails on either.
+- 2026-10-28 — **MySQL verified** (8.4) by every suite PostgreSQL runs:
+  migrations with GET_LOCK under contention, InTx and savepoints, the token
+  store, the classifier through db.Errors, `lock.MySQL` (GET_LOCK, one
+  connection per held lock, like `lock.Postgres`), DATE and DATETIME(6), the
+  scaffold, and `gesso gen`. What it took: the DSN needs `multiStatements=true`
+  (a migration file is one Exec) and `parseTime=true` (DATETIME into
+  time.Time; `date.Date` scans either way); MySQL has no RETURNING, so
+  `gesso gen` has `:execlastid`; and **DDL is not transactional** — MySQL
+  commits each CREATE, ALTER and DROP by itself, so a migration that fails
+  after one leaves it applied and unrecorded. The rows a failed migration wrote
+  are still rolled back. Keep one DDL statement per MySQL migration. The queue
+  stays PostgreSQL-only.
 - 2026-10-28 — **Each request in a test transaction runs in a savepoint.**
   PostgreSQL fails a whole transaction at its first error, so a test that expected
   a 409 could send nothing after it. `gessotest.Tx` returns a `TxDB`, and a Client
@@ -402,15 +416,13 @@ shared process.
 
 ## 14. Open questions
 
-- **MySQL is untested against a server.** Its dialect (GET_LOCK, placeholders) and
-  violation classifier have unit tests only. PostgreSQL runs every suite:
-  migrations with the advisory lock under contention, InTx and savepoints, the SQL
-  token store, the pgx classifier through db.Errors.
+- **The queue on MySQL.** `queue` is PostgreSQL-only. MySQL 8 has
+  `FOR UPDATE SKIP LOCKED` too; nobody has asked yet.
 - **CI** (`.github/workflows/ci.yml`): library (gofmt, vet, `-race`),
-  integration against a `postgres:18` service through `GESSO_POSTGRES_DSN` (a
-  Postgres test that skips there fails the job), the CLI's generate-and-run tests,
-  and lint (staticcheck v0.7.0, govulncheck). No MySQL job: MySQL stays
-  unverified.
+  integration against `postgres:18` and `mysql:8.4` services through
+  `GESSO_POSTGRES_DSN` and `GESSO_MYSQL_DSN`, the CLI's generate-and-run tests
+  (with the MySQL service too) — a database test that skips there fails the job
+  — and lint (staticcheck v0.7.0, govulncheck).
 - **Releasing.** gesso is tagged `vX.Y.Z`, the CLI `cmd/gesso/vX.Y.Z` (its own
   module, which imports nothing from gesso, so it has no `replace` and
   `go install github.com/Elagoht/gesso/cmd/gesso@latest` works). `integration/`

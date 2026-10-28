@@ -48,14 +48,22 @@ func genQueries(dialect string) string {
 		}
 		return "?"
 	}
-	return `-- gesso: dialect ` + dialect + `
-
--- name: CreateNote :one
+	// MySQL has no RETURNING: it inserts with :execlastid, and reads back.
+	create := `-- name: CreateNote :one
 -- in: slug string, title string, at time.Time
 -- out: Note
 INSERT INTO notes (slug, heading, created_at) VALUES (` + p("1") + `, ` + p("2") + `, ` + p("3") + `)
 RETURNING id, slug, heading, created_at, draft;
+`
+	if dialect == "mysql" {
+		create = `-- name: InsertNote :execlastid
+-- in: slug string, title string, at time.Time
+INSERT INTO notes (slug, heading, created_at) VALUES (?, ?, ?);
+`
+	}
+	return `-- gesso: dialect ` + dialect + `
 
+` + create + `
 -- name: NoteBySlug :one
 -- in: slug string
 -- out: Note
@@ -81,12 +89,14 @@ DELETE FROM notes;
 }
 
 func genSchema(dialect string) string {
-	id := "id INTEGER PRIMARY KEY"
-	ts := "TIMESTAMP"
-	if dialect == "postgres" {
+	id, slug, ts := "id INTEGER PRIMARY KEY", "TEXT", "TIMESTAMP"
+	switch dialect {
+	case "postgres":
 		id, ts = "id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY", "TIMESTAMPTZ"
+	case "mysql":
+		id, slug, ts = "id BIGINT AUTO_INCREMENT PRIMARY KEY", "VARCHAR(255)", "DATETIME(6)"
 	}
-	return "CREATE TABLE notes (" + id + ", slug TEXT NOT NULL UNIQUE, heading TEXT NOT NULL, created_at " + ts + " NOT NULL, draft BOOLEAN)"
+	return "CREATE TABLE notes (" + id + ", slug " + slug + " NOT NULL UNIQUE, heading TEXT NOT NULL, created_at " + ts + " NOT NULL, draft BOOLEAN)"
 }
 
 const genDBTest = `
@@ -97,11 +107,11 @@ func exerciseQueries(t *testing.T, d *sql.DB, schema string) {
 	}
 	q := NewQueries(d)
 	at := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-	n, err := q.CreateNote(ctx, "jam", "Game jam", at)
+	n, err := createNote(ctx, q, "jam", "Game jam", at)
 	if err != nil || n.ID == 0 || n.Title != "Game jam" || !n.CreatedAt.Equal(at) || n.Draft != nil {
 		t.Fatalf("create: %+v %v", n, err)
 	}
-	if _, err := q.CreateNote(ctx, "talk", "Talk", at.Add(time.Hour)); err != nil {
+	if _, err := createNote(ctx, q, "talk", "Talk", at.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := q.NoteBySlug(ctx, "jam")
@@ -149,6 +159,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func createNote(ctx context.Context, q *Queries, slug, title string, at time.Time) (Note, error) {
+	return q.CreateNote(ctx, slug, title, at)
+}
+
 func TestQueriesSQLite(t *testing.T) {
 	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "x.db"))
 	if err != nil {
@@ -177,6 +191,10 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+func createNote(ctx context.Context, q *Queries, slug, title string, at time.Time) (Note, error) {
+	return q.CreateNote(ctx, slug, title, at)
+}
+
 func TestQueriesPostgres(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -200,6 +218,35 @@ func TestQueriesPostgres(t *testing.T) {
 }
 ` + genDBTest
 
+const genMySQLTest = `package notes
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/Elagoht/gesso/db"
+	"github.com/go-sql-driver/mysql"
+)
+
+// createNote is what MySQL makes of RETURNING: the insert's id, then a read.
+func createNote(ctx context.Context, q *Queries, slug, title string, at time.Time) (Note, error) {
+	id, err := q.InsertNote(ctx, slug, title, at)
+	if err != nil || id == 0 {
+		return Note{}, fmt.Errorf("insert: id %d: %w", id, err)
+	}
+	return q.NoteBySlug(ctx, slug)
+}
+
+func TestQueriesMySQL(t *testing.T) {
+	exerciseQueries(t, openMySQL(t), SCHEMA)
+}
+` + genDBTest + mysqlOpen
+
 // writeFiles puts files under dir.
 func writeFiles(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
@@ -221,6 +268,7 @@ func TestGen(t *testing.T) {
 	cases := map[string]struct{ require, dbTest string }{
 		"sqlite":   {"require modernc.org/sqlite v1.61.0\n", genSQLiteTest},
 		"postgres": {"require (\n\tgithub.com/fergusstrange/embedded-postgres v1.34.0\n\tgithub.com/jackc/pgx/v5 v5.11.0\n)\n", genPostgresTest},
+		"mysql":    {"require github.com/go-sql-driver/mysql v1.10.1\n", genMySQLTest},
 	}
 	for dialect, c := range cases {
 		t.Run(dialect, func(t *testing.T) {
@@ -243,7 +291,7 @@ func TestGen(t *testing.T) {
 				t.Fatalf("header or any:\n%s", src)
 			}
 			goIn(t, dir, "vet", "./...")
-			goIn(t, dir, "test", "-count=1", "./...")
+			reportUnverified(t, goIn(t, dir, "test", "-count=1", "-v", "./..."))
 			if n, err := check(nil, dir, &out); err != nil || n != 0 {
 				t.Fatalf("generated code breaks the ctx rule: %v %s", err, out.String())
 			}

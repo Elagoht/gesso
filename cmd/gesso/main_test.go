@@ -112,9 +112,8 @@ func TestAddModule(t *testing.T) {
 	cases := map[string]struct{ require, dbTest string }{
 		"sqlite":   {"require modernc.org/sqlite v1.61.0\n", sqliteRepoTest},
 		"postgres": {"require (\n\tgithub.com/fergusstrange/embedded-postgres v1.34.0\n\tgithub.com/jackc/pgx/v5 v5.11.0\n)\n", postgresRepoTest},
-		// No MySQL server here: the scaffold compiles, vets and passes its own
-		// tests, but its SQL is unverified.
-		"mysql": {"", ""},
+		// MySQL runs against GESSO_MYSQL_DSN, and skips — UNVERIFIED — without it.
+		"mysql": {"require github.com/go-sql-driver/mysql v1.10.1\n", mysqlRepoTest},
 	}
 	for dialect, c := range cases {
 		t.Run(dialect, func(t *testing.T) {
@@ -131,7 +130,7 @@ func TestAddModule(t *testing.T) {
 			}
 			goIn(t, dir, "mod", "tidy")
 			goIn(t, dir, "vet", "./...")
-			goIn(t, dir, "test", "-count=1", "./...")
+			reportUnverified(t, goIn(t, dir, "test", "-count=1", "-v", "./..."))
 			var checkOut bytes.Buffer
 			if n, err := check(nil, dir, &checkOut); err != nil || n != 0 {
 				t.Fatalf("the scaffold breaks the ctx rule: %v\n%s", err, checkOut.String())
@@ -265,6 +264,77 @@ func TestRepositoryPostgres(t *testing.T) {
 	exercise(t, d, migrate.Postgres)
 }
 ` + repoTestBody
+
+const mysqlRepoTest = `package events
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Elagoht/gesso/date"
+	"github.com/Elagoht/gesso/migrate"
+	"github.com/go-sql-driver/mysql"
+)
+
+func TestRepositoryMySQL(t *testing.T) {
+	exercise(t, openMySQL(t), migrate.MySQL)
+}
+` + repoTestBody + mysqlOpen
+
+// mysqlOpen is the generated tests' MySQL: a database of their own on the
+// server GESSO_MYSQL_DSN names.
+const mysqlOpen = `
+func openMySQL(t *testing.T) *sql.DB {
+	dsn := os.Getenv("GESSO_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("MYSQL UNVERIFIED — GESSO_MYSQL_DSN is not set")
+	}
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.MultiStatements, cfg.ParseTime = true, true
+	admin, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	name := fmt.Sprintf("gesso_cli_%d", time.Now().UnixNano())
+	if _, err := admin.Exec("CREATE DATABASE " + name); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if a, err := sql.Open("mysql", cfg.FormatDSN()); err == nil {
+			_, _ = a.Exec("DROP DATABASE " + name)
+			_ = a.Close()
+		}
+	})
+	cfg.DBName = name
+	d, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+`
+
+// reportUnverified shows a generated test's skip: a database it could not
+// reach left its SQL unverified, which CI must see, not mistake for a pass.
+func reportUnverified(t *testing.T, out string) {
+	t.Helper()
+	for line := range strings.SplitSeq(out, "\n") {
+		if strings.Contains(line, "UNVERIFIED") {
+			t.Log(strings.TrimSpace(line))
+		}
+	}
+}
 
 func TestCheck(t *testing.T) {
 	dir := newApp(t, "")

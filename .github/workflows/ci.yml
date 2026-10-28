@@ -1,8 +1,9 @@
 # The gate gesso has to pass before anyone depends on a commit.
 #
 # One job per question, so a red tick says which failed: does the library hold,
-# does it hold against a real PostgreSQL, does the CLI generate code that builds
-# and runs, and is it free of what the linter and the vulnerability database know.
+# does it hold against a real PostgreSQL and a real MySQL, does the CLI generate
+# code that builds and runs on both, and is it free of what the linter and the
+# vulnerability database know.
 name: ci
 
 on:
@@ -52,11 +53,13 @@ jobs:
         run: go test -race ./...
 
   integration:
-    name: integration (PostgreSQL)
+    name: integration (PostgreSQL, MySQL)
     runs-on: ubuntu-latest
-    # A real server, given to the suites through GESSO_POSTGRES_DSN; without it
-    # they would start an embedded one. Each test creates a database of its own,
-    # so the user needs CREATEDB (the image's superuser has it).
+    # Real servers, given to the suites through GESSO_POSTGRES_DSN and
+    # GESSO_MYSQL_DSN; without the first they would start an embedded
+    # PostgreSQL, without the second skip MySQL. Each test creates a database of
+    # its own, so the users need to create databases (both images' superusers
+    # can).
     services:
       postgres:
         image: postgres:18
@@ -69,8 +72,19 @@ jobs:
           --health-interval 2s
           --health-timeout 5s
           --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: gesso
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pgesso"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     env:
       GESSO_POSTGRES_DSN: postgres://gesso:gesso@localhost:5432/postgres?sslmode=disable
+      GESSO_MYSQL_DSN: root:gesso@tcp(127.0.0.1:3306)/
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -80,15 +94,15 @@ jobs:
           cache: true
           cache-dependency-path: integration/go.sum
 
-      # A skipped Postgres test here would mean "unverified", not "passed": with
-      # a server provided, a skip is a failure.
+      # A skipped database test here would mean "unverified", not "passed":
+      # with servers provided, a skip is a failure.
       - name: go test
         working-directory: integration
         run: |
           go test -count=1 -v ./... 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
-          if grep -q "POSTGRES UNVERIFIED" test.log; then
-            echo "a PostgreSQL test skipped although a server was given"
+          if grep -q "UNVERIFIED" test.log; then
+            echo "a database test skipped although a server was given"
             exit 1
           fi
           exit $status
@@ -96,6 +110,19 @@ jobs:
   cli:
     name: cli
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: gesso
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pgesso"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      GESSO_MYSQL_DSN: root:gesso@tcp(127.0.0.1:3306)/
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -106,11 +133,20 @@ jobs:
           cache-dependency-path: cmd/gesso/go.sum
 
       # These tests scaffold and generate into temporary modules, then vet,
-      # test and run them — on SQLite and on an embedded PostgreSQL the
-      # generated tests download — so a template that stops compiling fails here.
+      # test and run them — on SQLite, on an embedded PostgreSQL the generated
+      # tests download, and on the MySQL service — so a template that stops
+      # compiling, or SQL a dialect refuses, fails here. A generated test that
+      # skipped its database is reported UNVERIFIED, and fails the job.
       - name: go test
         working-directory: cmd/gesso
-        run: go test -count=1 ./...
+        run: |
+          go test -count=1 -v ./... 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          if grep -q "UNVERIFIED" test.log; then
+            echo "a generated test skipped its database"
+            exit 1
+          fi
+          exit $status
 
   lint:
     name: lint

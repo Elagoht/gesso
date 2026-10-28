@@ -1,6 +1,7 @@
 // Package lock makes sure a piece of work runs in one place at a time, across
 // every replica: a scheduled job, a migration of data, a report built once. Memory
-// is here for one process and for tests; Postgres holds the lock in the database.
+// is here for one process and for tests; Postgres and MySQL hold the lock in the
+// database.
 // Every implementation passes locktest.Run.
 package lock
 
@@ -9,6 +10,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"sync"
 )
@@ -132,6 +134,67 @@ func (p *Postgres) unlock(conn *sql.Conn, name string) Unlock {
 		return conn.Close()
 	})
 }
+
+// MySQL holds locks as MySQL user-level locks (GET_LOCK), on the same terms as
+// Postgres: a connection of its own per held lock, released when that
+// connection ends. A name is hashed into the 64 characters MySQL allows.
+type MySQL struct {
+	db *sql.DB
+}
+
+// NewMySQL locks in d.
+func NewMySQL(d *sql.DB) *MySQL { return &MySQL{db: d} }
+
+// Lock waits for name; ctx ending cancels the wait.
+func (m *MySQL) Lock(ctx context.Context, name string) (Unlock, error) {
+	conn, err := m.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var got sql.NullInt64
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, -1)", mysqlName(name)).Scan(&got); err != nil {
+		discard(conn)
+		return nil, err
+	}
+	if got.Int64 != 1 {
+		discard(conn)
+		return nil, errors.New("lock: GET_LOCK failed")
+	}
+	return m.unlock(conn, name), nil
+}
+
+// TryLock takes name if it is free.
+func (m *MySQL) TryLock(ctx context.Context, name string) (Unlock, bool, error) {
+	conn, err := m.db.Conn(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	var got sql.NullInt64
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 0)", mysqlName(name)).Scan(&got); err != nil {
+		discard(conn)
+		return nil, false, err
+	}
+	if got.Int64 != 1 {
+		_ = conn.Close()
+		return nil, false, nil
+	}
+	return m.unlock(conn, name), true, nil
+}
+
+func (m *MySQL) unlock(conn *sql.Conn, name string) Unlock {
+	return once(func(ctx context.Context) error {
+		var released sql.NullInt64
+		err := conn.QueryRowContext(context.WithoutCancel(ctx), "SELECT RELEASE_LOCK(?)", mysqlName(name)).Scan(&released)
+		if err != nil || released.Int64 != 1 {
+			discard(conn)
+			return errors.Join(err, errNotReleased(released.Int64 == 1))
+		}
+		return conn.Close()
+	})
+}
+
+// mysqlName is name as a MySQL lock name, which may be 64 characters at most.
+func mysqlName(name string) string { return fmt.Sprintf("gesso:%016x", uint64(key(name))) }
 
 func errNotReleased(released bool) error {
 	if released {

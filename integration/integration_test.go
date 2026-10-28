@@ -232,14 +232,34 @@ func migrationSuite(t *testing.T, d *sql.DB, dialect migrate.Dialect) {
 		t.Fatalf("got %v %+v", err, done)
 	}
 
-	// A failing migration is rolled back and recorded as nothing.
-	bad := fstest.MapFS{"20261028120000_bad.up.sql": {Data: []byte("CREATE TABLE c (id INTEGER); NOT SQL;")}}
+	// A failing migration is rolled back and recorded as nothing: the rows it
+	// wrote are gone in every dialect.
+	if _, err := d.Exec("INSERT INTO a VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+	bad := fstest.MapFS{"20261028120000_bad.up.sql": {Data: []byte("INSERT INTO a VALUES (7); NOT SQL;")}}
 	m4, _ := migrate.New(d, dialect, files, late, bad)
 	if _, err := m4.Up(ctx); err == nil || !strings.Contains(err.Error(), "20261028120000_bad") {
 		t.Fatalf("got %v", err)
 	}
-	if _, err := d.Exec("SELECT * FROM c"); err == nil {
-		t.Fatal("the failed migration's first statement outlived it")
+	var n int
+	if err := d.QueryRow("SELECT COUNT(*) FROM a WHERE id = 7").Scan(&n); err != nil || n != 0 {
+		t.Fatalf("the failed migration's insert outlived it: %d %v", n, err)
+	}
+	if st, _ := m4.Status(ctx); st[len(st)-1].State != migrate.Pending {
+		t.Fatalf("the failed migration is recorded: %+v", st)
+	}
+	// So are the tables it made, where DDL is transactional. MySQL commits each
+	// CREATE, ALTER and DROP by itself (DESIGN §9): there, the table outlives
+	// the failure, unrecorded.
+	ddl := fstest.MapFS{"20261028130000_ddl.up.sql": {Data: []byte("CREATE TABLE c (id INTEGER); NOT SQL;")}}
+	m5, _ := migrate.New(d, dialect, files, late, ddl)
+	if _, err := m5.Up(ctx); err == nil {
+		t.Fatal("a failing migration applied")
+	}
+	_, err = d.Exec("SELECT * FROM c")
+	if transactionalDDL := dialect != migrate.MySQL; transactionalDDL == (err == nil) {
+		t.Fatalf("table c after its failed migration: %v", err)
 	}
 }
 

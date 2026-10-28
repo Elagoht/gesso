@@ -13,6 +13,10 @@ nothing from it. The standard library and `golang.org/x/crypto`, nothing else.
 - **Transactions that nest**: `db.InTx` over `*sql.DB`, or as a savepoint inside a
   test's transaction.
 - **Migrations** per module, timestamped, checksummed, locked.
+- **PostgreSQL, MySQL and SQLite**, each verified against a real server in CI;
+  no ORM, and no driver chosen for you.
+- **Calendar dates**: `date.Date` is "2026-10-28" in JSON, parameters and the
+  database — no time zone to shift it by a day.
 - **An outbox queue**: jobs commit with the data they are about; at-least-once,
   leased, fenced.
 - **Contracts with fakes**: storage, cache, mail, clock, password hashing, locks — each

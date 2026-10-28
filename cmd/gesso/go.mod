@@ -4,12 +4,14 @@ go 1.26.10
 
 require (
 	github.com/fergusstrange/embedded-postgres v1.34.0
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.11.0
 	golang.org/x/tools v0.52.0
 	modernc.org/sqlite v1.61.0
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
