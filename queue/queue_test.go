@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -182,5 +183,69 @@ func TestWorkerLeaseRunsFromTheClaim(t *testing.T) {
 	}
 	if dead, _ := q.Dead(ctx, "slow", 10); len(dead) != 0 {
 		t.Fatalf("dead though they ran in time: %+v", dead)
+	}
+}
+
+// A schedule fires once per tick across replicas, on the clock's multiples,
+// and a worker that slept through ticks fires once, for the latest.
+func TestSchedules(t *testing.T) {
+	ctx := context.Background()
+	clk := clock.NewManual(time.Date(2026, 10, 29, 9, 59, 30, 0, time.UTC))
+	q := queue.NewMemory(clk)
+	report := queue.Kind[string]{Name: "report"}
+	var got []string
+	newWorker := func() *queue.Worker {
+		w := queue.NewWorker(q, queue.WorkerOptions{Clock: clk, Logger: slog.New(slog.DiscardHandler),
+			Location: time.FixedZone("TRT", 3*3600)})
+		queue.Handle(w, report, func(_ context.Context, p string) error {
+			got = append(got, p+"@"+clk.Now().Format("15:04"))
+			return nil
+		})
+		queue.Every(w, "hourly", report, time.Hour, "hourly")
+		queue.Cron(w, "nightly", report, "0 3 * * *", "nightly") // 03:00 in TRT is 00:00 UTC
+		return w
+	}
+	a, b := newWorker(), newWorker() // two replicas
+	run := func() {
+		for _, w := range []*queue.Worker{a, b} {
+			if _, err := w.RunOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	run() // the first poll only learns the next ticks
+	clk.Set(time.Date(2026, 10, 29, 10, 0, 5, 0, time.UTC))
+	run()
+	if strings.Join(got, ",") != "hourly@10:00" {
+		t.Fatalf("on the hour, once across two replicas: %v", got)
+	}
+	got = nil
+	clk.Set(time.Date(2026, 10, 30, 0, 0, 1, 0, time.UTC)) // slept through 14 hourly ticks
+	run()
+	if strings.Join(got, ",") != "hourly@00:00,nightly@00:00" {
+		t.Fatalf("after a long sleep: %v", got)
+	}
+}
+
+func TestScheduleMisuse(t *testing.T) {
+	w := queue.NewWorker(queue.NewMemory(nil), queue.WorkerOptions{})
+	k := queue.Kind[int]{Name: "k"}
+	for name, define := range map[string]func(){
+		"bad cron":   func() { queue.Cron(w, "x", k, "* * *", 0) },
+		"never":      func() { queue.Cron(w, "y", k, "0 0 30 2 *", 0) },
+		"zero every": func() { queue.Every(w, "z", k, 0, 0) },
+		"twice": func() {
+			queue.Every(w, "dup", k, time.Minute, 0)
+			queue.Every(w, "dup", k, time.Minute, 0)
+		},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s did not panic", name)
+				}
+			}()
+			define()
+		}()
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"embed"
 	"errors"
 	"io/fs"
+	"math"
 	"slices"
 	"sync"
 	"time"
@@ -75,6 +76,11 @@ type Queue interface {
 	// lease ran out, and is ErrLeaseLost once another claimer has taken the
 	// job since.
 	Release(ctx context.Context, j Job) error
+	// Fire enqueues j for the tick of the schedule called name, unless that
+	// tick, or a later one, was fired already — by this process or another
+	// replica. It reports whether it enqueued. Recording the tick and enqueuing
+	// are one unit: both happen, or neither.
+	Fire(ctx context.Context, name string, tick time.Time, j NewJob) (bool, error)
 	// Dead lists up to n dead jobs of kind, newest first, for a person to look at.
 	Dead(ctx context.Context, kind string, n int) ([]DeadJob, error)
 }
@@ -363,6 +369,38 @@ func (p *SQL) Bury(ctx context.Context, j Job, reason string) error {
 	return fenced(res, err)
 }
 
+// Fire records the tick and enqueues j, in one transaction, if no replica has
+// fired this tick or a later one.
+func (p *SQL) Fire(ctx context.Context, name string, tick time.Time, j NewJob) (bool, error) {
+	// The schedule's row, "never fired", made on its own: inside the
+	// transaction, an insert and an update of one row by replicas at once
+	// deadlock in MySQL.
+	insert := `INSERT INTO gesso_schedule (name, fired) VALUES (` + p.ph(1) + `, ` + p.ph(2) + `) ON CONFLICT (name) DO NOTHING`
+	if p.dialect == migrate.MySQL {
+		insert = `INSERT IGNORE INTO gesso_schedule (name, fired) VALUES (?, ?)`
+	}
+	if _, err := p.db.ExecContext(ctx, insert, name, int64(math.MinInt64)); err != nil {
+		return false, err
+	}
+	fired := false
+	err := db.InTx(ctx, p.db, func(tx db.DB) error {
+		// Of replicas firing at once, the database lets one change the row;
+		// the others find the tick fired when their turn comes.
+		res, err := tx.ExecContext(ctx, `UPDATE gesso_schedule SET fired = `+p.ph(1)+`
+			WHERE name = `+p.ph(2)+` AND fired < `+p.ph(3), tick.UnixNano(), name, tick.UnixNano())
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return err
+		}
+		fired = true
+		_, err = p.Enqueue(ctx, tx, j)
+		return err
+	})
+	return fired && err == nil, err
+}
+
 // Release hands the job back, unrun.
 func (p *SQL) Release(ctx context.Context, j Job) error {
 	res, err := p.db.ExecContext(ctx,
@@ -414,6 +452,7 @@ type Memory struct {
 	clock clock.Clock
 	next  int64
 	jobs  map[int64]*memJob
+	fired map[string]time.Time // schedules' last ticks
 }
 
 type memJob struct {
@@ -522,6 +561,22 @@ func (m *Memory) Bury(_ context.Context, j Job, reason string) error {
 	}
 	cur.status, cur.lockedUntil, cur.lastError = "dead", time.Time{}, reason
 	return nil
+}
+
+// Fire enqueues j unless the tick, or a later one, was fired.
+func (m *Memory) Fire(ctx context.Context, name string, tick time.Time, j NewJob) (bool, error) {
+	m.mu.Lock()
+	if last, ok := m.fired[name]; ok && !last.Before(tick) {
+		m.mu.Unlock()
+		return false, nil
+	}
+	if m.fired == nil {
+		m.fired = map[string]time.Time{}
+	}
+	m.fired[name] = tick
+	m.mu.Unlock()
+	_, err := m.Enqueue(ctx, nil, j)
+	return err == nil, err
 }
 
 // Release hands the job back, unrun.

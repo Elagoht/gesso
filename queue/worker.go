@@ -77,6 +77,9 @@ type WorkerOptions struct {
 	Backoff, MaxBackoff time.Duration
 	Clock               clock.Clock
 	Logger              *slog.Logger
+	// Location is where Cron expressions are read: "0 3 * * *" is 03:00 there.
+	// Default UTC.
+	Location *time.Location
 }
 
 // Worker claims and runs jobs. It is a gesso module with no routes: pass it to
@@ -85,8 +88,9 @@ type WorkerOptions struct {
 type Worker struct {
 	q        Queue
 	opt      WorkerOptions
-	handlers map[string]func(context.Context, Job) error
-	kinds    []string
+	handlers  map[string]func(context.Context, Job) error
+	kinds     []string
+	schedules []*scheduled
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
@@ -116,17 +120,108 @@ func NewWorker(q Queue, opt WorkerOptions) *Worker {
 	if opt.Logger == nil {
 		opt.Logger = slog.Default()
 	}
+	if opt.Location == nil {
+		opt.Location = time.UTC
+	}
 	return &Worker{q: q, opt: opt, handlers: map[string]func(context.Context, Job) error{}}
 }
 
 // Routes registers nothing: a worker serves no requests.
 func (w *Worker) Routes(*gesso.Router) {}
 
+// scheduled is a job a schedule enqueues.
+type scheduled struct {
+	name string
+	next func(time.Time) time.Time // the first tick after t
+	job  NewJob
+	due  time.Time // the next tick to fire; zero until the first poll
+}
+
+// Every enqueues a job of kind k, carrying payload, every d — on the clock's
+// multiples of d, so an hourly job fires on the hour — once per tick across
+// every replica the queue is shared by. Ticks missed while no worker ran are
+// not made up. name identifies the schedule in the queue: keep it when you
+// change d. It panics on a name used twice or a d that is not positive.
+func Every[T any](w *Worker, name string, k Kind[T], d time.Duration, payload T) {
+	if d <= 0 {
+		panic(fmt.Sprintf("queue: schedule %q: the interval must be positive, got %v", name, d))
+	}
+	w.schedule(name, k.Name, k.MaxAttempts, marshalPayload(name, payload), func(t time.Time) time.Time { return t.Truncate(d).Add(d) })
+}
+
+// Cron enqueues a job of kind k, carrying payload, on a five-field cron
+// expression (minute hour day-of-month month day-of-week) read in the worker's
+// Location — once per tick across every replica, as Every does. It panics on
+// an expression that does not parse or can never match.
+func Cron[T any](w *Worker, name string, k Kind[T], expr string, payload T) {
+	spec, err := parseCron(expr)
+	if err != nil {
+		panic(fmt.Sprintf("queue: schedule %q: %v", name, err))
+	}
+	if !spec.possible() {
+		panic(fmt.Sprintf("queue: schedule %q: cron %q never matches", name, expr))
+	}
+	loc := w.opt.Location
+	w.schedule(name, k.Name, k.MaxAttempts, marshalPayload(name, payload), func(t time.Time) time.Time { return spec.next(t.In(loc)) })
+}
+
+func marshalPayload[T any](name string, payload T) []byte {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		panic(fmt.Sprintf("queue: schedule %q: %v", name, err))
+	}
+	return data
+}
+
+func (w *Worker) schedule(name, kind string, maxAttempts int, data []byte, next func(time.Time) time.Time) {
+	if name == "" {
+		panic("queue: a schedule needs a name")
+	}
+	for _, s := range w.schedules {
+		if s.name == name {
+			panic(fmt.Sprintf("queue: the schedule %q is defined twice", name))
+		}
+	}
+	w.schedules = append(w.schedules, &scheduled{name: name, next: next,
+		job: NewJob{Kind: kind, Payload: data, MaxAttempts: maxAttempts}})
+}
+
+// fire enqueues the jobs whose tick has come. A schedule whose ticks were
+// missed fires once, for the latest.
+func (w *Worker) fire(ctx context.Context) error {
+	now := w.opt.Clock.Now()
+	var errs []error
+	for _, s := range w.schedules {
+		if s.due.IsZero() {
+			s.due = s.next(now)
+			continue
+		}
+		if now.Before(s.due) {
+			continue
+		}
+		tick := s.due
+		for n := s.next(tick); !n.IsZero() && !n.After(now); n = s.next(n) {
+			tick = n
+		}
+		j := s.job
+		j.RunAt = tick
+		if _, err := w.q.Fire(ctx, "schedule:"+s.name, tick, j); err != nil {
+			errs = append(errs, fmt.Errorf("queue: schedule %s: %w", s.name, err))
+			continue // try this tick again on the next poll
+		}
+		s.due = s.next(tick)
+	}
+	return errors.Join(errs...)
+}
+
 // RunOnce claims one batch of every kind and runs it, and reports how many jobs
 // it ran. The loop calls it; a test calls it directly.
 func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	ran := 0
 	var errs []error
+	if err := w.fire(ctx); err != nil {
+		errs = append(errs, err)
+	}
 	for _, kind := range slices.Sorted(slices.Values(w.kinds)) {
 		// The lease runs from the claim, for the whole batch: a job run late in
 		// it has only what is left, and one whose lease is gone is another

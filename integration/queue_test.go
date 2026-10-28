@@ -109,6 +109,39 @@ func TestQueueOutboxIsAtomic(t *testing.T) {
 	}
 }
 
+// Replicas firing one tick at once enqueue it once.
+func TestQueueFireOnceAcrossReplicas(t *testing.T) {
+	for name, q := range queueDBs {
+		t.Run(name, func(t *testing.T) {
+			d := migratedQueue(t, q)
+			ctx := context.Background()
+			tick := time.Date(2026, 10, 29, 3, 0, 0, 0, time.UTC)
+			var mu sync.Mutex
+			won := 0
+			var wg sync.WaitGroup
+			for range 8 {
+				wg.Go(func() {
+					ok, err := q.newQueue(d, nil).Fire(ctx, "nightly", tick, queue.NewJob{Kind: "report", RunAt: tick})
+					if err != nil {
+						t.Error(err)
+					}
+					if ok {
+						mu.Lock()
+						won++
+						mu.Unlock()
+					}
+				})
+			}
+			wg.Wait()
+			var jobs int
+			_ = d.QueryRow("SELECT COUNT(*) FROM gesso_jobs").Scan(&jobs)
+			if won != 1 || jobs != 1 {
+				t.Fatalf("%d replicas fired, %d jobs", won, jobs)
+			}
+		})
+	}
+}
+
 // Claimers racing over the same jobs take each exactly once, and between them
 // take them all.
 func TestQueueClaimsEachJobOnce(t *testing.T) {

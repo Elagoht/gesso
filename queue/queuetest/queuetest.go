@@ -132,6 +132,31 @@ func Run(t *testing.T, open func(t *testing.T, c clock.Clock) (queue.Queue, db.D
 		}
 	})
 
+	t.Run("a schedule's tick fires once", func(t *testing.T) {
+		q, _, clk := setup(t)
+		fire := func(at time.Time) bool {
+			t.Helper()
+			ok, err := q.Fire(ctx, "nightly", at, queue.NewJob{Kind: "report", RunAt: at})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return ok
+		}
+		if !fire(start) || fire(start) || fire(start.Add(-time.Hour)) {
+			t.Fatal("a tick fired twice, or an older one after it")
+		}
+		if !fire(start.Add(time.Hour)) {
+			t.Fatal("the next tick did not fire")
+		}
+		if ok, err := q.Fire(ctx, "other", start, queue.NewJob{Kind: "report", RunAt: start}); err != nil || !ok {
+			t.Fatalf("schedules are apart: %v %v", ok, err)
+		}
+		clk.Advance(time.Hour)
+		if jobs := claim(t, q, "report", 10); len(jobs) != 3 {
+			t.Fatalf("enqueued %d, want 3", len(jobs))
+		}
+	})
+
 	t.Run("release gives the attempt back", func(t *testing.T) {
 		q, d, clk := setup(t)
 		enqueue(t, q, d, queue.NewJob{Kind: "mail", MaxAttempts: 1})
