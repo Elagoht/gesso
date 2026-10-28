@@ -74,6 +74,27 @@ func New(ctx context.Context, cfg Config) (*gesso.App, error) {
 	return app, nil
 }
 
+// Migrator is the app's migrations on the database at dsn, for the migrate
+// command, and the closing of the connection it opened.
+func Migrator(dsn string) (*migrate.Migrator, func() error, error) {
+	if dsn == "" {
+		return nil, nil, errors.New("api: no database named")
+	}
+{{- if eq .Dialect "mysql"}}
+	d, err := openMigrator(dsn)
+{{- else}}
+	d, err := open(dsn)
+{{- end}}
+	if err != nil {
+		return nil, nil, err
+	}
+	m, err := migrate.New(d, dialect, migrations()...)
+	if err != nil {
+		return nil, nil, errors.Join(err, d.Close())
+	}
+	return m, d.Close, nil
+}
+
 func build(ctx context.Context, d *sql.DB, cfg Config) (*gesso.App, error) {
 	if err := d.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("api: database: %w", err)

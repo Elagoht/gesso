@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,7 +69,11 @@ func TestNew(t *testing.T) {
 			if strings.Contains(testOut, "SKIP: TestNew") {
 				t.Logf("%s UNVERIFIED: the new app's test skipped without a database", strings.ToUpper(dialect))
 			}
-			goIn(t, dir, "build", "-o", filepath.Join(t.TempDir(), "app"), ".")
+			bin := filepath.Join(t.TempDir(), "app")
+			goIn(t, dir, "build", "-o", bin, ".")
+			if dialect == "sqlite" {
+				migrateRoundTrip(t, bin, filepath.Join(t.TempDir(), "m.db"))
+			}
 			if n, err := check(nil, dir, &out); err != nil || n != 0 {
 				t.Fatalf("the project breaks the ctx rule: %v %s", err, out.String())
 			}
@@ -89,6 +94,35 @@ func TestNew(t *testing.T) {
 			t.Fatal("a folder that is not empty")
 		}
 	})
+}
+
+// migrateRoundTrip runs the built app's migrate command: up, status, down.
+func migrateRoundTrip(t *testing.T, bin, dbPath string) {
+	t.Helper()
+	run := func(args ...string) string {
+		cmd := exec.Command(bin, append([]string{"migrate"}, args...)...)
+		cmd.Env = append(os.Environ(), "DATABASE_URL="+dbPath)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("migrate %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	if out := run("up"); strings.Count(out, "applied") != 2 {
+		t.Fatalf("up: %s", out)
+	}
+	if out := run("down"); strings.Count(out, "reverted") != 1 {
+		t.Fatalf("down: %s", out)
+	}
+	out := run("status")
+	if strings.Count(out, "applied") != 1 || strings.Count(out, "pending") != 1 {
+		t.Fatalf("status: %s", out)
+	}
+	cmd := exec.Command(bin, "migrate", "sideways")
+	cmd.Env = append(os.Environ(), "DATABASE_URL="+dbPath)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("an unknown subcommand succeeded")
+	}
 }
 
 // embeddedPostgres starts a server for the test and names its database.

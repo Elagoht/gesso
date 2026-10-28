@@ -57,12 +57,13 @@ func newProject(args []string, dir string, stdout io.Writer) error {
 	}
 	files := map[string]string{
 		"main.go":                  "main.go.tmpl",
+		"migrate.go":               "migrate.go.tmpl",
 		"internal/api/api.go":      "api.go.tmpl",
 		"internal/api/api_test.go": "api_test.go.tmpl",
 		".gitignore":               "gitignore.tmpl",
 		"README.md":                "README.md.tmpl",
 	}
-	for _, name := range []string{"main.go", "internal/api/api.go", "internal/api/api_test.go", ".gitignore", "README.md"} {
+	for _, name := range []string{"main.go", "migrate.go", "internal/api/api.go", "internal/api/api_test.go", ".gitignore", "README.md"} {
 		var buf bytes.Buffer
 		if err := newTemplates.ExecuteTemplate(&buf, files[name], spec); err != nil {
 			return err
