@@ -202,6 +202,18 @@ func (h *typed[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && h.cfg.status == http.StatusOK {
+		tag := w.Header().Get("ETag")
+		if tag == "" {
+			tag = etag(buf.Bytes())
+			w.Header().Set("ETag", tag)
+		}
+		if notModified(r, tag) {
+			w.Header().Del("Content-Type")
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 	w.WriteHeader(h.cfg.status)
 	_, _ = w.Write(buf.Bytes())
 }

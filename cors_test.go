@@ -113,3 +113,13 @@ func TestRequestID(t *testing.T) {
 		t.Fatal("a 404 has an id too")
 	}
 }
+
+func sendBody(h http.Handler, method, path string, headers map[string]string, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	for k, v := range headers {
+		r.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
