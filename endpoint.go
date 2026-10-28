@@ -87,8 +87,10 @@ func Header(key, value string) CallOption {
 //	if errors.Is(err, notes.ErrNoteLocked) { … }
 //
 // In is encoded as the server decodes it: path fields into the pattern (escaped),
-// query and header fields as parameters — a zero value is left out, so use a
-// pointer to send one — and the rest as the JSON body.
+// query and header fields as parameters, and the rest as the JSON body. A zero
+// query or header value is left out, and the server fills in the field's
+// default: a field whose default is not its zero (`default:"true"` on a bool)
+// needs a pointer to send its zero.
 func (e Endpoint[In, Out]) Call(ctx context.Context, rm *Remote, in In, opts ...CallOption) (Out, error) {
 	var out Out
 	req, err := e.request(ctx, rm, in)

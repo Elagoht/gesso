@@ -173,8 +173,10 @@ application records in its database.
 
 A Postgres lock lives on the connection that took it, held out of the pool while
 the lock is; a connection that could not release its lock is ended, never
-returned to the pool, where it would hold the lock for ever. `Queue` (an outbox)
-is v0.4.
+returned to the pool, where it would hold the lock for ever. Tested: contention,
+waits, cancelled waits, and a holder whose session dies. Not reached by a test: a
+live session whose unlock fails (no way found to make one fail on demand).
+`Queue` (an outbox) is v0.4.
 
 ## 9. Database
 
@@ -228,7 +230,8 @@ shared process.
   another process calls it (`GetNote.Call(ctx, remote, in, gesso.Bearer(tok))`); the
   compiler holds both to the same types. No code generation: the request is built
   from the same tags the server reads, through the same plan — path values escaped,
-  zero query values left out (a pointer sends a zero), only body fields in the body.
+  zero query values left out (a pointer sends a zero: a field whose `default` is
+  not its zero needs one), only body fields in the body.
   A problem comes back as an `*Error`, so `errors.Is` matches the server's
   declaration across processes and `gesso.FieldErrors` gives a form its fields.
 

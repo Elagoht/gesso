@@ -135,3 +135,34 @@ func TestPostgresLocker(t *testing.T) {
 	d := pgDB(t)
 	locktest.Run(t, func(*testing.T) lock.Locker { return lock.NewPostgres(d) })
 }
+
+// When the holder's session dies, its lock is freed for the next replica and
+// unlock says it failed. (database/sql drops a dead connection by itself; the
+// discard of a live connection whose unlock failed is not reached here.)
+func TestPostgresLockerDiscardsADeadSession(t *testing.T) {
+	d := pgDB(t)
+	ctx := context.Background()
+	holder := lock.NewPostgres(d)
+	unlock, err := holder.Lock(ctx, "job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pid int
+	if err := d.QueryRow("SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted").Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec("SELECT pg_terminate_backend($1)", pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlock(ctx); err == nil {
+		t.Fatal("unlocking on a dead session reports it")
+	}
+	u, ok, err := lock.NewPostgres(d).TryLock(ctx, "job")
+	if err != nil || !ok {
+		t.Fatalf("the lock is free again: %v %v", ok, err)
+	}
+	_ = u(ctx)
+	if err := d.PingContext(ctx); err != nil {
+		t.Fatalf("the pool still works: %v", err)
+	}
+}
