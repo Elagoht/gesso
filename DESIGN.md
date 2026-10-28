@@ -100,7 +100,7 @@ cmd/api/main.go
 
 ```go
 type Deps struct {
-    DB      gesso.DB
+    DB      db.DB
     Storage gesso.Storage
     Clock   gesso.Clock
 }
@@ -132,7 +132,8 @@ middleware → guard → decode + validate → interceptor → handler → error
 - **Middleware**: plain `func(http.Handler) http.Handler`.
 - **Guard**: decides whether the request may proceed (identity, role).
 - **Decode + validate**: path, query and body into the handler's input type.
-  Query structs are declarative: `query:"take" default:"20" max:"50"`.
+  Query fields are declarative: `query:"take" default:"20" validate:"max=50"`.
+  A body cannot set a path, query or header field; such a key is rejected.
 - **Interceptor**: wraps the handler (timing, transactions, response shaping).
 - **Error mapper**: typed errors to problem+json. Field names in validation errors
   are the JSON names, not the Go names; messages are i18n keys.
@@ -160,9 +161,9 @@ any implementation, the application's own included, must pass.
 
 ## 9. Database
 
-- `gesso.DB` (`DBTX`-style: `ExecContext`, `QueryContext`, `QueryRowContext`) is what
+- `db.DB` (`DBTX`-style: `ExecContext`, `QueryContext`, `QueryRowContext`) is what
   repositories take, so a repository runs the same against a pool or a transaction.
-- Beginning a transaction is a separate interface; `gesso.InTx(ctx, db, fn)` is the
+- Beginning a transaction is a separate interface; `db.InTx(ctx, db, fn)` is the
   helper services use.
 - **Tests vs `InTx`.** `gessotest` runs each test in a transaction and rolls it back.
   An `InTx` inside that becomes a `SAVEPOINT`, not a nested `BEGIN`. The isolation
@@ -251,8 +252,16 @@ shared process.
   enforces it by API shape (every handler and `InTx` takes `ctx`).
 - 2026-10-28 — gesso's own tests that need a database run against SQLite (pure Go,
   `modernc.org/sqlite`) in a nested `integration/` module, so gesso's `go.mod` stays
-  empty; Postgres-specific tests run when `GESSO_POSTGRES_DSN` is set.
+  empty.
+- 2026-10-28 — `db.Transactor` lets a DB run a unit its own way; InTx defers to
+  it first. `gessotest.FakeDB` is one, so a service that uses transactions is
+  unit-tested with fake repositories and no database.
 
 ## 14. Open questions
 
-None yet.
+- **Untested against live servers.** The Postgres and MySQL dialects (locks,
+  placeholders) and their violation classifiers have unit tests only; no Postgres
+  or MySQL server ran them. Needs a CI job with both before v0.1 is tagged.
+- **One process, lifecycle.** Mounted in collage, nothing calls the app's Start or
+  Shutdown: collage gives an application no shutdown hook, only plugins. Until the
+  bridge exists, run modules with Starter/Stopper as their own process.

@@ -215,12 +215,27 @@ func parserFor(t reflect.Type) (func(string) (reflect.Value, error), error) {
 
 // decode fills dst from r. Its error is an *Error ready to answer.
 func (p *inputPlan) decode(r *http.Request, dst reflect.Value, maxBody int64) error {
+	var fields []validate.FieldError
 	if p.hasBody {
 		if err := decodeBody(r, dst, maxBody); err != nil {
 			return err
 		}
+		// encoding/json fills a field with no json tag by its Go name, so a body
+		// could set a query or header field ({"take": 99999}) and slip past where
+		// it is meant to come from. Such a key is not a field of the body.
+		for _, pp := range p.params {
+			field := dst.FieldByIndex(pp.index)
+			if !field.IsZero() {
+				fields = append(fields, validate.FieldError{
+					Field: pp.name, Code: "unknown", Message: "is not a field of the body",
+				})
+				field.SetZero()
+			}
+		}
+		if fields != nil {
+			return ErrInvalidInput.WithFields(fields...)
+		}
 	}
-	var fields []validate.FieldError
 	var query map[string][]string
 	for _, pp := range p.params {
 		var values []string

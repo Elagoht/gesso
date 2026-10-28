@@ -10,7 +10,8 @@ type repository struct {
 	db db.DB
 }
 
-func newRepository(d db.DB) noteStore { return &repository{db: d} }
+// newRepository opens the SQL store on d: the pool, or a transaction.
+func newRepository(d db.DB) Store { return &repository{db: d} }
 
 func (r *repository) Insert(ctx context.Context, in CreateIn) (Note, error) {
 	n := Note{Slug: in.Slug, Title: in.Title}

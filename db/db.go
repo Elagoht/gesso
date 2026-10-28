@@ -23,13 +23,22 @@ type DB interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// Transactor is a DB that runs a unit in a transaction its own way. InTx defers
+// to it before anything else, so a fake (gessotest.FakeDB) lets a service that
+// uses transactions be unit-tested with no database, and a wrapper around *sql.DB
+// (one that traces, say) keeps working.
+type Transactor interface {
+	DB
+	InTx(ctx context.Context, opts *sql.TxOptions, fn func(tx DB) error) error
+}
+
 // beginner is a DB that can begin a transaction: *sql.DB and *sql.Conn.
 type beginner interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
-// ErrNoTransactions reports an InTx on a DB that is neither a pool, a connection
-// nor a transaction.
+// ErrNoTransactions reports an InTx on a DB that is neither a Transactor, a pool,
+// a connection nor a transaction.
 var ErrNoTransactions = errors.New("db: this DB cannot begin a transaction")
 
 // InTx runs fn in a transaction and commits it when fn returns nil; an error or a
@@ -51,6 +60,8 @@ func InTx(ctx context.Context, d DB, fn func(tx DB) error) error {
 // apply to a nested (savepoint) unit, which runs under its outer transaction's.
 func InTxOptions(ctx context.Context, d DB, opts *sql.TxOptions, fn func(tx DB) error) (err error) {
 	switch d := d.(type) {
+	case Transactor:
+		return d.InTx(ctx, opts, fn)
 	case *sql.Tx:
 		return inSavepoint(ctx, d, fn)
 	case beginner:

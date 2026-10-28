@@ -20,12 +20,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/Elagoht/gesso"
+	"github.com/Elagoht/gesso/db"
 )
 
 // New builds an app, failing the test on a route problem, and starts it; the
@@ -62,6 +64,36 @@ func Tx(t testing.TB, db *sql.DB) *sql.Tx {
 	}
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return tx
+}
+
+// FakeDB is a db.DB for unit tests that touch no database: a service under test
+// with fake repositories still calls db.InTx, which FakeDB answers by running the
+// unit, with itself as the transaction. A query run on it fails with
+// ErrFakeDB, so a repository that was meant to be faked and was not is caught.
+type FakeDB struct{}
+
+// ErrFakeDB is what a query on a FakeDB returns.
+var ErrFakeDB = errors.New("gessotest: FakeDB has no database; fake the repository")
+
+// ExecContext fails with ErrFakeDB.
+func (FakeDB) ExecContext(context.Context, string, ...any) (sql.Result, error) {
+	return nil, ErrFakeDB
+}
+
+// QueryContext fails with ErrFakeDB.
+func (FakeDB) QueryContext(context.Context, string, ...any) (*sql.Rows, error) {
+	return nil, ErrFakeDB
+}
+
+// QueryRowContext panics: *sql.Row cannot carry an error made outside
+// database/sql, and a nil one would fail later and further from the cause.
+func (FakeDB) QueryRowContext(context.Context, string, ...any) *sql.Row {
+	panic(ErrFakeDB.Error())
+}
+
+// InTx runs fn with the FakeDB as its transaction.
+func (f FakeDB) InTx(_ context.Context, _ *sql.TxOptions, fn func(tx db.DB) error) error {
+	return fn(f)
 }
 
 // Body is a request body and its content type.

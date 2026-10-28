@@ -415,3 +415,23 @@ func TestServeShutsDownInOrder(t *testing.T) {
 		t.Fatalf("got %v", trail)
 	}
 }
+
+type mixedIn struct {
+	Take  int    `query:"take" validate:"max=10"`
+	Agent string `header:"X-Agent"`
+	Title string `json:"title"`
+}
+
+func TestBodyCannotFillParams(t *testing.T) {
+	a := mustNew(t, Config{}, moduleFunc(func(r *Router) {
+		r.Post("/m", Handle(func(_ context.Context, in mixedIn) (mixedIn, error) { return in, nil }))
+	}))
+	p := problemOf(t, do(a, "POST", "/m", "application/json", `{"title":"a","take":99999,"Agent":"forged"}`))
+	if p.Status != 400 || len(p.Errors) != 2 || p.Errors[0].Field != "take" || p.Errors[1].Field != "X-Agent" || p.Errors[0].Code != "unknown" {
+		t.Fatalf("got %+v", p)
+	}
+	rec := do(a, "POST", "/m?take=3", "application/json", `{"title":"a"}`)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"Take":3`) {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+}

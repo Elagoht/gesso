@@ -39,4 +39,9 @@ api, err := gesso.New(gesso.Config{BasePath: "/api"}, notes.New(notes.Deps{DB: p
 err = site.Handle("/api/", api)
 ```
 
+Mounted in collage, nothing starts or shuts the app down: collage has no
+shutdown hook for application code. Modules with background work (Starter,
+Stopper) and OnShutdown hooks need gesso as its own process, until the
+collage-gesso bridge exists.
+
 `integration/notes` is a complete module; [DESIGN.md](DESIGN.md) is the spec.

@@ -6,9 +6,9 @@ import (
 	"github.com/Elagoht/gesso/db"
 )
 
-// noteStore is what the service needs from storage, declared here, where it is
-// used; a test can hand the service any implementation.
-type noteStore interface {
+// Store is what the service needs from storage, declared here, where it is
+// used; a unit test hands the service a fake one.
+type Store interface {
 	Insert(ctx context.Context, in CreateIn) (Note, error)
 	BySlug(ctx context.Context, slug string) (Note, error)
 }
@@ -16,12 +16,12 @@ type noteStore interface {
 // Service is the notes business logic.
 type Service struct {
 	db    db.DB
-	store func(db.DB) noteStore
+	store func(db.DB) Store
 }
 
 // NewService takes the database and how to open a store on it, so a transaction
 // can open one of its own.
-func NewService(d db.DB, store func(db.DB) noteStore) *Service {
+func NewService(d db.DB, store func(db.DB) Store) *Service {
 	return &Service{db: d, store: store}
 }
 
