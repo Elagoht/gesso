@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.8.0 released; v0.9 on main** (2026-10-29). §12 lists the phases.
+Status: **v0.8.0 released; v0.9 on main — the v1 surface sealed (§14)** (2026-10-29). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -534,7 +534,41 @@ ClientAddr comes from 127.0.0.1, so an app that trusts loopback trusts it.
   it first. `gessotest.FakeDB` is one, so a service that uses transactions is
   unit-tested with fake repositories and no database.
 
-## 14. Open questions
+## 14. The v1 surface
+
+Sealed on 2026-10-29, after the security review: from v1.0.0 these change only
+in a major version.
+
+- **gesso**: `New`, `Config` (and `CORS`, `Health`, `OpenAPIConfig`), `App`
+  (`ServeHTTP`, `Run`, `Start`, `Shutdown`, `OnShutdown`, `OpenAPI`), `Module`,
+  `Starter`, `Stopper`, `Router` (`Use`, `Authenticate`, `Guard`, `Intercept`,
+  `Group`, `Handle`, the method helpers), `Handle`, `HandlerFunc` and its
+  options (`Status`, `Guards`, `MaxBodyBytes`, `Summary`, `Description`,
+  `Tags`), `Empty`, `File`/`NewFile`, `Endpoint`, `Remote`/`NewRemote`/
+  `NewLocal`, the call options (`Bearer`, `Header`, `ClientAddr`), `Error` and
+  its constructors and `Err*` declarations, `Extend`, `Problem`, `FieldErrors`,
+  `WriteProblem`, `ServeOpenAPI`, `ErrorMapper`, `Identity`, `IdentityFrom`, `WithIdentity`,
+  `Authenticator`, `Guard`, `RequireIdentity`, `RequireRole`, `Interceptor`,
+  `Call`, `Middleware`, `Request`, `ResponseHeader`, `RequestIDFrom`.
+- The input tags and their meaning: `path`, `query`, `header`, `json`, `form`,
+  `default`, `accept`, `maxsize`, `validate` with the rules §7 and validate's
+  doc list.
+- **Packages**: `validate`, `db`, `migrate`, `date`, `clock`, `password`,
+  `storage`, `cache`, `mail`, `token`, `lock`, `queue`, `events`, `ratelimit`,
+  `gessotest`, and every `*test` suite: their exported names as of v0.9.
+- **Wire formats**: problem+json's members and codes, the token format
+  (`gso_` + 43 base64url characters), the tables gesso's own migrations create
+  (`gesso_tokens`, `gesso_jobs`, `gesso_ratelimit` and their history tables) —
+  a later change to one ships as a new migration, never an edited one.
+- **The CLI**: its commands and flags, and that a scaffold, once written, is the
+  application's: a later gesso never edits it except where `add module` wires a
+  module into `internal/api/api.go`.
+
+Not sealed: what the OpenAPI document says beyond being valid OpenAPI 3.1
+describing the routes (it may describe more), log messages and their attributes,
+and anything unexported.
+
+## 15. Open questions
 
 - **Events across processes** are not `events`' job: it is in-process, and
   across processes the queue is the transport — a subscriber enqueues in the
