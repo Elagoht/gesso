@@ -7,6 +7,8 @@ nothing from it. The standard library and `golang.org/x/crypto`, nothing else.
 - **Modules** with explicit dependencies: no singletons, no container.
 - **Typed handlers**: `func(ctx, In) (Out, error)`; input decoded from path, query,
   header and body, validated before your code runs.
+- **Guards and bearer tokens**: opaque, revocable, only their hash stored.
+- **OpenAPI 3.1** generated from the handlers' types and rules — it cannot drift.
 - **problem+json** for every error, the router's 404 and 405 included.
 - **Transactions that nest**: `db.InTx` over `*sql.DB`, or as a savepoint inside a
   test's transaction.

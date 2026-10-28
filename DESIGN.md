@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.1 implemented, not released** (2026-10-28). §12 lists the phases.
+Status: **v0.2 implemented, not released** (2026-10-28). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -250,6 +250,15 @@ shared process.
 - 2026-10-28 — Tokens are `gso_` + 32 random bytes; only the SHA-256 is stored;
   every request checks the store, so revocation is immediate. Bearer header only.
   An Authorization header of another scheme is not gesso's and is anonymous.
+- 2026-10-28 — **OpenAPI 3.1** is generated from the typed handlers (inputs,
+  validate rules, outputs, statuses, guards) when `Config.OpenAPI` is set, and served
+  at `/openapi.json` under the base path. The base path goes in `servers`; `{x...}`
+  becomes `{x}`; subtree patterns and plain handlers are left out (they declare
+  nothing). Generic type names drop their package paths (`Page_Note`), and names
+  that collide take their package's (`other_Note`). Any guard marks the route
+  bearer-secured with 401/403. Checked once by openapi-spec-validator and
+  Redocly's recommended rules: valid, two style warnings (no license, a 204 route
+  with no 4xx).
 - 2026-10-28 — Two processes are acceptable and first-class; one process is not
   required.
 - 2026-10-28 — Mockable: consumer-side interfaces, fakes, `gessotest`.

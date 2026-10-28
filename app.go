@@ -35,6 +35,8 @@ type Config struct {
 	// ErrorMappers turn errors gesso does not know into answers, in order: a
 	// database's constraint violations (db.Errors), a library's sentinel errors.
 	ErrorMappers []ErrorMapper
+	// OpenAPI, when set, generates and serves the OpenAPI document.
+	OpenAPI *OpenAPIConfig
 }
 
 // Module is a feature: it registers its routes. A module that also implements
@@ -62,6 +64,8 @@ type App struct {
 	errs     errorWriter
 	modules  []Module
 	errList  []error
+	docs     []docRoute
+	openapi  []byte
 
 	mu       sync.Mutex
 	started  []Module // modules whose Start succeeded, in order
@@ -104,6 +108,11 @@ func New(cfg Config, modules ...Module) (*App, error) {
 		}
 		a.modules = append(a.modules, m)
 		m.Routes(&Router{app: a})
+	}
+	if len(a.errList) == 0 {
+		if err := a.buildOpenAPI(); err != nil {
+			a.fail(fmt.Errorf("gesso: openapi: %w", err))
+		}
 	}
 	if err := errors.Join(a.errList...); err != nil {
 		return nil, err

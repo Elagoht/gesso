@@ -27,8 +27,11 @@ type HandlerFunc[In, Out any] func(ctx context.Context, in In) (Out, error)
 type HandleOption func(*handleConfig)
 
 type handleConfig struct {
-	status int
-	guards []Guard
+	status      int
+	guards      []Guard
+	summary     string
+	description string
+	tags        []string
 }
 
 // Status answers a success with code instead of 200 (or 204 for Empty):
