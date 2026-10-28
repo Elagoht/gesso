@@ -56,10 +56,10 @@ func TestOptional(t *testing.T) {
 		t.Fatalf("absent, null, value: %d %s", code, body)
 	}
 	cases := map[string]string{
-		`{"body":"x"}`:                  "title:required", // required: given …
-		`{"title":null}`:                "title:required", // … and not null
-		`{"title":"toolong"}`:           "title:max",
-		`{"title":"ok","pages":0}`:      "pages:min",
+		`{"body":"x"}`:             "title:required", // required: given …
+		`{"title":null}`:           "title:required", // … and not null
+		`{"title":"toolong"}`:      "title:max",
+		`{"title":"ok","pages":0}`: "pages:min",
 	}
 	for in, want := range cases {
 		field, code, _ := strings.Cut(want, ":")
