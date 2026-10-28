@@ -16,9 +16,9 @@ import (
 //	}
 //
 // Validation rules apply to Value when one is given; "required" asks that the
-// field be given and not null. A value of the wrong type is answered as
-// invalid JSON without the field's name: encoding/json names none for an
-// error from a type's own UnmarshalJSON. A Remote leaves an Optional that is not Set out
+// field be given and not null. A value of the wrong type is a 400 that names
+// the field where encoding/json does; some Go versions name none for an error
+// from a type's own UnmarshalJSON, and answer invalid JSON. A Remote leaves an Optional that is not Set out
 // of the body; omitzero does the same for encoding/json.
 type Optional[T any] struct {
 	Set   bool // the body had the field

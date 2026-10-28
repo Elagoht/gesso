@@ -66,9 +66,11 @@ func TestOptional(t *testing.T) {
 			t.Errorf("%s: %d %s", in, c, body)
 		}
 	}
-	// encoding/json names no field for an error from a type's own
-	// UnmarshalJSON: a value of the wrong type is invalid JSON, unnamed.
-	if c, body := do(`{"title":"ok","pages":"many"}`); c != 400 || !strings.Contains(body, `"invalid_json"`) {
+	// A value of the wrong type is a 400: naming the field where
+	// encoding/json does (Go 1.26), invalid JSON where it names none for an
+	// error from a type's own UnmarshalJSON (Go 1.27).
+	if c, body := do(`{"title":"ok","pages":"many"}`); c != 400 ||
+		!(strings.Contains(body, `"field":"pages"`) || strings.Contains(body, `"invalid_json"`)) {
 		t.Errorf("a wrong type: %d %s", c, body)
 	}
 	if c, body := do(`{"title":"ok","tag":null}`); c != 400 || !strings.Contains(body, `"code":"notnull"`) {
