@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -72,6 +73,7 @@ type App struct {
 	hooks    []func(context.Context) error
 	running  bool
 	shutdown bool
+	failed   atomic.Bool // Start failed: every request is answered ErrUnavailable
 }
 
 // New builds an app from its modules. Every route problem — a bad pattern, two
@@ -143,6 +145,10 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			a.errs.write(w, r, fmt.Errorf("panic: %v", p))
 		}
 	}()
+	if a.failed.Load() {
+		a.errs.write(w, r, ErrUnavailable)
+		return
+	}
 	if h, pattern := a.mux.Handler(r); pattern == "" {
 		a.unmatched(w, r, h)
 		return
@@ -203,8 +209,10 @@ func (a *App) OnShutdown(fn func(context.Context) error) {
 }
 
 // Start starts every module that is a Starter, in order. If one fails, those
-// already started are stopped again and the error returned. Run calls it; call it
-// yourself when another server (collage) serves the app.
+// already started are stopped again, the error is returned, and from then on the
+// app answers every request 503 (ErrUnavailable): its handlers would meet
+// modules that are not running. Run calls it; when collage serves the app, the
+// collage-gesso plugin does.
 func (a *App) Start(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -215,6 +223,7 @@ func (a *App) Start(ctx context.Context) error {
 		if s, ok := m.(Starter); ok {
 			if err := s.Start(ctx); err != nil {
 				stopErr := a.stopModules(ctx)
+				a.failed.Store(true)
 				return errors.Join(fmt.Errorf("gesso: start %T: %w", m, err), stopErr)
 			}
 		}

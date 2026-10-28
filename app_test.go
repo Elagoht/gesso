@@ -397,6 +397,12 @@ func TestFailedStartStopsWhatStarted(t *testing.T) {
 	if want := []string{"start a", "start b", "stop a"}; !reflect.DeepEqual(trail, want) {
 		t.Fatalf("got %v", trail)
 	}
+	// No module runs now, so no route is served: the 404 a missing route would
+	// get is a 503 too.
+	rec := do(a, "GET", "/anything", "", "")
+	if rec.Code != 503 || !strings.Contains(rec.Body.String(), `"code":"unavailable"`) {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
 }
 
 func TestServeShutsDownInOrder(t *testing.T) {

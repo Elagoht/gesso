@@ -50,12 +50,15 @@ note, err := notes.GetNote.Call(ctx, api, notes.GetIn{Slug: "jam"}, gesso.Bearer
 // Or inside collage, which passes the full path on:
 api, err := gesso.New(gesso.Config{BasePath: "/api"}, notes.New(notes.Deps{DB: pool}))
 err = site.Handle("/api/", api)
+// …the collage-gesso plugin runs its lifecycle, in plugins.go:
+gessoplugin.New(gessoplugin.Options{App: api})
+// …and pages call it in the same process, with the same code:
+note, err := notes.GetNote.Call(ctx, gesso.NewLocal(api), notes.GetIn{Slug: "jam"}, gesso.Bearer(tok))
 ```
 
-Mounted in collage, nothing starts or shuts the app down: collage has no
-shutdown hook for application code. Modules with background work (Starter,
-Stopper) and OnShutdown hooks need gesso as its own process, until the
-collage-gesso bridge exists.
+Mounted in collage, the [collage-gesso](https://github.com/Elagoht/collage-gesso)
+plugin starts the app's modules when collage serves and stops them, then runs
+the OnShutdown hooks, after collage's server has stopped.
 
 ```sh
 go install github.com/Elagoht/gesso/cmd/gesso@latest

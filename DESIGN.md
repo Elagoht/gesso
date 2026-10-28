@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.4 implemented, not released** (2026-10-28). §12 lists the phases.
+Status: **v0.5.0 released** (2026-10-28). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -228,7 +228,22 @@ shared process.
   so the same app serves at `/api/` when mounted and at `/` standalone, without
   `http.StripPrefix`. The OpenAPI server URL follows it.
 - **Lifecycle**: `gesso.Run` handles signals and shuts down in order: HTTP, then
-  jobs, then connections. `Start` / `Shutdown` are exported for the mounted case.
+  jobs, then connections. `Start` / `Shutdown` are exported for the mounted case,
+  where the **collage-gesso** plugin (github.com/Elagoht/collage-gesso, a module
+  of its own so gesso never depends on collage) calls them: `Start` in `OnServe`
+  — not `Init`, which a static build and the collage CLI's questions run too, and
+  which must not start a queue worker — and `Shutdown` in the plugin's
+  `Shutdown`, which collage runs after its server has stopped. The plugin does
+  not mount the app: `app.Handle` keeps middleware off an API, a plugin's
+  `Host.Handle` does not.
+- **A failed Start** leaves no module running, so the app answers every request
+  503 (`ErrUnavailable`) from then on, rather than serve handlers whose modules
+  are stopped. `Run` returns the error instead.
+- **In-process calls: `gesso.NewLocal(app)`** is a `Remote` whose transport is the
+  app's `ServeHTTP`. A call is encoded, authenticated, guarded, validated and
+  answered exactly as over the network — no second, in-memory code path to keep
+  in step — so code written against a `Remote` moves between one process and two
+  by changing which Remote it is given.
 - **Identity across processes**: collage's login action calls gesso, receives an
   opaque token, keeps it in collage's session, and sends it as
   `Authorization: Bearer` on every server-to-server call. gesso reads bearer
@@ -255,7 +270,9 @@ shared process.
 3. **v0.3** — live PostgreSQL in the tests, typed client (`Endpoint`), `Locker`,
    `gesso` CLI: `check` (the `ctx` rule), `add module`, `migrate new`.
 4. **v0.4** — `Queue` (outbox), SQL code generation (`gesso gen`).
-5. **later** — event bus, collage bridge, wiring generation.
+5. **v0.5** — collage bridge: the collage-gesso plugin, `NewLocal`, 503 after a
+   failed Start.
+6. **later** — event bus, wiring generation.
 
 ## 13. Decisions
 
@@ -378,6 +395,3 @@ shared process.
 - **Releasing the CLI.** `cmd/gesso` and `integration/` use gesso through a
   `replace` to `../`. `go install …/cmd/gesso@latest` refuses a module with a
   replace, so a release tags gesso first, then points `cmd/gesso` at that version.
-- **One process, lifecycle.** Mounted in collage, nothing calls the app's Start or
-  Shutdown: collage gives an application no shutdown hook, only plugins. Until the
-  bridge exists, run modules with Starter/Stopper as their own process.

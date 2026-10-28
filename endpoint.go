@@ -67,6 +67,51 @@ func NewRemote(base string, client *http.Client) *Remote {
 	return &Remote{base: strings.TrimSuffix(base, "/"), client: client}
 }
 
+// NewLocal calls app in this process — collage serving the app mounted beside
+// its pages. A call takes the same road as over the network: encoded by the
+// same plan, through the app's whole pipeline (authentication, guards,
+// validation, interceptors), answered as JSON or a problem; it only never
+// leaves memory. Code written against a Remote moves between one process and
+// two by changing the Remote it is given.
+func NewLocal(app *App) *Remote {
+	return &Remote{base: "http://gesso.local" + app.basePath, client: &http.Client{Transport: localTransport{app}}}
+}
+
+// localTransport answers a request with the app's ServeHTTP.
+type localTransport struct{ app *App }
+
+func (t localTransport) RoundTrip(req *http.Request) (res *http.Response, err error) {
+	defer func() {
+		// The app turns every panic into a 500 except http.ErrAbortHandler,
+		// which a server takes as "drop the connection".
+		if p := recover(); p != nil {
+			res, err = nil, fmt.Errorf("gesso: local call aborted: %v", p)
+		}
+	}()
+	r := req.Clone(req.Context())
+	if r.Body == nil {
+		r.Body = http.NoBody
+	}
+	r.RequestURI = r.URL.RequestURI()
+	r.RemoteAddr = "local"
+	rec := &recorder{header: http.Header{}}
+	t.app.ServeHTTP(rec, r)
+	if rec.status == 0 {
+		rec.status = http.StatusOK
+	}
+	return &http.Response{
+		Status:        strconv.Itoa(rec.status) + " " + http.StatusText(rec.status),
+		StatusCode:    rec.status,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Header:        rec.header,
+		Body:          io.NopCloser(&rec.body),
+		ContentLength: int64(rec.body.Len()),
+		Request:       req,
+	}, nil
+}
+
 // CallOption changes one call.
 type CallOption func(*http.Request)
 

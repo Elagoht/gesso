@@ -140,6 +140,7 @@ var (
 	ErrBodyTooLarge     = NewError(http.StatusRequestEntityTooLarge, "body_too_large", "the body is too large")
 	ErrTimeout          = NewError(http.StatusServiceUnavailable, "timeout", "the request took too long")
 	ErrInternal         = NewError(http.StatusInternalServerError, "internal", "something went wrong")
+	ErrUnavailable      = NewError(http.StatusServiceUnavailable, "unavailable", "the service could not start")
 )
 
 // ErrorMapper turns an error gesso does not know into one it can answer, or

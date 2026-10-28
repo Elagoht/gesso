@@ -58,8 +58,16 @@ func (bearerAuth) Authenticate(r *http.Request) (Identity, bool, error) {
 	return auth.Authenticate(r2)
 }
 
-func remoteApp(t *testing.T) *Remote {
-	a := mustNew(t, Config{BasePath: "/api"}, moduleFunc(func(r *Router) {
+// remotes is the test app reached both ways: over HTTP and in this process.
+func remotes(t *testing.T) map[string]*Remote {
+	a := endpointApp(t)
+	srv := httptest.NewServer(a)
+	t.Cleanup(srv.Close)
+	return map[string]*Remote{"remote": NewRemote(srv.URL+"/api/", srv.Client()), "local": NewLocal(a)}
+}
+
+func endpointApp(t *testing.T) *App {
+	return mustNew(t, Config{BasePath: "/api"}, moduleFunc(func(r *Router) {
 		r.Authenticate(bearerAuth{})
 		r.Group("/v1", func(g *Router) {
 			getFile.Handle(g, func(ctx context.Context, in fileIn) (fileOut, error) {
@@ -83,13 +91,15 @@ func remoteApp(t *testing.T) *Remote {
 			}, Guards(RequireIdentity))
 		})
 	}))
-	srv := httptest.NewServer(a)
-	t.Cleanup(srv.Close)
-	return NewRemote(srv.URL+"/api/", srv.Client())
 }
 
 func TestEndpointRoundTrip(t *testing.T) {
-	rm := remoteApp(t)
+	for name, rm := range remotes(t) {
+		t.Run(name, func(t *testing.T) { testRoundTrip(t, rm) })
+	}
+}
+
+func testRoundTrip(t *testing.T, rm *Remote) {
 	ctx := context.Background()
 	since := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
 	zero := 0
@@ -113,7 +123,12 @@ func equalOut(a, b fileOut) bool {
 }
 
 func TestEndpointProblemsMatchTheirDeclaration(t *testing.T) {
-	rm := remoteApp(t)
+	for name, rm := range remotes(t) {
+		t.Run(name, func(t *testing.T) { testProblems(t, rm) })
+	}
+}
+
+func testProblems(t *testing.T, rm *Remote) {
 	ctx := context.Background()
 	if _, err := deleteNote.Call(ctx, rm, slugIn{Slug: "free"}, Bearer("ada")); err != nil {
 		t.Fatalf("an Empty answer is a 204: %v", err)
@@ -154,5 +169,25 @@ func TestRemoteNonProblemError(t *testing.T) {
 	var e *Error
 	if !errors.As(err, &e) || e.Status != 502 || e.Code != "http_502" || !strings.Contains(e.Detail, "proxy") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestLocalPanicsAreAnswers(t *testing.T) {
+	boom := Endpoint[slugIn, Empty]{Method: "GET", Pattern: "/boom/{slug}"}
+	a := mustNew(t, Config{}, moduleFunc(func(r *Router) {
+		boom.Handle(r, func(_ context.Context, in slugIn) (Empty, error) {
+			if in.Slug == "abort" {
+				panic(http.ErrAbortHandler)
+			}
+			panic("broken")
+		})
+	}))
+	ctx := context.Background()
+	var e *Error
+	if _, err := boom.Call(ctx, NewLocal(a), slugIn{Slug: "x"}); !errors.As(err, &e) || e.Status != 500 {
+		t.Fatalf("a panic is the app's 500, as over the network: %v", err)
+	}
+	if _, err := boom.Call(ctx, NewLocal(a), slugIn{Slug: "abort"}); err == nil || errors.As(err, &e) {
+		t.Fatalf("an aborted handler is a failed call, not an answer: %v", err)
 	}
 }
