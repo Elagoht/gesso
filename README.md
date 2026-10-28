@@ -23,8 +23,11 @@ type GetIn struct {
     Slug string `path:"slug"`
 }
 
+// Declared once; the server and any caller share it.
+var GetNote = gesso.Endpoint[GetIn, Note]{Method: "GET", Pattern: "/notes/{slug}"}
+
 func (m *Module) Routes(r *gesso.Router) {
-    r.Get("/notes/{slug}", gesso.Handle(m.get))
+    GetNote.Handle(r, m.get)
 }
 
 func (m *Module) get(ctx context.Context, in GetIn) (Note, error) {
@@ -37,6 +40,10 @@ func (m *Module) get(ctx context.Context, in GetIn) (Note, error) {
 app, err := gesso.New(gesso.Config{Addr: ":8081"}, notes.New(notes.Deps{DB: pool}))
 app.OnShutdown(func(context.Context) error { return pool.Close() })
 err = app.Run()
+
+// From collage, in another process — typed, no code generated:
+api := gesso.NewRemote("http://api.internal:8081", nil)
+note, err := notes.GetNote.Call(ctx, api, notes.GetIn{Slug: "jam"}, gesso.Bearer(tok))
 
 // Or inside collage, which passes the full path on:
 api, err := gesso.New(gesso.Config{BasePath: "/api"}, notes.New(notes.Deps{DB: pool}))

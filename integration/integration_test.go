@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -297,3 +298,34 @@ func TestBearerFlow(t *testing.T) {
 type moduleFunc func(r *gesso.Router)
 
 func (f moduleFunc) Routes(r *gesso.Router) { f(r) }
+
+// Two processes: the app behind a real HTTP server, and a caller (collage) that
+// shares only the notes package's endpoints and types.
+func TestNotesAcrossProcesses(t *testing.T) {
+	d := migrated(t)
+	app := gessotest.New(t, gesso.Config{
+		BasePath:     "/api",
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ErrorMappers: []gesso.ErrorMapper{db.Errors(classify, map[string]string{"notes.slug": "slug"})},
+	}, notes.New(notes.Deps{DB: d}))
+	srv := httptest.NewServer(app)
+	defer srv.Close()
+	api := gesso.NewRemote(srv.URL+"/api", srv.Client())
+	ctx := context.Background()
+
+	created, err := notes.CreateNote.Call(ctx, api, notes.CreateIn{Slug: "jam", Title: "Game jam"})
+	if err != nil || created.ID == 0 {
+		t.Fatalf("got %+v %v", created, err)
+	}
+	got, err := notes.GetNote.Call(ctx, api, notes.GetIn{Slug: "jam"})
+	if err != nil || got != created {
+		t.Fatalf("got %+v %v", got, err)
+	}
+	_, err = notes.CreateNote.Call(ctx, api, notes.CreateIn{Slug: "jam", Title: "Again"})
+	if fe := gesso.FieldErrors(err); len(fe) != 1 || fe[0].Field != "slug" {
+		t.Fatalf("a form gets its field errors across the wire: %v %+v", err, fe)
+	}
+	if _, err := notes.GetNote.Call(ctx, api, notes.GetIn{Slug: "nope"}); !errors.Is(err, gesso.ErrNotFound) {
+		t.Fatalf("got %v", err)
+	}
+}

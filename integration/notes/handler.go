@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-func (m *Module) get(ctx context.Context, in getIn) (Note, error) {
+func (m *Module) get(ctx context.Context, in GetIn) (Note, error) {
 	return m.svc.Get(ctx, in.Slug)
 }
 

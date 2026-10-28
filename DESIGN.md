@@ -220,8 +220,14 @@ shared process.
   `Authorization: Bearer` on every server-to-server call. gesso reads bearer
   tokens only — never a cookie, which would make a JSON API forgeable from another
   site (a cross-site form can POST an empty body).
-- **Typed client**: generated from the same routes, for collage (or anything) to call
-  gesso over HTTP.
+- **Typed client: `Endpoint[In, Out]`**, declared once in a package both sides
+  import. The server registers its handler on it (`GetNote.Handle(r, m.get)`) and
+  another process calls it (`GetNote.Call(ctx, remote, in, gesso.Bearer(tok))`); the
+  compiler holds both to the same types. No code generation: the request is built
+  from the same tags the server reads, through the same plan — path values escaped,
+  zero query values left out (a pointer sends a zero), only body fields in the body.
+  A problem comes back as an `*Error`, so `errors.Is` matches the server's
+  declaration across processes and `gesso.FieldErrors` gives a form its fields.
 
 ## 12. Phases
 
@@ -231,10 +237,10 @@ shared process.
 2. **v0.2** — guards, identity, opaque tokens, interceptors, OpenAPI, contracts
    (storage, cache, mail, clock, password) + fakes + conformance suites, problem
    extensions (`gesso.Extend`).
-3. **v0.3** — `gesso` CLI: `check` (the `ctx` rule), SQL code generation,
-   `add module`, `migrate`, typed client; `Locker` and `Queue` with a live-Postgres
-   CI.
-4. **later** — event bus, collage bridge, wiring generation.
+3. **v0.3** — live PostgreSQL in the tests, typed client (`Endpoint`), `Locker`,
+   `gesso` CLI: `check` (the `ctx` rule), `add module`, `migrate new`.
+4. **v0.4** — SQL code generation, `Queue` (outbox).
+5. **later** — event bus, collage bridge, wiring generation.
 
 ## 13. Decisions
 

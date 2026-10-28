@@ -30,7 +30,7 @@ func New(d Deps) *Module {
 
 // Routes registers the module's routes.
 func (m *Module) Routes(r *gesso.Router) {
-	r.Get("/notes/{slug}", gesso.Handle(m.get))
-	r.Post("/notes", gesso.Handle(m.create, gesso.Status(201)))
-	r.Post("/notes/batch", gesso.Handle(m.batch, gesso.Status(201)))
+	GetNote.Handle(r, m.get)
+	CreateNote.Handle(r, m.create, gesso.Status(201))
+	BatchNotes.Handle(r, m.batch, gesso.Status(201))
 }
