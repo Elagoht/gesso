@@ -2,7 +2,7 @@
 
 A Go backend framework for JSON APIs, made to sit under
 [collage](https://github.com/Elagoht/collage) — or anything else — and to need
-nothing from it. Standard library only.
+nothing from it. The standard library and `golang.org/x/crypto`, nothing else.
 
 - **Modules** with explicit dependencies: no singletons, no container.
 - **Typed handlers**: `func(ctx, In) (Out, error)`; input decoded from path, query,
@@ -11,6 +11,8 @@ nothing from it. Standard library only.
 - **Transactions that nest**: `db.InTx` over `*sql.DB`, or as a savepoint inside a
   test's transaction.
 - **Migrations** per module, timestamped, checksummed, locked.
+- **Contracts with fakes**: storage, cache, mail, clock, password hashing — each
+  fake held to the same conformance suite as the real implementation.
 - **gessotest**: in-process client, problem assertions, rolled-back test
   transactions.
 

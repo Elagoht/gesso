@@ -153,18 +153,25 @@ middleware stack (an app API, an admin API, a partner API with signed requests).
 gesso defines an interface only when (a) gesso itself consumes it, or (b) several real
 implementations are usual. Everything else the application defines, consumer-side.
 
-| Contract | Reference implementation (in gesso) | Fake (in gesso) |
-|---|---|---|
-| `Storage` | local disk | memory |
-| `Cache` | memory | memory |
-| `Mailer` | log | capture |
-| `Clock` | system | fixed / advanceable |
-| `Hasher` | argon2id (`x/crypto`) | — |
-| `Locker` | Postgres advisory lock | memory |
-| `Queue` | database outbox | memory |
+| Contract | Package | Reference implementation | Fake | Suite |
+|---|---|---|---|---|
+| `Storage` | `storage` | `Disk` (through `os.Root`) | `Memory` | `storagetest.Run` |
+| `Cache` | `cache` | `Memory` (LRU, TTL) | `Memory` | `cachetest.Run` |
+| `Mailer` | `mail` | `Log` (envelope only) | `Capture` | — |
+| `Clock` | `clock` | `System` | `Manual` | — |
+| `Hasher` | `password` | `Argon2id` (`x/crypto`, PHC) | `Argon2id{Cheap}` | — |
+| `token.Store` | `token` | SQL | memory | `tokentest.Run` |
 
-Every contract ships a **conformance suite**, e.g. `storagetest.Run(t, impl)`, which
-any implementation, the application's own included, must pass.
+Every suite runs against both the reference implementation and the fake, so the
+fake cannot drift from what it stands in for. Any implementation — gesso-s3, the
+application's own — passes the same suite.
+
+Contracts are bytes and plain types, never `any`: `cache.GetOrLoad[T]` puts the
+types back as JSON. Storage holds bytes under keys; what a file is, the
+application records in its database.
+
+`Locker` and `Queue` (an outbox) move to v0.3: both need a live Postgres to be
+tested honestly, which v0.2 does not have.
 
 ## 9. Database
 
@@ -217,10 +224,12 @@ shared process.
 1. **v0.1** — router, surfaces, typed handlers, decode (path, query, header, body)
    + validate, problem+json, `DB` / `InTx` with savepoints, driver-error
    classification, migrations, lifecycle, `gessotest`.
-2. **v0.2** — guards, identity, opaque tokens, interceptors, OpenAPI, contracts +
-   fakes + conformance suites, typed problem extensions (`Problem[T]`).
+2. **v0.2** — guards, identity, opaque tokens, interceptors, OpenAPI, contracts
+   (storage, cache, mail, clock, password) + fakes + conformance suites, problem
+   extensions (`gesso.Extend`).
 3. **v0.3** — `gesso` CLI: `check` (the `ctx` rule), SQL code generation,
-   `add module`, `migrate`, typed client.
+   `add module`, `migrate`, typed client; `Locker` and `Queue` with a live-Postgres
+   CI.
 4. **later** — event bus, collage bridge, wiring generation.
 
 ## 13. Decisions
@@ -232,6 +241,8 @@ shared process.
 - 2026-10-28 — Router on `net/http.ServeMux`; no chi.
 - 2026-10-28 — Standard library and `golang.org/x/*` free; anything else jointly.
   argon2id comes from `x/crypto`, in the one module (no `gesso/auth` split).
+- 2026-10-28 — `golang.org/x/crypto` (argon2) is gesso's first dependency; the
+  go directive is 1.26.10, collage's floor.
 - 2026-10-28 — Two processes are acceptable and first-class; one process is not
   required.
 - 2026-10-28 — Mockable: consumer-side interfaces, fakes, `gessotest`.

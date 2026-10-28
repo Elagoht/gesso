@@ -1,6 +1,6 @@
 module github.com/Elagoht/gesso/integration
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/Elagoht/gesso v0.0.0
