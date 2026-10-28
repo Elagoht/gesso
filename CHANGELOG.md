@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## v0.7.0 (unreleased)
+## v0.7.0 — 2026-10-29
 
 - **`gesso new <module path> [-dialect sqlite|postgres|mysql]`**: a project
   with `main.go` (ADDR, BASE_PATH, DATABASE_URL), `internal/app/app.go` (opens
