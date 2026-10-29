@@ -3,6 +3,21 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## Unreleased
+
+- **`gesso add auth` is a users table, nothing else**: no `-users` flag, no
+  `AUTH_USERNAME`/`AUTH_PASSWORD` — one user from settings was an app's need,
+  not the framework's. `auth.NewSingle` stays in the library.
+- **`register.go`**: the lists `gesso add` writes to — `Deps`/`newDeps`,
+  `authenticator`, `modules`, `migrations`, `stores`, `commands`,
+  `constraints` — moved out of `api.go`, which is setup only and much shorter.
+  Generated files carry far fewer comments. An app from v0.10 moves its lists
+  by hand, or is regenerated.
+- **Guards as in collage**: `gesso add guard <name>` writes
+  `internal/guards/<name>.go`; `gesso add module … -guard <name>` guards the
+  writes and refuses a guard that does not exist. `add auth` writes
+  `signedIn`.
+
 ## v0.10.0 — 2026-10-29
 
 Sign-in, ready to use, and modules that are not CRUD:

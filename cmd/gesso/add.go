@@ -57,6 +57,8 @@ type moduleSpec struct {
 	UsesDate bool
 	IDSQL    string
 	Models   string // the import path of the module's models package
+	Guard    string // Admin: the guard on the writes, from Guards
+	Guards   string // the import path of internal/guards
 }
 
 var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -67,6 +69,7 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	dialect := fs.String("dialect", "postgres", "the SQL the repository and migration are written in: postgres, sqlite or mysql (default: the app's, in a gesso new project)")
 	parent := fs.String("dir", "internal", "the folder the module's folder goes in")
 	entity := fs.String("entity", "", "the entity's Go name (default: the module name, singular, capitalised)")
+	guard := fs.String("guard", "", "a guard from internal/guards on create, update, patch and delete (gesso add guard <name> makes one)")
 	empty := fs.Bool("empty", false, "only the module's layout — module.go, endpoints.go, models/ — for endpoints that are not CRUD")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
@@ -83,8 +86,9 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	if len(pos) != 1 {
 		return errors.New("add module takes one name: gesso add module events")
 	}
-	appGo := filepath.Join(dir, *parent, "api", "api.go")
-	app, appErr := os.ReadFile(appGo)
+	app, appErr := os.ReadFile(filepath.Join(dir, *parent, "api", "api.go"))
+	regGo := filepath.Join(dir, *parent, "api", "register.go")
+	reg, regErr := os.ReadFile(regGo)
 	given := false
 	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "dialect" })
 	if appErr == nil && !given {
@@ -105,6 +109,12 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 		return err
 	}
 	spec.Models = mod + "/" + filepath.ToSlash(filepath.Join(*parent, spec.Pkg, "models"))
+	if *guard != "" {
+		if spec.Guard, err = guardFor(dir, *parent, *guard); err != nil {
+			return err
+		}
+		spec.Guards = mod + "/" + filepath.ToSlash(filepath.Join(*parent, "guards"))
+	}
 	if err := os.MkdirAll(filepath.Join(target, "models"), 0o755); err != nil {
 		return err
 	}
@@ -143,7 +153,7 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 		fmt.Fprintln(stdout, "created", p)
 	}
 	if *empty {
-		return wire(app, appErr, appGo, spec.Pkg, mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), false, stdout)
+		return wire(reg, regErr, regGo, spec.Pkg, mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), false, stdout)
 	}
 	var up, down bytes.Buffer
 	if err := scaffold.ExecuteTemplate(&up, "up.sql.tmpl", spec); err != nil {
@@ -159,11 +169,13 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "note: create, update and delete in %s are open to anyone until you guard them (see Routes)\n", spec.Pkg)
-	return wire(app, appErr, appGo, spec.Pkg, mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), true, stdout)
+	if spec.Guard == "" {
+		fmt.Fprintf(stdout, "note: create, update and delete in %s are open to anyone: -guard <name> guards them\n", spec.Pkg)
+	}
+	return wire(reg, regErr, regGo, spec.Pkg, mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), true, stdout)
 }
 
-// wire adds the module to the app's api.go, when there is one.
+// wire adds the module to the app's register.go, when there is one.
 func wire(app []byte, appErr error, appGo, pkg, importPath string, withMigrations bool, stdout io.Writer) error {
 	if appErr != nil {
 		return nil // no gesso new app here: wiring the module is the user's

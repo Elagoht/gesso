@@ -1,7 +1,3 @@
-// Package {{.Pkg}} is the {{.Table}} module. Scaffolded by gesso add module
-// -empty, it is yours now: its endpoints go in endpoints.go, their handlers on
-// Module, and the types they take and answer in models/requests.go and
-// models/responses.go.
 package {{.Pkg}}
 
 import (
@@ -9,23 +5,16 @@ import (
 	"github.com/Elagoht/gesso/db"
 )
 
-// Deps is everything the module needs, passed in.
 type Deps struct {
 	DB db.DB
 }
 
-// Module is the {{.Table}} feature.
 type Module struct {
 	d Deps
 }
 
-// New wires the module from its dependencies.
 func New(d Deps) *Module {
 	return &Module{d: d}
 }
 
-// Routes registers the module's endpoints:
-//
-//	Get{{.Entity}}.Handle(r, m.get)
-//	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201), gesso.Guards(gesso.RequireIdentity))
 func (m *Module) Routes(r *gesso.Router) {}

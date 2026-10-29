@@ -1,6 +1,3 @@
-// Package {{.Pkg}} is the {{.Table}} module: a repository over db.DB, a service
-// that knows nothing of HTTP, typed handlers on shared endpoints, and its own
-// migrations. Scaffolded by gesso add module; it is yours now.
 package {{.Pkg}}
 
 import (
@@ -8,36 +5,42 @@ import (
 
 	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/db"
+{{- if .Guard}}
+
+	"{{.Guards}}"
+{{- end}}
 )
 
-// Migrations create the module's tables.
-//
 //go:embed migrations
 var Migrations embed.FS
 
-// Deps is everything the module needs, passed in.
 type Deps struct {
 	DB db.DB
 }
 
-// Module is the {{.Table}} feature.
 type Module struct {
 	svc *Service
 }
 
-// New wires the module from its dependencies.
 func New(d Deps) *Module {
 	return &Module{svc: NewService(newRepository(d.DB))}
 }
 
-// Routes registers the module's endpoints. Create, update, patch and delete are open
-// to anyone: guard them — gesso.Guards(gesso.RequireIdentity) as an option of
-// each Handle — once the app has an Authenticator (gesso.Config.Authenticator).
 func (m *Module) Routes(r *gesso.Router) {
+{{- if .Guard}}
+	write := gesso.Guards(guards.{{.Guard}})
+	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201), write)
+	Get{{.Entity}}.Handle(r, m.get)
+	List{{.Plural}}.Handle(r, m.list)
+	Update{{.Entity}}.Handle(r, m.update, write)
+	Patch{{.Entity}}.Handle(r, m.patch, write)
+	Delete{{.Entity}}.Handle(r, m.delete, write)
+{{- else}}
 	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201))
 	Get{{.Entity}}.Handle(r, m.get)
 	List{{.Plural}}.Handle(r, m.list)
 	Update{{.Entity}}.Handle(r, m.update)
 	Patch{{.Entity}}.Handle(r, m.patch)
 	Delete{{.Entity}}.Handle(r, m.delete)
+{{- end}}
 }

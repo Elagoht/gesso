@@ -6,7 +6,7 @@ gesso new example.com/notes -dialect sqlite      # or postgres, mysql
 cd notes
 go mod tidy
 gesso add module notes -fields title:string,body:text,published_on:date
-gesso add auth                                   # sign-in; -users sql for a table of users
+gesso add auth                                   # sign-in, a users table
 gesso dev
 ```
 
@@ -26,7 +26,8 @@ beside it.
 | File | What it is |
 | --- | --- |
 | `main.go` | `gesso.Main(api.New)`: the environment file, then serve until SIGINT or SIGTERM, or run a command |
-| `internal/api/api.go` | `New` reads `DATABASE_URL` and `BASE_PATH`; opens the database, runs every module's migrations as the app starts, maps database errors to answers, serves `/openapi.json`, adds the `migrate` command |
+| `internal/api/api.go` | `New` reads `DATABASE_URL` and `BASE_PATH`; opens the database, migrates it as the app starts, serves `/openapi.json`, adds the `migrate` command |
+| `internal/api/register.go` | the lists `gesso add` adds to: modules, migrations, gesso's own tables, commands, constraints |
 | `internal/api/api_test.go` | starts the app on an empty database |
 
 In a module that exists — a collage site — `gesso init -dialect sqlite` writes
@@ -34,7 +35,7 @@ only `internal/api`; see [With collage](collage.md).
 
 `gesso add module` scaffolds a module — models and endpoints, handlers, a
 service, a repository, a fake-store test and its migration — under `internal/`,
-and adds it to the `modules` and `migrations` lists in `internal/api/api.go`.
+and adds it to the `modules` and `migrations` lists in `internal/api/register.go`.
 The dialect comes from that file. Field types:
 
 | Type | Go | Rule | Column |
@@ -53,7 +54,8 @@ scaffolded code is yours: rename, add, delete.
 A module whose endpoints are not create-read-update-delete — a search, a
 report — starts from `gesso add module search -empty`: `module.go`,
 `endpoints.go` and `models/requests.go`, `models/responses.go`, with no table
-and no migration. Sign-in is not scaffolded but wired: `gesso add auth`, see
+and no migration. Sign-in is not scaffolded but wired: `gesso add auth`;
+guards are `gesso add guard <name>` and `-guard <name>`, see
 [Identity and limits](identity-and-limits.md). Then:
 
 ```sh

@@ -1,7 +1,5 @@
-// Package api builds the API from its configuration: the database, the modules'
-// migrations, the modules, and the mapping from database errors to answers.
-// Scaffolded by gesso new; it is yours now. gesso add module adds each new
-// module to modules and migrations below; gesso add auth adds sign-in.
+// Package api builds the app from its settings. The modules, their migrations
+// and gesso's own tables are listed in register.go.
 package api
 
 import (
@@ -10,7 +8,6 @@ import (
 	"database/sql"
 	"errors"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 
@@ -27,49 +24,16 @@ import (
 {{- end}}
 )
 
-// Config is what the app takes from its environment.
 type Config struct {
-	Addr     string // where Run listens: ":8080"
-	BasePath string // "/api" when collage mounts the app at /api/; "" on its own
+	Addr     string
+	BasePath string // "/api" when collage mounts the app at /api/
 	Database string // {{.DSNDoc}}
 	Logger   *slog.Logger
 }
 
-// Deps is what the modules are built from.
-type Deps struct {
-	DB db.DB
-}
-
-// modules are the application's features, in order.
-func modules(d Deps) []gesso.Module {
-	return []gesso.Module{}
-}
-
-// migrations are the modules' migrations, applied as one history: their
-// timestamped versions sort across modules.
-func migrations() []fs.FS {
-	return []fs.FS{}
-}
-
-// stores make gesso's own tables — sign-in tokens, a queue — after the
-// modules' migrations, each in a history of its own: token.Migrate,
-// queue.Migrate.
-func stores() []func(context.Context, *sql.DB, migrate.Dialect) error {
-	return []func(context.Context, *sql.DB, migrate.Dialect) error{}
-}
-
-// constraints name the field each database constraint guards, so that a
-// violation is answered as that field's error: {{.ConstraintExample}}.
-var constraints = map[string]string{}
-
-// dialect is the SQL the migrations and the repositories are written in.
 var dialect = migrate.{{.DialectGo}}
 
-// New builds the API from the environment gesso.Main read:
-//
-//	DATABASE_URL  {{.DSNDoc}} (default {{.DefaultDSN}})
-//	BASE_PATH     the prefix every route is under: "/api" behind a proxy that
-//	              passes the full path on
+// New reads DATABASE_URL (default {{.DefaultDSN}}) and BASE_PATH.
 func New(env gesso.Env) (*gesso.App, error) {
 	return NewWith(Config{
 		Addr:     env.Addr,
@@ -79,30 +43,28 @@ func New(env gesso.Env) (*gesso.App, error) {
 	})
 }
 
-// NewWith builds the API from cfg: a collage site, or a test, gives one of
-// its own. The database's migrations run when the app starts — Run, or
-// collage-gesso when collage serves — and it closes when the app shuts down.
 func NewWith(cfg Config) (*gesso.App, error) {
 	if cfg.Database == "" {
-		return nil, errors.New("api: Config.Database is empty: name the database")
+		return nil, errors.New("api: Config.Database is empty")
 	}
 	d, err := open(cfg.Database)
 	if err != nil {
 		return nil, err
 	}
+	deps, err := newDeps(d)
+	if err != nil {
+		return nil, errors.Join(err, d.Close())
+	}
 	app, err := gesso.New(gesso.Config{
-		Addr:         cfg.Addr,
-		BasePath:     cfg.BasePath,
-		Logger:       cfg.Logger,
-		ErrorMappers: []gesso.ErrorMapper{db.Errors(classify, constraints)},
-		// The OpenAPI document maps every route, to anyone who asks: guard it, or
-		// leave Path empty to only generate it, before the API is public.
-		OpenAPI:   &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json"},
-		AccessLog: true,
-		// /healthz answers while the process runs; /readyz while the database
-		// does too, and turns 503 when the app begins to stop.
-		Health: &gesso.Health{Checks: map[string]func(context.Context) error{"database": d.PingContext}},
-	}, append([]gesso.Module{schema{dsn: cfg.Database}}, modules(Deps{DB: d})...)...)
+		Addr:          cfg.Addr,
+		BasePath:      cfg.BasePath,
+		Logger:        cfg.Logger,
+		Authenticator: authenticator(deps),
+		ErrorMappers:  []gesso.ErrorMapper{db.Errors(classify, constraints)},
+		OpenAPI:       &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json"},
+		AccessLog:     true,
+		Health:        &gesso.Health{Checks: map[string]func(context.Context) error{"database": d.PingContext}},
+	}, append([]gesso.Module{schema{dsn: cfg.Database}}, modules(deps)...)...)
 	if err != nil {
 		return nil, errors.Join(err, d.Close())
 	}
@@ -114,11 +76,13 @@ func NewWith(cfg Config) (*gesso.App, error) {
 		}
 		return errors.Join(migrate.Command(ctx, m, args, out), conn.Close())
 	})
+	for name, run := range commands(deps) {
+		app.Command(name, run)
+	}
 	return app, nil
 }
 
-// schema brings the database up to date as the app starts, before it serves:
-// the modules' migrations, then the stores'.
+// schema migrates the database as the app starts: the modules', then the stores'.
 type schema struct{ dsn string }
 
 func (schema) Routes(*gesso.Router) {}
@@ -139,10 +103,6 @@ func (s schema) Start(ctx context.Context) error {
 	return conn.Close()
 }
 
-// migrator is the app's migrations on the database at dsn, and the
-// connection it opened for them{{if eq .Dialect "mysql"}} — one of its own, which takes several statements in
-// one Exec; the app's pool does not, so an injected "; DROP" is never a second
-// statement{{end}}.
 func migrator(dsn string) (*migrate.Migrator, *sql.DB, error) {
 {{- if eq .Dialect "mysql"}}
 	d, err := openMigrator(dsn)
@@ -159,8 +119,6 @@ func migrator(dsn string) (*migrate.Migrator, *sql.DB, error) {
 	return m, d, nil
 }
 {{if eq .Dialect "sqlite"}}
-// open opens the SQLite file at path: foreign keys enforced, readers beside
-// the one writer (WAL), and a writer that waits for the lock instead of failing.
 func open(path string) (*sql.DB, error) {
 	return sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 }
@@ -173,7 +131,6 @@ func classify(err error) (db.Violation, bool) {
 	return db.SQLiteViolation(se.Code(), se.Error())
 }
 {{else if eq .Dialect "postgres"}}
-// open opens a PostgreSQL pool through pgx.
 func open(dsn string) (*sql.DB, error) { return sql.Open("pgx", dsn) }
 
 func classify(err error) (db.Violation, bool) {
@@ -184,12 +141,10 @@ func classify(err error) (db.Violation, bool) {
 	return db.PostgresViolation(pe.Code, pe.ConstraintName)
 }
 {{else}}
-// open opens a MySQL pool: DATETIME scans into time.Time, and one statement
-// per Exec.
 func open(dsn string) (*sql.DB, error) { return openMySQL(dsn, false) }
 
-// openMigrator opens the connection migrations run on: a migration file runs
-// as one Exec, so it takes several statements.
+// openMigrator takes several statements per Exec, as a migration file needs;
+// the app's pool does not.
 func openMigrator(dsn string) (*sql.DB, error) { return openMySQL(dsn, true) }
 
 func openMySQL(dsn string, multi bool) (*sql.DB, error) {

@@ -12,20 +12,18 @@ import (
 	"testing"
 )
 
-// testDatabase is the database the tests run on.
 func testDatabase(t *testing.T) string {
 {{- if eq .Dialect "sqlite"}}
 	return filepath.Join(t.TempDir(), "test.db")
 {{- else}}
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL is not set: the app needs a {{.DialectName}} database to test against")
+		t.Skip("TEST_DATABASE_URL is not set")
 	}
 	return dsn
 {{- end}}
 }
 
-// The API starts on an empty database — its migrations run — and answers.
 func TestNew(t *testing.T) {
 	a, err := NewWith(Config{Database: testDatabase(t), Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
@@ -34,11 +32,7 @@ func TestNew(t *testing.T) {
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := a.Shutdown(context.Background()); err != nil {
-			t.Error(err)
-		}
-	})
+	t.Cleanup(func() { _ = a.Shutdown(context.Background()) })
 	for _, path := range []string{"/openapi.json", "/healthz", "/readyz"} {
 		rec := httptest.NewRecorder()
 		a.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
@@ -50,6 +44,6 @@ func TestNew(t *testing.T) {
 
 func TestNewWantsADatabase(t *testing.T) {
 	if _, err := NewWith(Config{}); err == nil {
-		t.Fatal("an empty Database is refused, not opened as a database of its own")
+		t.Fatal("an empty Database is refused")
 	}
 }

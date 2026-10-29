@@ -84,7 +84,8 @@ gesso dev              # run it with .env; rebuilt and restarted as you edit
 gesso add module events -fields title:string,seats:int,starts_at:time,day:date,body:text
                        # scaffolded under internal/, and wired into internal/api
 gesso add module search -empty   # the layout alone, for endpoints that are not CRUD
-gesso add auth         # sign-in from gesso/auth: one user, or -users sql
+gesso add auth         # sign-in from gesso/auth: a users table, a signedIn guard
+gesso add guard admin  # internal/guards/admin.go; -guard admin on add module
 gesso migrate new add_event_city -dir internal/events/migrations
 gesso gen              # queries.sql → typed queries.gen.go; gen -check in CI
 gesso check            # database calls without ctx, service methods without ctx

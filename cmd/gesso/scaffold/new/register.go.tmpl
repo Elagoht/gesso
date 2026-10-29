@@ -1,0 +1,44 @@
+// The app's parts. gesso add module and gesso add auth add to the lists here.
+package api
+
+import (
+	"context"
+	"database/sql"
+	"io"
+	"io/fs"
+
+	"github.com/Elagoht/gesso"
+	"github.com/Elagoht/gesso/migrate"
+)
+
+type Deps struct {
+	DB *sql.DB
+}
+
+func newDeps(d *sql.DB) (Deps, error) {
+	return Deps{DB: d}, nil
+}
+
+func authenticator(d Deps) gesso.Authenticator {
+	return nil
+}
+
+func modules(d Deps) []gesso.Module {
+	return []gesso.Module{}
+}
+
+func migrations() []fs.FS {
+	return []fs.FS{}
+}
+
+// stores make gesso's own tables, each in a history of its own.
+func stores() []func(context.Context, *sql.DB, migrate.Dialect) error {
+	return []func(context.Context, *sql.DB, migrate.Dialect) error{}
+}
+
+func commands(d Deps) map[string]func(context.Context, []string, io.Writer) error {
+	return map[string]func(context.Context, []string, io.Writer) error{}
+}
+
+// constraints answer a violated database constraint as its field's error.
+var constraints = map[string]string{}

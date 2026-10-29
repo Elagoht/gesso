@@ -41,20 +41,29 @@ func TestNew(t *testing.T) {
 			}
 			dir := filepath.Join(root, "app")
 			seedModule(t, dir, c.require)
+			if code := run([]string{"add", "module", "x", "-guard", "admin"}, dir, &out, &errOut, fixedNow); code == 0 {
+				t.Fatal("a guard that does not exist")
+			}
+			if code := run([]string{"add", "guard", "admin"}, dir, &out, &errOut, fixedNow); code != 0 {
+				t.Fatalf("add guard: %s", errOut.String())
+			}
 			for _, m := range []string{"notes", "tags"} {
 				out.Reset()
-				if code := run([]string{"add", "module", m, "-fields", "title:string,order:int,day:date"}, dir, &out, &errOut, fixedNow); code != 0 {
+				if code := run([]string{"add", "module", m, "-fields", "title:string,order:int,day:date", "-guard", "admin"}, dir, &out, &errOut, fixedNow); code != 0 {
 					t.Fatalf("add %s: code %d: %s", m, code, errOut.String())
 				}
 				if !strings.Contains(out.String(), "wired") {
 					t.Fatalf("add %s did not wire the module:\n%s", m, out.String())
 				}
 			}
-			app, _ := os.ReadFile(filepath.Join(dir, "internal/api/api.go"))
+			reg, _ := os.ReadFile(filepath.Join(dir, "internal/api/register.go"))
 			for _, want := range []string{"notes.New(notes.Deps{DB: d.DB})", "tags.Migrations", `"example.com/app/internal/tags"`} {
-				if !strings.Contains(string(app), want) {
-					t.Fatalf("api.go lacks %s:\n%s", want, app)
+				if !strings.Contains(string(reg), want) {
+					t.Fatalf("register.go lacks %s:\n%s", want, reg)
 				}
+			}
+			if mod, _ := os.ReadFile(filepath.Join(dir, "internal/notes/module.go")); !strings.Contains(string(mod), "gesso.Guards(guards.Admin)") {
+				t.Fatalf("notes' writes are not guarded:\n%s", mod)
 			}
 			if code := run([]string{"add", "module", "tags"}, dir, &out, &errOut, fixedNow); code == 0 {
 				t.Fatal("an existing module is never overwritten")
@@ -65,22 +74,24 @@ func TestNew(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(dir, "internal/pages/migrations")); err == nil {
 				t.Fatal("an empty module has no migrations")
 			}
-			users := map[string]string{"sqlite": "single", "postgres": "sql", "mysql": "sql"}[dialect]
 			out.Reset()
-			if code := run([]string{"add", "auth", "-users", users}, dir, &out, &errOut, fixedNow); code != 0 {
+			if code := run([]string{"add", "auth"}, dir, &out, &errOut, fixedNow); code != 0 {
 				t.Fatalf("add auth: code %d: %s", code, errOut.String())
 			}
 			if code := run([]string{"add", "auth"}, dir, &out, &errOut, fixedNow); code == 0 {
 				t.Fatal("auth is wired twice")
 			}
-			app, _ = os.ReadFile(filepath.Join(dir, "internal/api/api.go"))
-			for _, want := range []string{"Authenticator: authn", "schema{dsn: cfg.Database}, authn}", "pages.New(pages.Deps{DB: d.DB})"} {
-				if !strings.Contains(string(app), want) {
-					t.Fatalf("api.go lacks %s:\n%s", want, app)
+			if code := run([]string{"add", "module", "posts", "-fields", "title:string", "-guard", "signedIn"}, dir, &out, &errOut, fixedNow); code != 0 {
+				t.Fatalf("add auth makes the signedIn guard: %s", errOut.String())
+			}
+			reg, _ = os.ReadFile(filepath.Join(dir, "internal/api/register.go"))
+			for _, want := range []string{"return d.Auth", "auth.Migrate", `"users": d.Users.Command(os.Stdin)`, "pages.New(pages.Deps{DB: d.DB})"} {
+				if !strings.Contains(string(reg), want) {
+					t.Fatalf("register.go lacks %s:\n%s", want, reg)
 				}
 			}
-			if strings.Contains(string(app), "pages.Migrations") {
-				t.Fatalf("api.go migrates the empty module:\n%s", app)
+			if strings.Contains(string(reg), "pages.Migrations") {
+				t.Fatalf("register.go migrates the empty module:\n%s", reg)
 			}
 			var dsn string
 			if c.database != nil {
@@ -98,8 +109,9 @@ func TestNew(t *testing.T) {
 			goIn(t, dir, "build", "-o", bin, ".")
 			if dialect == "sqlite" {
 				migrateRoundTrip(t, bin, filepath.Join(t.TempDir(), "m.db"))
+				dsn = filepath.Join(t.TempDir(), "users.db")
 			}
-			if users == "sql" && dsn != "" {
+			if dsn != "" {
 				// On the app's own pool — on MySQL one that takes a statement
 				// per Exec — after its test started it on the same database.
 				cmd := exec.Command(bin, "users", "add", "ada", "-role", "admin")
@@ -136,26 +148,25 @@ func migrateRoundTrip(t *testing.T, bin, dbPath string) {
 	t.Helper()
 	run := func(args ...string) string {
 		cmd := exec.Command(bin, append([]string{"migrate"}, args...)...)
-		// The app is built for a command too, and its one user is a setting.
-		cmd.Env = append(os.Environ(), "DATABASE_URL="+dbPath, "AUTH_USERNAME=ada", "AUTH_PASSWORD=a long password")
+		cmd.Env = append(os.Environ(), "DATABASE_URL="+dbPath)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("migrate %v: %v\n%s", args, err, out)
 		}
 		return string(out)
 	}
-	if out := run("up"); strings.Count(out, "applied") != 2 {
+	if out := run("up"); strings.Count(out, "applied") != 3 {
 		t.Fatalf("up: %s", out)
 	}
 	if out := run("down"); strings.Count(out, "reverted") != 1 {
 		t.Fatalf("down: %s", out)
 	}
 	out := run("status")
-	if strings.Count(out, "applied") != 1 || strings.Count(out, "pending") != 1 {
+	if strings.Count(out, "applied") != 2 || strings.Count(out, "pending") != 1 {
 		t.Fatalf("status: %s", out)
 	}
 	cmd := exec.Command(bin, "migrate", "sideways")
-	cmd.Env = append(os.Environ(), "DATABASE_URL="+dbPath, "AUTH_USERNAME=ada", "AUTH_PASSWORD=a long password")
+	cmd.Env = append(os.Environ(), "DATABASE_URL="+dbPath)
 	if err := cmd.Run(); err == nil {
 		t.Fatal("an unknown subcommand succeeded")
 	}
@@ -289,33 +300,32 @@ func TestGoModFile(t *testing.T) {
 	}
 }
 
-// wireAuth refuses an api.go it cannot find its way in, rather than guess:
-// gesso new's before stores, one with an Authenticator of its own.
+// wireAuth refuses a register.go it cannot find its way in, rather than guess.
 func TestWireAuthRefuses(t *testing.T) {
 	var buf bytes.Buffer
 	spec, err := newProjectSpec("example.com/app", "sqlite")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := newTemplates.ExecuteTemplate(&buf, "api.go.tmpl", spec); err != nil {
+	if err := newTemplates.ExecuteTemplate(&buf, "register.go.tmpl", spec); err != nil {
 		t.Fatal(err)
 	}
 	src := buf.String()
-	if _, err := wireAuth([]byte(src), "single"); err != nil {
-		t.Fatalf("gesso new's own api.go: %v", err)
+	if _, err := wireAuth([]byte(src)); err != nil {
+		t.Fatalf("gesso new's own register.go: %v", err)
 	}
 	for name, c := range map[string]struct{ old, new, want string }{
-		"no stores":           {"func stores()", "func storesRenamed()", "no func stores"},
-		"an authenticator":    {"AccessLog: true,", "AccessLog: true, Authenticator: mine,", "has an Authenticator"},
-		"wired already":       {`"github.com/Elagoht/gesso/db"`, `"github.com/Elagoht/gesso/db"` + "\n\t_ \"github.com/Elagoht/gesso/auth\"", "wired already"},
-		"no Config filled in": {"return NewWith(Config{", "return NewWith(cfgFromEnv{", "New builds no Config"},
-		"gesso.New elsewhere": {"app, err := gesso.New(", "app, err := build(", "no gesso.New"},
+		"no stores":        {"func stores()", "func storesRenamed()", "no func stores"},
+		"an authenticator": {"func authenticator(d Deps) gesso.Authenticator {\n\treturn nil", "func authenticator(d Deps) gesso.Authenticator {\n\treturn mine", "returns an Authenticator already"},
+		"wired already":    {`"github.com/Elagoht/gesso/migrate"`, `"github.com/Elagoht/gesso/migrate"` + "\n\t_ \"github.com/Elagoht/gesso/auth\"", "wired already"},
+		"no Deps":          {"type Deps struct", "type Dependencies struct", "no type Deps"},
+		"newDeps changed":  {"return Deps{DB: d}, nil", "return build(d)", "newDeps"},
 	} {
 		changed := strings.Replace(src, c.old, c.new, 1)
 		if changed == src {
 			t.Fatalf("%s: %q is not in the template", name, c.old)
 		}
-		if _, err := wireAuth([]byte(changed), "single"); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, err := wireAuth([]byte(changed)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v, want %q", name, err, c.want)
 		}
 	}

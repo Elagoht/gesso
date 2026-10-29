@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"go/ast"
-	"go/format"
 	"go/parser"
 	gotoken "go/token"
 	"os"
@@ -13,8 +11,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"golang.org/x/tools/go/ast/astutil"
 )
 
 var dialectVar = regexp.MustCompile(`(?m)^var dialect = migrate\.(Postgres|MySQL|SQLite)\b`)
@@ -42,13 +38,12 @@ func readModule(dir string) (string, error) {
 	return "", errors.New("go.mod has no module line")
 }
 
-// wireModule adds a module to an api.go: pkg.New(pkg.Deps{DB: d.DB}) to what
-// modules returns, pkg.Migrations to what migrations returns, and the import.
-// Each list is found by its function's name, and the text is inserted before
-// the list's closing brace, so the rest of the file is left as it is.
+// wireModule adds a module to a register.go: pkg.New(pkg.Deps{DB: d.DB}) to
+// what modules returns, pkg.Migrations to what migrations returns, and the
+// import. Each list is found by its function's name.
 func wireModule(src []byte, pkg, importPath string, withMigrations bool) ([]byte, error) {
 	fset := gotoken.NewFileSet()
-	f, err := parser.ParseFile(fset, "api.go", src, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "register.go", src, parser.ParseComments)
 	if err != nil {
 		return nil, err
 	}
@@ -57,35 +52,19 @@ func wireModule(src []byte, pkg, importPath string, withMigrations bool) ([]byte
 			return nil, fmt.Errorf("%s is wired already", pkg)
 		}
 	}
-	entries := map[string]string{"modules": pkg + ".New(" + pkg + ".Deps{DB: d.DB})"}
+	lists := []struct{ fn, entry string }{{"modules", pkg + ".New(" + pkg + ".Deps{DB: d.DB})"}}
 	if withMigrations {
-		entries["migrations"] = pkg + ".Migrations"
+		lists = append(lists, struct{ fn, entry string }{"migrations", pkg + ".Migrations"})
 	}
 	var inserts []insert
-	for fn, entry := range entries {
-		lit := returnedList(f, fn)
+	for _, l := range lists {
+		lit := returnedList(f, l.fn)
 		if lit == nil {
-			return nil, fmt.Errorf("no func %s returning a list literal", fn)
+			return nil, fmt.Errorf("no func %s returning a list literal", l.fn)
 		}
-		inserts = append(inserts, listInsert(fset, lit, entry))
+		inserts = append(inserts, listInsert(fset, lit, l.entry))
 	}
-	if len(inserts) == 2 && inserts[0].at < inserts[1].at {
-		inserts[0], inserts[1] = inserts[1], inserts[0]
-	}
-	out := src
-	for _, in := range inserts { // the later offset first, so the earlier stays right
-		out = append(out[:in.at:in.at], append([]byte(in.text), out[in.at:]...)...)
-	}
-	f, err = parser.ParseFile(fset, "api.go", out, parser.ParseComments)
-	if err != nil {
-		return nil, err
-	}
-	astutil.AddImport(fset, f, importPath)
-	var buf bytes.Buffer
-	if err := format.Node(&buf, fset, f); err != nil {
-		return nil, err
-	}
-	return format.Source(buf.Bytes())
+	return reformat(fset, applyInserts(src, inserts), importPath)
 }
 
 // returnedList is the composite literal func name returns, or nil.

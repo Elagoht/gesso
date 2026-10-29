@@ -610,7 +610,7 @@ in a major version.
   a later change to one ships as a new migration, never an edited one.
 - **The CLI**: its commands and flags, and that a scaffold, once written, is the
   application's: a later gesso never edits it except where `add module` and
-  `add auth` wire into `internal/api/api.go` — each piece found by name, and
+  `add auth` wire into `internal/api/register.go` — each piece found by name, and
   refused rather than guessed at when it is not where `gesso new` put it.
 
 Not sealed: what the OpenAPI document says beyond being valid OpenAPI 3.1
