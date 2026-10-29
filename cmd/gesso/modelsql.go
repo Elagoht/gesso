@@ -234,3 +234,24 @@ func (m model) SlotUses(typ string) bool {
 	}
 	return false
 }
+
+// Defaults are the fields with a default.
+func (m model) Defaults() []mfield {
+	var out []mfield
+	for _, f := range m.Fields {
+		if f.Default != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// DefaultUses reports whether a default is v: @today, @now, @user.
+func (m model) DefaultUses(v string) bool {
+	for _, f := range m.Fields {
+		if f.Default == v {
+			return true
+		}
+	}
+	return false
+}

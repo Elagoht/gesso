@@ -70,7 +70,7 @@ func (in ReqPatch{{.Entity}}) Forbidden(a {{.Entity}}Access) bool {
 
 // Record is the {{.Entity}} in describes, without its id.
 func (in ReqCreate{{.Entity}}) Record() {{.Entity}} {
-	return {{.Entity}}{ {{- range .Fields}}{{.Go}}: in.{{.Go}}{{if .Guard}}.Value{{end}}, {{end -}} }
+	return {{.Entity}}{ {{- range .Fields}}{{.Go}}: in.{{.Go}}{{if or .Guard .Default}}.Value{{end}}, {{end -}} }
 }
 
 // Patch is in as a patch that sets every field{{if .Guarded}} but those a hides, which keep what they hold{{end}}.
@@ -80,7 +80,7 @@ func (in ReqUpdate{{.Entity}}) Patch({{if .Guarded}}a {{.Entity}}Access{{end}}) 
 {{- if .Guard}}
 		{{.Go}}: gesso.Optional[{{.Type}}]{Set: a.{{.Guard}}, Value: in.{{.Go}}.Value},
 {{- else}}
-		{{.Go}}: gesso.Optional[{{.Type}}]{Set: true, Value: in.{{.Go}}},
+		{{.Go}}: gesso.Optional[{{.Type}}]{Set: true, Value: in.{{.Go}}{{if .Default}}.Value{{end}}},
 {{- end}}
 {{- end}}
 	}

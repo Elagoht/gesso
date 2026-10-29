@@ -69,4 +69,34 @@ func TestModelRefuses(t *testing.T) {
 	if f.Rule != "required,max=255" {
 		t.Fatalf("a plain string: %q", f.Rule)
 	}
+	for _, c := range []struct{ typ, tag string }{
+		{"string", "key,default=x"},
+		{"string", "unique,default=x"},
+		{"string", "default=@today"},
+		{"*date.Date", "default=@user"},
+		{"time.Time", "default=@today"},
+		{"string", "default=@tomorrow"},
+		{"int64", "default=many"},
+		{"bool", "default=maybe"},
+		{"*date.Date", "default=2026-01-01"},
+		{"string", "oneof=draft live,default=gone"},
+		{"string", "default="},
+		{"time.Time", "optional"},
+	} {
+		if _, err := newMField("Field", c.typ, c.tag); err == nil {
+			t.Errorf("%s `gesso:%q` is accepted", c.typ, c.tag)
+		}
+	}
+	for _, c := range []struct{ typ, tag, value string }{
+		{"string", "oneof=draft live,default=draft", `"draft"`},
+		{"int64", "default=5", "5"},
+		{"*date.Date", "default=@today", "date.Today(time.Now(), time.Local)"},
+		{"time.Time", "default=@now", "time.Now()"},
+		{"string", "default=@user", "id.Name"},
+	} {
+		f, err := newMField("Field", c.typ, c.tag)
+		if err != nil || !f.Optional || f.DefaultValue() != c.value || f.ReqType() != "gesso.Optional["+c.typ+"]" {
+			t.Errorf("%s `gesso:%q`: %+v %v", c.typ, c.tag, f, err)
+		}
+	}
 }

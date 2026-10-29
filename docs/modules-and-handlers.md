@@ -76,6 +76,21 @@ the list answers `Res<Entity>Item` — those fields, the id and the key — and
 get answers the whole `Res<Entity>`; when none is, the list answers whole
 records.
 
+### Defaults
+
+```go
+	Status string     `gesso:"listable,default=draft,oneof=draft published"`
+	Day    *date.Date `gesso:"listable,default=@today"`
+	Author string     `gesso:"listable,default=@user,max=100"`
+```
+
+A create or a PUT that leaves a field with a default out gets the default; one
+that sends it — `null` too, for a pointer — keeps what it sent. A PATCH never
+fills defaults. `@today` is the date where the server runs, `@now` the time,
+`@user` the signed-in caller's name (`Identity.Name`), left empty for an
+anonymous one. A key or a unique field has no default, and a literal must fit
+the field and its `oneof`.
+
 ### Fields only some may see
 
 ```go

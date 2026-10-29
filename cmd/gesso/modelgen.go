@@ -83,6 +83,7 @@ type mfield struct {
 	Key, Sort, Optional     bool
 	Listable, Filterable    bool
 	Orderable               bool
+	Default                 string   // default=: a literal, @today, @now or @user
 	Guard                   string   // the Go name of the guard that may see and write it
 	GateGuard               string   // a gate: records with it false are the guard's only
 	Rules                   []string // validation rules beyond what the options imply
@@ -99,10 +100,62 @@ func (f mfield) ResType() string {
 	return f.Type
 }
 
+// checkDefault refuses a default the field cannot hold.
+func (f mfield) checkDefault() error {
+	v := f.Default
+	switch {
+	case f.Key || f.Unique:
+		return errors.New("a key or a unique field has no default: two records would share it")
+	case v == "@today" && f.Base != "date", v == "@now" && f.Base != "time", v == "@user" && f.Base != "string" && f.Base != "text":
+		return fmt.Errorf("default=%s is for a %s", v, map[string]string{"@today": "date", "@now": "time", "@user": "string"}[v])
+	case strings.HasPrefix(v, "@") && v != "@today" && v != "@now" && v != "@user":
+		return fmt.Errorf("unknown default %s: @today, @now, @user, or a value", v)
+	case strings.HasPrefix(v, "@"):
+		return nil
+	}
+	var err error
+	switch f.Base {
+	case "int":
+		_, err = strconv.ParseInt(v, 10, 64)
+	case "float":
+		_, err = strconv.ParseFloat(v, 64)
+	case "bool":
+		_, err = strconv.ParseBool(v)
+	case "time", "date":
+		err = fmt.Errorf("a %s's default is @%s", f.Base, map[string]string{"time": "now", "date": "today"}[f.Base])
+	}
+	if err != nil {
+		return fmt.Errorf("default=%s: %w", v, err)
+	}
+	for _, r := range f.Rules {
+		if words, ok := strings.CutPrefix(r, "oneof="); ok && !slices.Contains(strings.Fields(words), v) {
+			return fmt.Errorf("default=%s is not one of %s", v, words)
+		}
+	}
+	return nil
+}
+
+// DefaultValue is the default as Go: a literal, or what the generated code
+// computes for @today, @now and @user.
+func (f mfield) DefaultValue() string {
+	switch f.Default {
+	case "@today":
+		return "date.Today(time.Now(), time.Local)"
+	case "@now":
+		return "time.Now()"
+	case "@user":
+		return "id.Name"
+	}
+	if f.Base == "string" || f.Base == "text" {
+		return strconv.Quote(f.Default)
+	}
+	return f.Default
+}
+
 // ReqType is the field's type in a create or update: an Optional when a guard
-// may refuse it, to tell sent from left out.
+// may refuse it, or a default fills it, to tell sent from left out.
 func (f mfield) ReqType() string {
-	if f.Guard != "" {
+	if f.Guard != "" || f.Default != "" {
 		return "gesso.Optional[" + f.Type + "]"
 	}
 	return f.Type
@@ -110,7 +163,7 @@ func (f mfield) ReqType() string {
 
 // ReqTag is the field's json and validate tags in a create or update.
 func (f mfield) ReqTag() string {
-	if f.Guard != "" {
+	if f.Guard != "" || f.Default != "" {
 		t := `json:"` + f.JSON + `,omitzero"`
 		if f.Patch != "" {
 			t += ` validate:"` + f.Patch + `"`
@@ -164,7 +217,7 @@ func (m model) SortType() string {
 var baseOf = map[string]string{"string": "string", "int64": "int", "bool": "bool", "float64": "float", "time.Time": "time", "date.Date": "date"}
 
 var options = map[string]bool{"key": true, "unique": true, "index": true, "optional": true, "sort": true, "text": true,
-	"listable": true, "filterable": true, "orderable": true, "guard": true, "gate": true}
+	"listable": true, "filterable": true, "orderable": true, "guard": true, "gate": true, "default": true}
 
 var ruleNames = map[string]bool{
 	"min": true, "max": true, "len": true, "gt": true, "gte": true, "lt": true, "lte": true,
@@ -376,6 +429,11 @@ func newMField(name, typ, tag string) (mfield, error) {
 			f.Filterable = true
 		case opt == "orderable":
 			f.Orderable = true
+		case rule == "default":
+			if value == "" {
+				return f, errors.New("default takes a value: default=draft, default=@today, default=@now, default=@user")
+			}
+			f.Default = value
 		case rule == "guard" || rule == "gate":
 			if !guardName.MatchString(value) {
 				return f, fmt.Errorf("%s names a guard: %s=signedIn", rule, rule)
@@ -406,7 +464,7 @@ func newMField(name, typ, tag string) (mfield, error) {
 		case options[rule]:
 			return f, fmt.Errorf("%q takes no value", rule)
 		default:
-			return f, fmt.Errorf("unknown option or rule %q: options are key, unique, index, optional, sort, text, listable, filterable, orderable, guard=<guard>, gate=<guard>; rules are validate's (max=200, email, slug, oneof=a b …)", opt)
+			return f, fmt.Errorf("unknown option or rule %q: options are key, unique, index, optional, sort, text, listable, filterable, orderable, default=<value>, guard=<guard>, gate=<guard>; rules are validate's (max=200, email, slug, oneof=a b …)", opt)
 		}
 	}
 	if f.GateGuard != "" && (base != "bool" || f.Nullable) {
@@ -424,7 +482,13 @@ func newMField(name, typ, tag string) (mfield, error) {
 	if f.Filterable && f.Base == "text" {
 		return f, errors.New("a text column is not filterable: drop text, and give it a max")
 	}
-	if f.Optional && !f.Nullable && (base == "time" || base == "date") {
+	if f.Default != "" {
+		if err := f.checkDefault(); err != nil {
+			return f, err
+		}
+		f.Optional = true // left out, it takes the default
+	}
+	if f.Optional && !f.Nullable && f.Default == "" && (base == "time" || base == "date") {
 		// Left out, it would be year 1, which MySQL refuses and nobody means.
 		return f, fmt.Errorf("an optional %s is a pointer, *%s, NULL when left out", base, strings.TrimPrefix(typ, "*"))
 	}

@@ -54,6 +54,8 @@ Options:
   listable       the list answers it; a record answers every field
   filterable     the list filters by it: ?author=ada
   orderable      the client may order the list by it: ?order=title, ?order=-title
+  default=<v>    left out of a create or a PUT, it is v: draft, 5, true,
+                 @today (a date), @now (a time), @user (who signs in)
   guard=<guard>  only the guard's callers see and write it
   gate=<guard>   on a bool: a record with it false is the guard's callers' only
 Rules: validate's — max=200, email, slug, oneof=draft published …

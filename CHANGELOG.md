@@ -3,6 +3,13 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## Unreleased
+
+- **`default=<value>`** on a model field: a create or a PUT that leaves the
+  field out gets it — a literal (`default=draft`, `default=5`), `@today` for a
+  date, `@now` for a time, `@user` for the signed-in user's name. What used to
+  need a `BeforeCreate` hook is a tag.
+
 ## v0.13.0 — 2026-10-29
 
 The model writes the module, and the app writes almost nothing. This breaks

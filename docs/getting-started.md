@@ -93,6 +93,7 @@ gesso add module docs -guard signedIn \
 | `listable` | the list answers only the listable fields, the id and the key; get answers everything |
 | `filterable` | `?<field>=value` keeps the list to the records that match it exactly |
 | `orderable` | `?order=<field>` or `?order=-<field>` orders the list |
+| `default=<value>` | what a create or a PUT that leaves the field out gets: `draft`, `5`, `true`, `@today` (a date), `@now` (a time), `@user` (the signed-in user's name) |
 | `guard=<guard>` | only callers who pass the guard see or write the field |
 | `gate=<guard>` | on a `bool`: a record with it false is there only for callers who pass the guard |
 

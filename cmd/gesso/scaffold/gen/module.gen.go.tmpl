@@ -5,8 +5,14 @@ import (
 	"context"
 	"embed"
 	"errors"
+{{- if or (.DefaultUses "@today") (.DefaultUses "@now")}}
+	"time"
+{{- end}}
 
 	"github.com/Elagoht/gesso"
+{{- if .DefaultUses "@today"}}
+	"github.com/Elagoht/gesso/date"
+{{- end}}
 {{- if or .Hooks.BeforeUpdate .Sortable}}
 	"github.com/Elagoht/gesso/db"
 {{- end}}
@@ -93,6 +99,9 @@ func (m *Module) create(ctx context.Context, in models.ReqCreate{{.Entity}}) (mo
 		return models.Res{{.Entity}}{}, gesso.ErrForbidden
 	}
 {{- end}}
+{{- if .Defaults}}
+	m.defaults(ctx, &in)
+{{- end}}
 	e := in.Record()
 {{- if .Hooks.BeforeCreate}}
 	if err := m.BeforeCreate(ctx, &e); err != nil {
@@ -103,6 +112,26 @@ func (m *Module) create(ctx context.Context, in models.ReqCreate{{.Entity}}) (mo
 	return e.Response({{if .Guarded}}a{{end}}), err
 }
 
+{{if .Defaults -}}
+// defaults fills what a create or a PUT left out with the model's defaults.
+func (m *Module) defaults(ctx context.Context, in *models.ReqCreate{{.Entity}}) {
+{{- range .Defaults}}
+	if !in.{{.Go}}.Set {
+{{- if eq .Default "@user"}}
+		if id, ok := gesso.IdentityFrom(ctx); ok {
+			in.{{.Go}} = gesso.Some(id.Name)
+		}
+{{- else if .Nullable}}
+		v := {{.DefaultValue}}
+		in.{{.Go}} = gesso.Some(&v)
+{{- else}}
+		in.{{.Go}} = gesso.Some[{{.Type}}]({{.DefaultValue}})
+{{- end}}
+	}
+{{- end}}
+}
+
+{{end -}}
 func (m *Module) get(ctx context.Context, in models.Req{{.Entity}}Key) (models.Res{{.Entity}}, error) {
 	e, err := m.repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
 	return e.Response({{if .Guarded}}m.access(ctx){{end}}), err
@@ -126,6 +155,11 @@ func (m *Module) update(ctx context.Context, in models.ReqUpdate{{.Entity}}) (mo
 	if in.Forbidden(a) {
 		return models.Res{{.Entity}}{}, gesso.ErrForbidden
 	}
+{{- end}}
+{{- if .Defaults}}
+	m.defaults(ctx, &in.ReqCreate{{.Entity}})
+{{- end}}
+{{- if .Guarded}}
 	return m.write(ctx, in.Patch(a), a)
 {{- else}}
 	return m.write(ctx, in.Patch())

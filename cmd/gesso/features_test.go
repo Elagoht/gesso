@@ -19,20 +19,22 @@ type Event struct {
 	Slug     string     ` + "`" + `gesso:"key,slug,max=100"` + "`" + `
 	Body     string     ` + "`" + `gesso:"text,optional"` + "`" + `
 	Order    int64      ` + "`" + `gesso:"listable,orderable"` + "`" + `
-	Day      *date.Date ` + "`" + `gesso:"listable"` + "`" + `
+	Day      *date.Date ` + "`" + `gesso:"listable,default=@today"` + "`" + `
+	Status   string     ` + "`" + `gesso:"listable,default=draft,oneof=draft live"` + "`" + `
 	StartsAt *time.Time ` + "`" + `gesso:"optional"` + "`" + `
 	Price    float64    ` + "`" + `gesso:"optional"` + "`" + `
-	Host     string     ` + "`" + `gesso:"listable,filterable,optional,max=100"` + "`" + `
+	Host     string     ` + "`" + `gesso:"listable,filterable,default=@user,max=100"` + "`" + `
 	Notes    string     ` + "`" + `gesso:"guard=admin,max=500"` + "`" + `
 	Public   bool       ` + "`" + `gesso:"gate=admin"` + "`" + `
 }
 `
 
-// eventsHook fills the host from who signs in: gen finds it and calls it.
+// eventsHook is the app's own code: gen finds the hooks and calls them.
 const eventsHook = `package events
 
 import (
 	"context"
+	"strings"
 
 	"github.com/Elagoht/gesso"
 
@@ -40,16 +42,14 @@ import (
 )
 
 func (m *Module) BeforeCreate(ctx context.Context, e *models.Event) error {
-	if id, ok := gesso.IdentityFrom(ctx); ok && e.Host == "" {
-		e.Host = id.Name
+	if e.Price == 0 {
+		e.Price = 1
 	}
 	return nil
 }
 
 func (m *Module) BeforeUpdate(ctx context.Context, e *models.Event) error {
-	if e.Host == "" {
-		e.Host = "edited"
-	}
+	e.Title = strings.TrimSpace(e.Title)
 	return nil
 }
 
@@ -75,6 +75,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/auth"
@@ -165,9 +166,12 @@ func TestEvents(t *testing.T) {
 	anyone, ada, bob := caller{t: t, app: app}, login("ada", "admin"), login("bob")
 
 	anyone.want("POST", "/events", ` + "`" + `{"title":"Jam","slug":"jam","day":"2026-11-01"}` + "`" + `, 401)
-	bob.want("POST", "/events", ` + "`" + `{"title":"Jam","slug":"jam","day":"2026-11-01","public":true}` + "`" + `, 201, ` + "`" + `"host":"bob"` + "`" + `, "!notes")
+	bob.want("POST", "/events", ` + "`" + `{"title":"Jam","slug":"jam","day":"2026-11-01","public":true}` + "`" + `, 201,
+		` + "`" + `"host":"bob"` + "`" + `, ` + "`" + `"status":"draft"` + "`" + `, ` + "`" + `"price":1` + "`" + `, "!notes")
 	bob.want("POST", "/events", ` + "`" + `{"title":"Sneaky","slug":"sneaky","day":"2026-11-01","notes":"x"}` + "`" + `, 403)
-	ada.want("POST", "/events", ` + "`" + `{"title":"Talk","slug":"talk","day":"2026-11-02","notes":"private"}` + "`" + `, 201, ` + "`" + `"notes":"private"` + "`" + `)
+	ada.want("POST", "/events", ` + "`" + `{"title":"Talk","slug":"talk","notes":"private","status":"live"}` + "`" + `, 201,
+		` + "`" + `"notes":"private"` + "`" + `, ` + "`" + `"day":"` + "`" + `+time.Now().Format("2006-01-02")+` + "`" + `"` + "`" + `, ` + "`" + `"status":"live"` + "`" + `)
+	bob.want("POST", "/events", ` + "`" + `{"title":"Bad","slug":"bad","status":"gone"}` + "`" + `, 400, "oneof")
 	bob.want("POST", "/events", ` + "`" + `{"title":"Walk","slug":"walk","day":"2026-11-03","public":true,"order":5,"host":"x","price":9.5,"startsAt":"2026-11-03T10:00:00Z"}` + "`" + `, 201)
 	bob.want("POST", "/events", ` + "`" + `{"title":"Again","slug":"jam","day":"2026-11-01"}` + "`" + `, 409, ` + "`" + `"field":"slug"` + "`" + `)
 	bob.want("POST", "/events", ` + "`" + `{"title":"Order","slug":"order","day":"2026-11-01"}` + "`" + `, 400)
@@ -220,9 +224,8 @@ func TestEvents(t *testing.T) {
 	// A guarded field: bob may not write it, and his PUT keeps it.
 	ada.want("PATCH", "/events/walk", ` + "`" + `{"notes":"kept"}` + "`" + `, 200, ` + "`" + `"notes":"kept"` + "`" + `)
 	bob.want("PATCH", "/events/walk", ` + "`" + `{"notes":"mine"}` + "`" + `, 403)
-	bob.want("PUT", "/events/walk", ` + "`" + `{"title":"Walk 2","slug":"walk","day":"2026-11-03","public":true}` + "`" + `, 200, ` + "`" + `"title":"Walk 2"` + "`" + `, "!notes")
-	ada.want("GET", "/events/walk", "", 200, ` + "`" + `"notes":"kept"` + "`" + `, ` + "`" + `"title":"Walk 2"` + "`" + `)
-	ada.want("GET", "/events/walk", "", 200, ` + "`" + `"host":"edited"` + "`" + `)
+	bob.want("PUT", "/events/walk", ` + "`" + `{"title":"  Walk 2 ","slug":"walk","day":"2026-11-03","public":true}` + "`" + `, 200, ` + "`" + `"title":"Walk 2"` + "`" + `, "!notes")
+	ada.want("GET", "/events/walk", "", 200, ` + "`" + `"notes":"kept"` + "`" + `, ` + "`" + `"title":"Walk 2"` + "`" + `, ` + "`" + `"host":"bob"` + "`" + `, ` + "`" + `"status":"draft"` + "`" + `)
 	ada.want("PATCH", "/events/talk", ` + "`" + `{"order":99}` + "`" + `, 200, ` + "`" + `"host":"ada"` + "`" + `)
 	ada.want("DELETE", "/events/talk", "", 422, "in_use")
 
