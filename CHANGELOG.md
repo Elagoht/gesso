@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## Unreleased
+## v0.12.0 — 2026-10-29
 
 - **Swagger UI**: `OpenAPIConfig.UI` serves it at a path, `gesso.ServeSwaggerUI()`
   behind guards. `gesso new` turns it on at `/swagger`; an app from v0.11 adds
