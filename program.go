@@ -3,6 +3,7 @@ package gesso
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -70,7 +71,9 @@ func runMain(newApp func(Env) (*App, error), args []string, stdout, stderr io.Wr
 		return 2
 	}
 	env := Env{Dev: dev, Addr: *addr, Logger: slog.New(slog.NewJSONHandler(stdout, nil))}
-	if dev {
+	if terminal, color := onTerminal(stderr); terminal {
+		env.Logger = slog.New(newTerminalHandler(stderr, color))
+	} else if dev {
 		env.Logger = slog.New(slog.NewTextHandler(stderr, nil))
 	}
 	app, err := newApp(env)
@@ -88,7 +91,11 @@ func runMain(newApp func(Env) (*App, error), args []string, stdout, stderr io.Wr
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	code := 0
-	if err := app.runCommand(ctx, flags.Arg(0), flags.Args()[1:], stdout); err != nil {
+	run := app.runCommand
+	if flags.Arg(0) == inspectCommand {
+		run = app.inspect
+	}
+	if err := run(ctx, flags.Arg(0), flags.Args()[1:], stdout); err != nil {
 		fmt.Fprintf(stderr, "%s %s: %v\n", name, flags.Arg(0), err)
 		code = 1
 	}
@@ -229,4 +236,33 @@ func validEnvKey(key string) bool {
 		}
 	}
 	return true
+}
+
+// inspectCommand is the word gesso routes, gesso inspect and gesso check run
+// a program with: it prints the app's routes and commands as JSON, and serves
+// nothing.
+const inspectCommand = "gesso-inspect"
+
+// Inspection is what gesso-inspect prints.
+type Inspection struct {
+	Version  int         `json:"version"`
+	Routes   []RouteInfo `json:"routes"`
+	Commands []string    `json:"commands"`
+}
+
+func (a *App) inspect(_ context.Context, _ string, _ []string, out io.Writer) error {
+	a.mu.Lock()
+	names := make([]string, 0, len(a.commands))
+	for n := range a.commands {
+		names = append(names, n)
+	}
+	a.mu.Unlock()
+	slices.Sort(names)
+	routes := a.Routes()
+	if routes == nil {
+		routes = []RouteInfo{}
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(Inspection{Version: 1, Routes: routes, Commands: names})
 }

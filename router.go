@@ -130,6 +130,7 @@ func (r *Router) Handle(method, pattern string, h http.Handler) {
 			r.app.docs = append(r.app.docs, docRoute{method: method, pattern: full, guarded: len(r.guards) > 0, op: d.describe()})
 		}
 	}
+	r.app.noteRoute(method, full, r.guards, h)
 	if len(r.guards) > 0 {
 		h = guarded{guards: slices.Clone(r.guards), next: h, errs: &r.app.errs}
 	}

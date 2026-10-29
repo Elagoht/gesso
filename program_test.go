@@ -3,9 +3,11 @@ package gesso
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -62,5 +64,21 @@ func TestMainCommands(t *testing.T) {
 	errOut.Reset()
 	if code := runMain(echoApp, []string{"echo"}, io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), ".env:1") {
 		t.Fatalf("a bad line: %d %s", code, errOut.String())
+	}
+}
+
+// gesso-inspect prints the routes and commands as JSON, and serves nothing.
+func TestMainInspect(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out, errOut bytes.Buffer
+	if code := runMain(echoApp, []string{inspectCommand}, &out, &errOut); code != 0 {
+		t.Fatalf("%d %s", code, errOut.String())
+	}
+	var got Inspection
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if got.Version != 1 || !slices.Equal(got.Commands, []string{"echo"}) || got.Routes == nil {
+		t.Fatalf("%+v", got)
 	}
 }

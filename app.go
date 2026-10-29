@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -122,6 +123,9 @@ type App struct {
 	metrics  *metrics
 	ready    readiness // the last readiness result
 	commands map[string]func(context.Context, []string, io.Writer) error
+
+	routes      []RouteInfo
+	registering string // the module whose Routes runs, for RouteInfo.Module
 }
 
 // New builds an app from its modules. Every route problem — a bad pattern, two
@@ -201,6 +205,7 @@ func New(cfg Config, modules ...Module) (*App, error) {
 			continue
 		}
 		a.modules = append(a.modules, m)
+		a.registering = strings.TrimPrefix(reflect.TypeOf(m).String(), "*")
 		m.Routes(&Router{app: a, auth: cfg.Authenticator, mws: slices.Clone(cfg.Middleware)})
 	}
 	if len(a.errList) == 0 {
