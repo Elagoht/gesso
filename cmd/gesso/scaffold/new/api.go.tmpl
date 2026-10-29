@@ -63,7 +63,7 @@ func NewWith(cfg Config) (*gesso.App, error) {
 		Authenticator: authenticator(deps),
 		Middleware:    appMiddleware(),
 		ErrorMappers:  []gesso.ErrorMapper{db.Errors(classify, merged(constraints()))},
-		OpenAPI:       &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json"},
+		OpenAPI:       &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json", UI: "/swagger"},
 		AccessLog:     true,
 		Health:        &gesso.Health{Checks: map[string]func(context.Context) error{"database": d.PingContext}},
 	}, append([]gesso.Module{schema{dsn: cfg.Database}}, modules(deps)...)...)

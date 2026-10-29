@@ -29,6 +29,10 @@ type OpenAPIConfig struct {
 	// it empty to generate only, and register ServeOpenAPI where it belongs —
 	// behind the guards of an admin surface, say.
 	Path string
+	// UI, when set, serves Swagger UI there, under BasePath, with the document in
+	// the page; ServeSwaggerUI does it behind guards. Its script and stylesheet
+	// come from jsdelivr, pinned and checked by their hashes.
+	UI string
 }
 
 // ServeOpenAPI answers with the app's OpenAPI document, wherever a router
@@ -93,6 +97,7 @@ func (h *typed[In, Out]) describe() operation {
 
 type docRoute struct {
 	method, pattern string
+	module          string // docs.Module
 	guarded         bool
 	op              operation
 }
@@ -112,6 +117,9 @@ func (a *App) buildOpenAPI() error {
 	a.openapi = doc
 	if oc.Path != "" {
 		a.register("GET "+a.basePath+oc.Path, openAPIHandler{app: a})
+	}
+	if oc.UI != "" {
+		a.register("GET "+a.basePath+oc.UI, swaggerHandler{app: a})
 	}
 	return nil
 }
@@ -251,7 +259,7 @@ func (a *App) document(oc OpenAPIConfig) ([]byte, error) {
 			continue
 		}
 		op := g.operation(rt, path, ids)
-		if rt.guarded {
+		if op.Security != nil && len(*op.Security) > 0 {
 			secured = true
 		}
 		if doc.Paths[path] == nil {
@@ -318,13 +326,13 @@ func (g *schemaGen) operation(rt docRoute, path string, ids map[string]int) *oaO
 	if n := ids[id]; n > 1 {
 		id += "_" + strconv.Itoa(n)
 	}
-	summary := o.cfg.summary
-	if summary == "" {
-		summary = rt.method + " " + path
+	tags := o.cfg.tags
+	if pkg, _, ok := strings.Cut(rt.module, "."); ok && len(tags) == 0 {
+		tags = []string{pkg}
 	}
 	public := []map[string][]string{}
 	op := &oaOp{
-		OperationID: id, Summary: summary, Security: &public, Description: o.cfg.description, Tags: o.cfg.tags,
+		OperationID: id, Summary: o.cfg.summary, Security: &public, Description: o.cfg.description, Tags: tags,
 		Responses: map[string]oaResponse{"default": problemResponse("An error, as RFC 9457 problem details")},
 	}
 	if o.plan != nil {

@@ -101,7 +101,7 @@ func TestOpenAPIDocument(t *testing.T) {
 	}
 
 	put := doc.Paths["/notes/{id}"]["put"]
-	if put.Security == nil || len(*put.Security) != 1 || put.Summary != "PUT /notes/{id}" || put.Responses["401"].Description == "" || put.RequestBody == nil {
+	if put.Security == nil || len(*put.Security) != 1 || put.Summary != "" || len(put.Tags) != 1 || put.Tags[0] != "gesso" || put.Responses["401"].Description == "" || put.RequestBody == nil {
 		t.Fatalf("put: %+v", put)
 	}
 	body := doc.Components.Schemas[strings.TrimPrefix(put.RequestBody.Content["application/json"].Schema.Ref, "#/components/schemas/")]

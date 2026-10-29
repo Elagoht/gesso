@@ -127,7 +127,7 @@ func (r *Router) Handle(method, pattern string, h http.Handler) {
 		}
 		h = bound
 		if d, ok := bound.(describer); ok {
-			r.app.docs = append(r.app.docs, docRoute{method: method, pattern: full, guarded: len(r.guards) > 0, op: d.describe()})
+			r.app.docs = append(r.app.docs, docRoute{method: method, pattern: full, module: r.app.registering, guarded: len(r.guards) > 0, op: d.describe()})
 		}
 	}
 	r.app.noteRoute(method, full, r.guards, h)

@@ -3,6 +3,20 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## Unreleased
+
+- **Swagger UI**: `OpenAPIConfig.UI` serves it at a path, `gesso.ServeSwaggerUI()`
+  behind guards. `gesso new` turns it on at `/swagger`; an app from v0.11 adds
+  `UI: "/swagger"` to its `OpenAPIConfig`.
+- **Fix**: the OpenAPI document left out `components.securitySchemes` when every
+  guard was given to `Handle` (`gesso.Guards(...)`), not to a router — the
+  operations named a `bearer` scheme that did not exist.
+- **OpenAPI operations are tagged by their module** (`auth`, `docs` …) unless
+  `gesso.Tags` says otherwise, and carry no summary unless `gesso.Summary` gives
+  one — it used to repeat the method and path.
+- **No made-up module names in the CLI**: `gesso new`, `add auth` and help say
+  `<name>`, `<field>:<type>`. `add module -dialect` shows its real default.
+
 ## v0.11.0 — 2026-10-29
 
 - **`gesso add auth` is a users table, nothing else**: no `-users` flag, no

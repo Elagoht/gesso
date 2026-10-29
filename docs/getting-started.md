@@ -26,7 +26,7 @@ beside it.
 | File | What it is |
 | --- | --- |
 | `main.go` | `gesso.Main(api.New)`: the environment file, then serve until SIGINT or SIGTERM, or run a command |
-| `internal/api/api.go` | `New` reads `DATABASE_URL` and `BASE_PATH`; opens the database, migrates it as the app starts, serves `/openapi.json`, adds the `migrate` command |
+| `internal/api/api.go` | `New` reads `DATABASE_URL` and `BASE_PATH`; opens the database, migrates it as the app starts, serves `/openapi.json` and Swagger UI at `/swagger`, adds the `migrate` command |
 | `internal/api/register.go` | the lists `gesso add` adds to: modules, migrations, gesso's own tables, commands, constraints |
 | `internal/api/api_test.go` | starts the app on an empty database |
 
@@ -106,6 +106,8 @@ curl -X POST localhost:8080/notes -H 'content-type: application/json' \
 curl localhost:8080/notes
 curl localhost:8080/openapi.json
 ```
+
+and open <http://localhost:8080/swagger> to try the endpoints in a browser.
 
 The app migrates the database as it starts; to look or step back:
 

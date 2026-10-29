@@ -446,7 +446,11 @@ ClientAddr comes from 127.0.0.1, so an app that trusts loopback trusts it.
   validate rules, outputs, statuses, guards) when `Config.OpenAPI` is set. It is
   served only where the application says: `OpenAPIConfig.Path` publishes it to
   anyone, `gesso.ServeOpenAPI()` registers it on a router behind its guards (an
-  admin surface). A request body is `required` only when one of its fields is,
+  admin surface). `OpenAPIConfig.UI` and `gesso.ServeSwaggerUI()` do the same for
+  Swagger UI (2026-10-29), the document inlined in the page, its assets from
+  jsdelivr pinned with SRI hashes — no megabytes of JavaScript in the module.
+  `components.securitySchemes` is written when any operation asks for bearer,
+  router or Handle guards alike. A request body is `required` only when one of its fields is,
   since an empty body is accepted as none. The base path goes in `servers`; `{x...}`
   becomes `{x}`; subtree patterns and plain handlers are left out (they declare
   nothing). Generic type names drop their package paths (`Page_Note`), and names

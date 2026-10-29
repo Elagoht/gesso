@@ -185,3 +185,29 @@ Config.Middleware → Use → authenticate → guards → decode + validate → 
 `gesso.Config.Authenticator` and `Config.Middleware` reach every module; a
 router's `Use`, `Authenticate`, `Guard` and `Intercept` reach its routes and
 groups. `r.Group("/admin", fn)` is a surface with a pipeline of its own.
+
+## OpenAPI and Swagger UI
+
+`Config.OpenAPI` makes an OpenAPI 3.1 document from the typed handlers: their
+inputs, validate rules, outputs, statuses and guards. `gesso new` turns it on:
+
+```go
+OpenAPI: &gesso.OpenAPIConfig{Title: "app", Version: "0.1.0", Path: "/openapi.json", UI: "/swagger"},
+```
+
+`Path` serves the document, `UI` serves Swagger UI with the document in the
+page; leave either empty to turn it off. Swagger UI's script and stylesheet come
+from jsdelivr, pinned and checked by hash. Its Authorize button takes the
+token `POST /auth/login` returns. To keep them behind guards, leave both empty
+and register them on a router:
+
+```go
+r.Group("/internal", func(g *gesso.Router) {
+    g.Guard(gesso.RequireRole("admin"))
+    g.Get("/openapi.json", gesso.ServeOpenAPI())
+    g.Get("/swagger", gesso.ServeSwaggerUI())
+})
+```
+
+`gesso.Summary`, `gesso.Description` and `gesso.Tags` on a `Handle` describe a
+route in the document.
