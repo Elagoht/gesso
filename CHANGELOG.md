@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## Unreleased
+## v0.13.0 — 2026-10-29
 
 The model writes the module, and the app writes almost nothing. This breaks
 v0.12 apps: make the project again with `gesso new`, `gesso add auth` and
