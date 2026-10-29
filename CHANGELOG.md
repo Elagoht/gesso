@@ -29,6 +29,11 @@ change.
 - **Languages**: `Config.Languages` translates field errors and problem
   details by Accept-Language; `gesso.Turkish` built in.
 - **storage/s3** and **cache/redis**, with the standard library only.
+- **Events across processes**: `queue.Publish` and `queue.Deliver` carry an
+  `events.Topic` through the queue, in the publisher's transaction.
+- `storage.Disk` holds keys to their exact spelling on a case-folding file
+  system (`ErrKeyCollides`); `Config.FormMemory`; a type's parse message is cut
+  at 100 characters.
 
 - **Uploads**: `form` tags read `multipart/form-data` (or a urlencoded form):
   `*gesso.File` and `[]*gesso.File`, typed by their first bytes, held to

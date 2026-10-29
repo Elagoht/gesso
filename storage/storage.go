@@ -4,8 +4,10 @@
 //
 // Storage holds bytes under keys. What a file is (its type, its owner, its
 // original name) the application records itself, in its database. Make keys
-// from your own ids, not a client's file name: on a case-insensitive file
-// system (macOS's, Windows's) Disk keeps "a.png" and "A.png" as one file.
+// from your own ids, not a client's file name. On a file system that does not
+// tell case apart (macOS's, Windows's) Disk still holds keys to their exact
+// spelling: "A.png" is not found where "a.png" is, and storing it beside one
+// is ErrKeyCollides rather than an overwrite.
 package storage
 
 import (
@@ -73,6 +75,9 @@ func ValidKey(key string) error {
 // reach outside it.
 type Disk struct {
 	root *os.Root
+	// folds is set on a file system that does not tell "a.png" from "A.png"
+	// (macOS's, Windows's): there, keys are held to their exact spelling.
+	folds bool
 }
 
 // NewDisk opens dir, creating it if needed. Close releases it.
@@ -84,7 +89,88 @@ func NewDisk(dir string) (*Disk, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Disk{root: root}, nil
+	folds, err := foldsCase(root)
+	if err != nil {
+		_ = root.Close()
+		return nil, err
+	}
+	return &Disk{root: root, folds: folds}, nil
+}
+
+// ErrKeyCollides is a Put whose key differs from a stored one only in case,
+// on a file system that would make them one file.
+var ErrKeyCollides = errors.New("storage: another key differs from this one only in case")
+
+// foldsCase reports whether root's file system treats names that differ only
+// in case as one.
+func foldsCase(root *os.Root) (bool, error) {
+	probe := fmt.Sprintf(".case-probe-%d", time.Now().UnixNano())
+	f, err := root.OpenFile(probe+"-x", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return false, err
+	}
+	_ = f.Close()
+	defer root.Remove(probe + "-x")
+	_, err = root.Stat(probe + "-X")
+	return err == nil, nil
+}
+
+// exact reports whether every segment of key exists spelled as key spells it.
+// On a case-folding file system only; elsewhere a name is its spelling.
+func (d *Disk) exact(key string) bool {
+	if !d.folds {
+		return true
+	}
+	dir := "."
+	for seg := range strings.SplitSeq(key, "/") {
+		entries, err := fs.ReadDir(d.root.FS(), dir)
+		if err != nil {
+			return false
+		}
+		found := false
+		for _, e := range entries {
+			if e.Name() == seg {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+		dir = path.Join(dir, seg)
+	}
+	return true
+}
+
+// collides reports whether key would land on a file or folder spelled
+// otherwise: on a case-folding file system, a part of it exists, but not as
+// key spells it.
+func (d *Disk) collides(key string) bool {
+	if !d.folds {
+		return false
+	}
+	dir := "."
+	for seg := range strings.SplitSeq(key, "/") {
+		entries, err := fs.ReadDir(d.root.FS(), dir)
+		if err != nil {
+			return false // the rest does not exist yet
+		}
+		next := ""
+		for _, e := range entries {
+			if e.Name() == seg {
+				next = seg
+				break
+			}
+			if strings.EqualFold(e.Name(), seg) {
+				return true
+			}
+		}
+		if next == "" {
+			return false
+		}
+		dir = path.Join(dir, seg)
+	}
+	return false
 }
 
 // Close releases the directory.
@@ -95,6 +181,9 @@ func (d *Disk) Close() error { return d.root.Close() }
 func (d *Disk) Put(ctx context.Context, key string, r io.Reader) (Object, error) {
 	if err := ValidKey(key); err != nil {
 		return Object{}, err
+	}
+	if d.collides(key) {
+		return Object{}, fmt.Errorf("%w: %q", ErrKeyCollides, key)
 	}
 	if dir := path.Dir(key); dir != "." {
 		if err := d.root.MkdirAll(dir, 0o750); err != nil {
@@ -124,6 +213,9 @@ func (d *Disk) Open(_ context.Context, key string) (io.ReadCloser, Object, error
 	if err := ValidKey(key); err != nil {
 		return nil, Object{}, err
 	}
+	if !d.exact(key) {
+		return nil, Object{}, fmt.Errorf("%w: %q", ErrNotFound, key)
+	}
 	f, err := d.root.Open(key)
 	if err != nil {
 		return nil, Object{}, notFound(err)
@@ -141,6 +233,9 @@ func (d *Disk) Stat(_ context.Context, key string) (Object, error) {
 	if err := ValidKey(key); err != nil {
 		return Object{}, err
 	}
+	if !d.exact(key) {
+		return Object{}, fmt.Errorf("%w: %q", ErrNotFound, key)
+	}
 	info, err := d.root.Stat(key)
 	if err != nil {
 		return Object{}, notFound(err)
@@ -155,6 +250,9 @@ func (d *Disk) Stat(_ context.Context, key string) (Object, error) {
 func (d *Disk) Delete(_ context.Context, key string) error {
 	if err := ValidKey(key); err != nil {
 		return err
+	}
+	if !d.exact(key) {
+		return nil // nothing spelled so: deleting another spelling's file would be wrong
 	}
 	if info, err := d.root.Stat(key); err == nil && info.IsDir() {
 		return nil

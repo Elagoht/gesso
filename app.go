@@ -30,6 +30,9 @@ type Config struct {
 	Addr string
 	// MaxBodyBytes caps a request body. Default 1 MiB.
 	MaxBodyBytes int64
+	// FormMemory is how much of a multipart upload is kept in memory per
+	// request; the rest goes to temporary files. Default 32 MiB.
+	FormMemory int64
 	// ShutdownTimeout bounds Run's graceful shutdown. Default 10s.
 	ShutdownTimeout time.Duration
 	// ReadTimeout bounds reading a request, its body included; WriteTimeout,
@@ -128,6 +131,9 @@ func New(cfg Config, modules ...Module) (*App, error) {
 	}
 	if cfg.MaxBodyBytes <= 0 {
 		cfg.MaxBodyBytes = defaultMaxBody
+	}
+	if cfg.FormMemory <= 0 {
+		cfg.FormMemory = formMemory
 	}
 	if cfg.ShutdownTimeout <= 0 {
 		cfg.ShutdownTimeout = 10 * time.Second

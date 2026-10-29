@@ -404,9 +404,12 @@ gap (a param tag nested in a body struct), all fixed. A released job keeps
 its attempt number and gains one allowed attempt, because a number given back
 would be reused and stop fencing.
 
-Known and left, in the docs: `storage.Disk` on a case-insensitive filesystem
-(macOS) maps `a.png` and `A.png` to one file; a field error from a type's
-UnmarshalText repeats that type's message to the client; forms are "simple"
+Closed since, in v0.9: `storage.Disk` on a case-folding file system (macOS's)
+holds keys to their exact spelling — another spelling is not found, and
+storing one beside it is ErrKeyCollides, never an overwrite; a type's own parse
+message is cut at 100 characters; the multipart memory per request is
+`Config.FormMemory`. Known and left, in the docs, because they are the
+deployment's, not gesso's: forms are "simple"
 requests a browser sends cross-site without preflight, harmless while gesso
 reads bearer tokens only, and never to be paired with a cookie Authenticator; a
 proxy in front that decodes %2F before routing could turn an escaped path value
@@ -605,9 +608,13 @@ and anything unexported.
 
 ## 15. Open questions
 
-- **Events across processes** are not `events`' job: it is in-process, and
-  across processes the queue is the transport — a subscriber enqueues in the
-  publisher's transaction, a worker in the other process handles.
+- **Events across processes**: `queue.Publish` enqueues an event in the
+  publisher's transaction, `queue.Deliver` hands it to the bus of the process
+  whose worker takes it — at least once, retried like a job. Workers delivering
+  one topic share its events (one consumer group); a service that wants every
+  event delivers from a queue of its own.
+- **Rate limits across replicas**: `ratelimit.NewSQL`, one table every replica
+  shares.
 - **CI** (`.github/workflows/ci.yml`): library (gofmt, vet, `-race`),
   integration against `postgres:18` and `mysql:8.4` services through
   `GESSO_POSTGRES_DSN` and `GESSO_MYSQL_DSN`, the CLI's generate-and-run tests

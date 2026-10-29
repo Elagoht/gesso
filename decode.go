@@ -226,7 +226,13 @@ func parserFor(t reflect.Type) (func(string) (reflect.Value, error), error) {
 		return func(s string) (reflect.Value, error) {
 			v := reflect.New(t)
 			if err := v.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
-				return v, parseError{"valid: " + err.Error()}
+				// The type's message may quote what the client sent: keep it
+				// short.
+				msg := err.Error()
+				if len(msg) > 100 {
+					msg = msg[:100] + "…"
+				}
+				return v, parseError{"valid: " + msg}
 			}
 			return v.Elem(), nil
 		}, nil
@@ -280,10 +286,10 @@ func parserFor(t reflect.Type) (func(string) (reflect.Value, error), error) {
 }
 
 // decode fills dst from r. Its error is an *Error ready to answer.
-func (p *inputPlan) decode(r *http.Request, dst reflect.Value, maxBody int64) error {
+func (p *inputPlan) decode(r *http.Request, dst reflect.Value, maxBody, formMem int64) error {
 	var fields []validate.FieldError
 	if len(p.form) > 0 {
-		if err := p.decodeForm(r, dst, maxBody); err != nil {
+		if err := p.decodeForm(r, dst, maxBody, formMem); err != nil {
 			return err
 		}
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Elagoht/gesso/clock"
 	"github.com/Elagoht/gesso/db"
+	"github.com/Elagoht/gesso/events"
 	"github.com/Elagoht/gesso/queue"
 	"github.com/Elagoht/gesso/queue/queuetest"
 )
@@ -247,5 +248,48 @@ func TestScheduleMisuse(t *testing.T) {
 			}()
 			define()
 		}()
+	}
+}
+
+type deletedEvent struct {
+	Slug string `json:"slug"`
+}
+
+var noteDeleted = events.Topic[deletedEvent]{Name: "notes.deleted"}
+
+// An event Published through the queue reaches another process's bus; a
+// subscriber that fails gets it again.
+func TestEventsThroughTheQueue(t *testing.T) {
+	ctx := context.Background()
+	clk := clock.NewManual(time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC))
+	q := queue.NewMemory(clk)
+	if _, err := queue.Publish(ctx, q, nil, noteDeleted, deletedEvent{Slug: "jam"}); err != nil {
+		t.Fatal(err)
+	}
+	bus := events.NewBus() // the other process's
+	var got []string
+	fail := true
+	noteDeleted.Subscribe(bus, func(_ context.Context, e deletedEvent) error {
+		got = append(got, e.Slug)
+		if fail {
+			fail = false
+			return errors.New("search index down")
+		}
+		return nil
+	})
+	w := queue.NewWorker(q, queue.WorkerOptions{Clock: clk, Backoff: time.Second, Logger: slog.New(slog.DiscardHandler)})
+	queue.Deliver(w, bus, noteDeleted)
+	if _, err := w.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(2 * time.Second)
+	if _, err := w.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "jam,jam" {
+		t.Fatalf("delivered %v: once, failed, then again", got)
+	}
+	if n, _ := w.RunOnce(ctx); n != 0 {
+		t.Fatal("delivered after it succeeded")
 	}
 }

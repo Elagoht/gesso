@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/Elagoht/gesso/date"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -261,5 +262,35 @@ func TestUnexportedEmbeddedParamTagsRefused(t *testing.T) {
 	}))
 	if err == nil || !strings.Contains(err.Error(), "is read from the body") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// Past FormMemory an upload goes to a temporary file, and is read the same.
+func TestFormMemory(t *testing.T) {
+	a := mustNew(t, Config{FormMemory: 1 << 10}, moduleFunc(func(r *Router) {
+		upload.Handle(r, func(_ context.Context, in uploadIn) (uploadOut, error) {
+			return uploadOut{Size: in.Avatar.Size, Type: in.Avatar.ContentType}, nil
+		}, MaxBodyBytes(64<<10))
+	}))
+	body, ctype := multipartBody(t, part{field: "title", data: []byte("x")},
+		part{field: "avatar", filename: "a.png", data: append(pngBytes[:8:8], make([]byte, 900)...)})
+	w := postForm(a, body, ctype)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"size":908`) || !strings.Contains(w.Body.String(), "image/png") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
+
+type dateQuery struct {
+	Day date.Date `query:"day"`
+}
+
+// A type's own parse error may quote the client's value: it is cut short.
+func TestParseMessagesAreShort(t *testing.T) {
+	a := mustNew(t, Config{}, moduleFunc(func(r *Router) {
+		r.Get("/d", Handle(func(context.Context, dateQuery) (Empty, error) { return Empty{}, nil }))
+	}))
+	w := send(a, "GET", "/d?day="+strings.Repeat("A", 300), nil)
+	if w.Code != 400 || strings.Contains(w.Body.String(), strings.Repeat("A", 150)) {
+		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }

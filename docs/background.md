@@ -45,8 +45,19 @@ err := NoteDeleted.Publish(ctx, bus, NoteDeletedEvent{Slug: slug}) // in notes
 ```
 
 `events.NewBus()` is passed to the modules that use it. Subscribers run in
-order inside `Publish`, and their errors come back to the publisher. Slow or
-must-not-be-lost work: the subscriber enqueues a queue job.
+order inside `Publish`, and their errors come back to the publisher.
+
+To another process, or past a crash, an event goes through the queue — written
+in the publisher's transaction, so it exists only if the data does:
+
+```go
+_, err := queue.Publish(ctx, q, tx, notes.NoteDeleted, notes.NoteDeletedEvent{Slug: slug})
+
+// in the other process
+queue.Deliver(w, bus, notes.NoteDeleted) // its worker hands each to bus
+```
+
+Delivery is at least once, retried like a job: subscribers must be idempotent.
 
 ## Locks
 

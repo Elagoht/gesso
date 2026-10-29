@@ -150,8 +150,7 @@ func parseSize(s string) (int64, error) {
 }
 
 const (
-	// formMemory is how much of a multipart form is kept in memory; the rest
-	// goes to temporary files.
+	// formMemory is Config.FormMemory's default.
 	formMemory = 32 << 20
 	// urlencodedMax bounds a urlencoded form, which is read whole into memory.
 	urlencodedMax = 1 << 20
@@ -162,7 +161,7 @@ func (p *inputPlan) hasFiles() bool {
 }
 
 // decodeForm fills the form fields of dst from r's body.
-func (p *inputPlan) decodeForm(r *http.Request, dst reflect.Value, maxBody int64) error {
+func (p *inputPlan) decodeForm(r *http.Request, dst reflect.Value, maxBody, formMem int64) error {
 	if r.Body == nil || r.Body == http.NoBody {
 		return nil
 	}
@@ -180,7 +179,7 @@ func (p *inputPlan) decodeForm(r *http.Request, dst reflect.Value, maxBody int64
 			maxBody = min(maxBody, urlencodedMax)
 		}
 		r.Body = http.MaxBytesReader(nil, r.Body, maxBody)
-		err = r.ParseMultipartForm(min(formMemory, maxBody))
+		err = r.ParseMultipartForm(min(formMem, maxBody))
 		if err == nil {
 			values, files = r.MultipartForm.Value, r.MultipartForm.File
 		}

@@ -75,6 +75,7 @@ type typed[In, Out any] struct {
 	plan  *inputPlan
 	errs  errorWriter
 	max   int64
+	form  int64 // how much of a multipart form is kept in memory
 	call  Call
 	icpts []Interceptor
 
@@ -104,7 +105,7 @@ func (h *typed[In, Out]) bind(app *App, rt route) (http.Handler, error) {
 		max = h.cfg.maxBody
 	}
 	return &typed[In, Out]{
-		fn: h.fn, cfg: h.cfg, plan: h.plan, errs: app.errs, max: max,
+		fn: h.fn, cfg: h.cfg, plan: h.plan, errs: app.errs, max: max, form: app.cfg.FormMemory,
 		call: Call{Method: rt.method, Pattern: rt.pattern}, icpts: rt.icpts, bound: true,
 	}, nil
 }
@@ -133,6 +134,7 @@ func (h *typed[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.err = h.prepare()
 			h.errs = errorWriter{logger: slog.Default()}
 			h.max = defaultMaxBody
+			h.form = formMemory
 			if h.cfg.maxBody > 0 {
 				h.max = h.cfg.maxBody
 			}
@@ -155,7 +157,7 @@ func (h *typed[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = r.MultipartForm.RemoveAll() // an upload's temporary files
 		}
 	}()
-	if err := h.plan.decode(r, reflect.ValueOf(&in).Elem(), h.max); err != nil {
+	if err := h.plan.decode(r, reflect.ValueOf(&in).Elem(), h.max, h.form); err != nil {
 		h.errs.write(w, r, err)
 		return
 	}
