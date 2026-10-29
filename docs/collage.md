@@ -10,7 +10,7 @@ endpoints both import:
 
 ```go
 api := gesso.NewRemote("http://api.internal:8080", nil)
-note, err := notes.GetNote.Call(ctx, api, notes.GetIn{Slug: slug}, gesso.Bearer(token))
+note, err := notes.GetNote.Call(ctx, api, models.ReqGetNote{Slug: slug}, gesso.Bearer(token))
 ```
 
 The token comes from the API's sign-in and lives in collage's session.
@@ -67,7 +67,7 @@ visitor, not the site:
 ```go
 // routes.go: pages.Notes(gesso.NewLocal(api))
 collage.Load(func(ctx context.Context, _ *collage.RenderContext) (notesView, error) {
-	list, err := notes.ListNotes.Call(ctx, api, notes.ListIn{Take: 50})
+	list, err := notes.ListNotes.Call(ctx, api, models.ReqListNotes{Take: 50})
 	return notesView{Notes: list}, err
 })
 ```

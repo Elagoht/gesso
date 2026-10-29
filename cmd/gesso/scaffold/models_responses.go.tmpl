@@ -1,0 +1,18 @@
+package models
+
+import (
+{{- if .UsesTime}}
+	"time"
+{{end}}
+{{- if .UsesDate}}
+	"github.com/Elagoht/gesso/date"
+{{- end}}
+)
+
+// Res{{.Entity}} is a {{.Entity}} as clients see it.
+type Res{{.Entity}} struct {
+	ID int64 `json:"id"`
+{{- range .Fields}}
+	{{.Go}} {{.Type}} `json:"{{.JSON}}"`
+{{- end}}
+}

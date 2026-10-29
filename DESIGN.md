@@ -81,20 +81,30 @@ thin layer for groups and middleware. No chi.
 ## 5. Layout
 
 ```
+main.go              // gesso.Main(api.New)
 internal/
+  api/api.go         // the database, the modules, migrations as it starts
   events/
     module.go        // New(Deps) *Module; Routes; optional Start/Stop
-    handler.go       // typed handlers
+    endpoints.go     // the module's Endpoints: Req in, Res out
+    handler.go       // typed handlers: a Req in, the service, a Res out
     service.go       // business rules; knows nothing of HTTP
     repository.go    // consumer-side interface + implementation
     queries.sql      // input to code generation
     queries.gen.go   // generated, never edited
-    models.go        // inputs, outputs, domain types
+    models/
+      models.go      // Event, as it is stored; Response() makes its Res
+      requests.go    // ReqCreateEvent, ReqUpdateEvent, ReqListEvents … (what clients send)
+      responses.go   // ResEvent … (what they get back)
     migrations/
-      0001_create_events.up.sql
-      0001_create_events.down.sql
-cmd/api/main.go
+      20261028153000_create_events.up.sql
+      20261028153000_create_events.down.sql
 ```
+
+Types a client sends are named `Req…`, types it gets back `Res…`, each kind in
+its own file of the module's `models` package (the user's convention, from their
+earlier backend's models/requests.go and models/responses.go); the stored
+record is apart from both, so a column can be added without showing it.
 
 ## 6. Dependency injection
 

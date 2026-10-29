@@ -171,17 +171,17 @@ func exercise(t *testing.T, d *sql.DB, dialect migrate.Dialect) {
 	at := time.Date(2026, 11, 1, 18, 0, 0, 0, time.UTC)
 	day := date.Date{Year: 2026, Month: time.November, Day: 1}
 	long := strings.Repeat("a long body ", 100)
-	a, err := r.Insert(ctx, CreateIn{Title: "Jam", Seats: 30, StartsAt: at, Public: true, Price: 9.5, Order: 3, Body: long, Day: day})
+	a, err := r.Insert(ctx, models.ReqCreateEvent{Title: "Jam", Seats: 30, StartsAt: at, Public: true, Price: 9.5, Order: 3, Body: long, Day: day})
 	if err != nil || a.ID == 0 {
 		t.Fatalf("insert: %+v %v", a, err)
 	}
-	b, _ := r.Insert(ctx, CreateIn{Title: "Talk", StartsAt: at, Day: day})
+	b, _ := r.Insert(ctx, models.ReqCreateEvent{Title: "Talk", StartsAt: at, Day: day})
 	got, err := r.ByID(ctx, a.ID)
 	if err != nil || got.Title != "Jam" || got.Seats != 30 || !got.StartsAt.Equal(at) || !got.Public || got.Price != 9.5 ||
 		got.Order != 3 || got.Body != long || got.Day != day {
 		t.Fatalf("by id: %+v %v", got, err)
 	}
-	in := UpdateIn{ID: a.ID, Title: "Jam 2", StartsAt: at, Order: 1, Body: "short", Day: day.AddDays(1)}
+	in := models.ReqUpdateEvent{ID: a.ID, Title: "Jam 2", StartsAt: at, Order: 1, Body: "short", Day: day.AddDays(1)}
 	if _, err := r.Update(ctx, in); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -191,7 +191,7 @@ func exercise(t *testing.T, d *sql.DB, dialect migrate.Dialect) {
 	if _, err := r.Update(ctx, in); err != nil {
 		t.Fatalf("an update that changes nothing still finds the row: %v", err)
 	}
-	if _, err := r.Update(ctx, UpdateIn{ID: 999_999, StartsAt: at, Day: day}); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := r.Update(ctx, models.ReqUpdateEvent{ID: 999_999, StartsAt: at, Day: day}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("update of a missing row: %v", err)
 	}
 	page, err := r.List(ctx, a.ID, 1)
@@ -200,16 +200,16 @@ func exercise(t *testing.T, d *sql.DB, dialect migrate.Dialect) {
 	}
 	// A patch writes what it sets — the keyword column, a date — and keeps
 	// the rest.
-	if err := r.Patch(ctx, PatchIn{ID: b.ID, Order: gesso.Some(int64(7)), Day: gesso.Some(day.AddDays(2))}); err != nil {
+	if err := r.Patch(ctx, models.ReqPatchEvent{ID: b.ID, Order: gesso.Some(int64(7)), Day: gesso.Some(day.AddDays(2))}); err != nil {
 		t.Fatalf("patch: %v", err)
 	}
 	if got, _ := r.ByID(ctx, b.ID); got.Order != 7 || got.Day != day.AddDays(2) || got.Title != "Talk" || !got.StartsAt.Equal(at) {
 		t.Fatalf("patched: %+v", got)
 	}
-	if err := r.Patch(ctx, PatchIn{ID: b.ID}); err != nil {
+	if err := r.Patch(ctx, models.ReqPatchEvent{ID: b.ID}); err != nil {
 		t.Fatalf("a patch that sets nothing still finds the row: %v", err)
 	}
-	if err := r.Patch(ctx, PatchIn{ID: 999_999, Title: gesso.Some("x")}); !errors.Is(err, sql.ErrNoRows) {
+	if err := r.Patch(ctx, models.ReqPatchEvent{ID: 999_999, Title: gesso.Some("x")}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("patch of a missing row: %v", err)
 	}
 	if err := r.Delete(ctx, a.ID); err != nil {
@@ -238,6 +238,8 @@ import (
 	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/date"
 	"github.com/Elagoht/gesso/migrate"
+
+	"example.com/app/internal/events/models"
 	_ "modernc.org/sqlite"
 )
 
@@ -270,6 +272,8 @@ import (
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/Elagoht/gesso/migrate"
+
+	"example.com/app/internal/events/models"
 )
 
 func TestRepositoryPostgres(t *testing.T) {
@@ -310,6 +314,8 @@ import (
 	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/date"
 	"github.com/Elagoht/gesso/migrate"
+
+	"example.com/app/internal/events/models"
 	"github.com/go-sql-driver/mysql"
 )
 

@@ -17,16 +17,34 @@ func (m *Module) Routes(r *gesso.Router) {
 A module that also has `Start(ctx) error` or `Stop(ctx) error` is started before
 the server listens and stopped after it has stopped.
 
+## A module's files
+
+```
+internal/notes/
+  module.go      New(Deps), Routes
+  endpoints.go   GetNote = gesso.Endpoint[models.ReqGetNote, models.ResNote]{…}
+  handler.go     a Req in, the service, a Res out
+  service.go     the rules; repository.go, the SQL
+  models/
+    models.go     Note — as it is stored; n.Response() is its ResNote
+    requests.go   ReqCreateNote, ReqGetNote, ReqListNotes … — what clients send
+    responses.go  ResNote … — what they get back
+```
+
+What a client sends is a `Req…`, what it gets back a `Res…`, in their own
+files; the stored record is a third type, so a column can be added to the
+table without showing it to anyone. `gesso add module` writes this layout.
+
 ## Typed handlers
 
 ```go
-type GetIn struct {
+type ReqGetNote struct {
 	Slug  string `path:"slug"`
 	Draft bool   `query:"draft"`
 	Lang  string `header:"Accept-Language"`
 }
 
-func (m *Module) get(ctx context.Context, in GetIn) (Note, error)
+func (m *Module) get(ctx context.Context, in models.ReqGetNote) (models.ResNote, error)
 ```
 
 Fields come from `path`, `query`, `header` tags, and the rest from the JSON body;
@@ -42,7 +60,7 @@ no file field, `application/x-www-form-urlencoded` (at most 1 MiB) — instead o
 JSON:
 
 ```go
-type AvatarIn struct {
+type ReqSetAvatar struct {
 	UserID int64         `path:"id"`
 	Title  string        `form:"title" validate:"max=100"`
 	Image  *gesso.File   `form:"image" accept:"image/png,image/jpeg" maxsize:"2MiB" validate:"required"`
@@ -65,7 +83,7 @@ data)` makes a file to send.
 with a value — a PATCH needs all three:
 
 ```go
-type PatchIn struct {
+type ReqPatchNote struct {
 	ID    int64                  `path:"id"`
 	Title gesso.Optional[string] `json:"title,omitzero" validate:"notnull,max=200"`
 	Due   gesso.Optional[date.Date] `json:"due,omitzero"`   // null clears it
@@ -84,7 +102,7 @@ A list answers `gesso.Page[T]` — `items` and the `next` cursor — and reads t
 cursor back:
 
 ```go
-type ListIn struct {
+type ReqListNotes struct {
 	After string `query:"after"`
 	Take  int    `query:"take" default:"20" validate:"min=1,max=100"`
 }
@@ -104,7 +122,7 @@ A handler answers a file with `*gesso.Download` — `Body`, `ContentType`,
 ranges and If-Modified-Since. Server-sent events are `gesso.SSE`:
 
 ```go
-func (m *Module) watch(ctx context.Context, in WatchIn) (*gesso.Stream, error) {
+func (m *Module) watch(ctx context.Context, in models.ReqWatchNotes) (*gesso.Stream, error) {
 	return gesso.SSE(func(ctx context.Context, send func(Note) error) error {
 		for n := range m.svc.Changes(ctx) {
 			if err := send(n); err != nil {
@@ -124,7 +142,7 @@ a change it has not seen with the ETag the client read:
 
 ```go
 if err := gesso.IfMatch(ctx, gesso.ETagOf(current)); err != nil {
-	return Note{}, err // 412
+	return models.ResNote{}, err // 412
 }
 ```
 
@@ -133,10 +151,10 @@ if err := gesso.IfMatch(ctx, gesso.ETagOf(current)); err != nil {
 An `Endpoint` declares a route once, so the server and a caller share its types:
 
 ```go
-var GetNote = gesso.Endpoint[GetIn, Note]{Method: "GET", Pattern: "/notes/{slug}"}
+var GetNote = gesso.Endpoint[models.ReqGetNote, models.ResNote]{Method: "GET", Pattern: "/notes/{slug}"}
 
 GetNote.Handle(r, m.get)                                          // the server
-note, err := GetNote.Call(ctx, gesso.NewRemote(url, nil), GetIn{Slug: "jam"}) // a caller
+note, err := GetNote.Call(ctx, gesso.NewRemote(url, nil), models.ReqGetNote{Slug: "jam"}) // a caller
 ```
 
 `gesso.NewLocal(app)` calls the app in the same process through its whole

@@ -17,6 +17,7 @@ import (
 	"github.com/Elagoht/gesso/db"
 	"github.com/Elagoht/gesso/gessotest"
 	"github.com/Elagoht/gesso/integration/notes"
+	"github.com/Elagoht/gesso/integration/notes/models"
 	"github.com/Elagoht/gesso/migrate"
 	"github.com/Elagoht/gesso/token"
 	"github.com/Elagoht/gesso/token/tokentest"
@@ -68,25 +69,25 @@ func TestNotesEndToEnd(t *testing.T) {
 	tx := gessotest.Tx(t, migrated(t))
 	c := notesApp(t, tx)
 
-	res := c.Post("/api/notes", gessotest.JSON(notes.CreateIn{Slug: "jam", Title: "Game jam"})).ExpectStatus(201)
-	created := gessotest.Decode[notes.Note](res)
+	res := c.Post("/api/notes", gessotest.JSON(models.ReqCreateNote{Slug: "jam", Title: "Game jam"})).ExpectStatus(201)
+	created := gessotest.Decode[models.ResNote](res)
 	if created.ID == 0 || created.Slug != "jam" {
 		t.Fatalf("got %+v", created)
 	}
 
-	got := gessotest.Decode[notes.Note](c.Get("/api/notes/jam").ExpectStatus(200))
+	got := gessotest.Decode[models.ResNote](c.Get("/api/notes/jam").ExpectStatus(200))
 	if got != created {
 		t.Fatalf("got %+v, want %+v", got, created)
 	}
 
 	c.Get("/api/notes/nope").ExpectProblem(404, "not_found")
 
-	p := c.Post("/api/notes", gessotest.JSON(notes.CreateIn{Slug: "jam", Title: "Again"})).ExpectProblem(409, "conflict")
+	p := c.Post("/api/notes", gessotest.JSON(models.ReqCreateNote{Slug: "jam", Title: "Again"})).ExpectProblem(409, "conflict")
 	if len(p.Errors) != 1 || p.Errors[0].Field != "slug" || p.Errors[0].Code != "unique" {
 		t.Fatalf("a duplicate names its field: %+v", p)
 	}
 
-	p = c.Post("/api/notes", gessotest.JSON(notes.CreateIn{})).ExpectProblem(400, "invalid_input")
+	p = c.Post("/api/notes", gessotest.JSON(models.ReqCreateNote{})).ExpectProblem(400, "invalid_input")
 	if len(p.Errors) != 2 {
 		t.Fatalf("got %+v", p)
 	}
@@ -98,16 +99,16 @@ func TestBatchIsAllOrNoneInsideATestTransaction(t *testing.T) {
 
 	// The second note collides with the first: the service's InTx, nested in the
 	// test's transaction as a savepoint, rolls the whole batch back.
-	c.Post("/api/notes/batch", gessotest.JSON(notes.BatchIn{Notes: []notes.CreateIn{
+	c.Post("/api/notes/batch", gessotest.JSON(models.ReqBatchNotes{Notes: []models.ReqCreateNote{
 		{Slug: "a", Title: "A"}, {Slug: "a", Title: "A again"},
 	}})).ExpectProblem(409, "conflict")
 	c.Get("/api/notes/a").ExpectProblem(404, "not_found")
 
 	// The test's transaction is still usable after the inner rollback.
-	res := c.Post("/api/notes/batch", gessotest.JSON(notes.BatchIn{Notes: []notes.CreateIn{
+	res := c.Post("/api/notes/batch", gessotest.JSON(models.ReqBatchNotes{Notes: []models.ReqCreateNote{
 		{Slug: "a", Title: "A"}, {Slug: "b", Title: "B"},
 	}})).ExpectStatus(201)
-	if n := len(gessotest.Decode[[]notes.Note](res)); n != 2 {
+	if n := len(gessotest.Decode[[]models.ResNote](res)); n != 2 {
 		t.Fatalf("got %d notes", n)
 	}
 }
@@ -116,7 +117,7 @@ func TestTestTransactionRollsBack(t *testing.T) {
 	d := migrated(t)
 	t.Run("writes", func(t *testing.T) {
 		c := notesApp(t, gessotest.Tx(t, d))
-		c.Post("/api/notes", gessotest.JSON(notes.CreateIn{Slug: "gone", Title: "Gone"})).ExpectStatus(201)
+		c.Post("/api/notes", gessotest.JSON(models.ReqCreateNote{Slug: "gone", Title: "Gone"})).ExpectStatus(201)
 	})
 	var n int
 	if err := d.QueryRow("SELECT COUNT(*) FROM notes").Scan(&n); err != nil || n != 0 {
@@ -333,19 +334,19 @@ func TestNotesAcrossProcesses(t *testing.T) {
 	api := gesso.NewRemote(srv.URL+"/api", srv.Client())
 	ctx := context.Background()
 
-	created, err := notes.CreateNote.Call(ctx, api, notes.CreateIn{Slug: "jam", Title: "Game jam"})
+	created, err := notes.CreateNote.Call(ctx, api, models.ReqCreateNote{Slug: "jam", Title: "Game jam"})
 	if err != nil || created.ID == 0 {
 		t.Fatalf("got %+v %v", created, err)
 	}
-	got, err := notes.GetNote.Call(ctx, api, notes.GetIn{Slug: "jam"})
+	got, err := notes.GetNote.Call(ctx, api, models.ReqGetNote{Slug: "jam"})
 	if err != nil || got != created {
 		t.Fatalf("got %+v %v", got, err)
 	}
-	_, err = notes.CreateNote.Call(ctx, api, notes.CreateIn{Slug: "jam", Title: "Again"})
+	_, err = notes.CreateNote.Call(ctx, api, models.ReqCreateNote{Slug: "jam", Title: "Again"})
 	if fe := gesso.FieldErrors(err); len(fe) != 1 || fe[0].Field != "slug" {
 		t.Fatalf("a form gets its field errors across the wire: %v %+v", err, fe)
 	}
-	if _, err := notes.GetNote.Call(ctx, api, notes.GetIn{Slug: "nope"}); !errors.Is(err, gesso.ErrNotFound) {
+	if _, err := notes.GetNote.Call(ctx, api, models.ReqGetNote{Slug: "nope"}); !errors.Is(err, gesso.ErrNotFound) {
 		t.Fatalf("got %v", err)
 	}
 }

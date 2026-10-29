@@ -6,10 +6,10 @@ func TestCreateNote(t *testing.T) {
 	app := gessotest.New(t, gesso.Config{}, notes.New(notes.Deps{DB: tx}))
 	c := gessotest.NewClient(t, app)
 
-	res := c.Post("/notes", gessotest.JSON(notes.CreateIn{Title: "Jam"})).ExpectStatus(201)
-	got := gessotest.Decode[notes.Note](res)
+	res := c.Post("/notes", gessotest.JSON(models.ReqCreateNote{Title: "Jam"})).ExpectStatus(201)
+	got := gessotest.Decode[models.ResNote](res)
 
-	c.Post("/notes", gessotest.JSON(notes.CreateIn{})).ExpectProblem(400, "invalid_input")
+	c.Post("/notes", gessotest.JSON(models.ReqCreateNote{})).ExpectProblem(400, "invalid_input")
 }
 ```
 

@@ -4,13 +4,15 @@ import (
 	"context"
 
 	"github.com/Elagoht/gesso/db"
+
+	"github.com/Elagoht/gesso/integration/notes/models"
 )
 
 // Store is what the service needs from storage, declared here, where it is
 // used; a unit test hands the service a fake one.
 type Store interface {
-	Insert(ctx context.Context, in CreateIn) (Note, error)
-	BySlug(ctx context.Context, slug string) (Note, error)
+	Insert(ctx context.Context, in models.ReqCreateNote) (models.Note, error)
+	BySlug(ctx context.Context, slug string) (models.Note, error)
 }
 
 // Service is the notes business logic.
@@ -26,18 +28,18 @@ func NewService(d db.DB, store func(db.DB) Store) *Service {
 }
 
 // Get returns a note; sql.ErrNoRows reaches gesso as a 404.
-func (s *Service) Get(ctx context.Context, slug string) (Note, error) {
+func (s *Service) Get(ctx context.Context, slug string) (models.Note, error) {
 	return s.store(s.db).BySlug(ctx, slug)
 }
 
 // Create adds a note.
-func (s *Service) Create(ctx context.Context, in CreateIn) (Note, error) {
+func (s *Service) Create(ctx context.Context, in models.ReqCreateNote) (models.Note, error) {
 	return s.store(s.db).Insert(ctx, in)
 }
 
 // CreateAll adds every note or none.
-func (s *Service) CreateAll(ctx context.Context, in []CreateIn) ([]Note, error) {
-	var out []Note
+func (s *Service) CreateAll(ctx context.Context, in []models.ReqCreateNote) ([]models.Note, error) {
+	var out []models.Note
 	err := db.InTx(ctx, s.db, func(tx db.DB) error {
 		out = nil
 		store := s.store(tx)

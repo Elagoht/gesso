@@ -1,0 +1,28 @@
+// Package models holds the {{.Table}} module's types: {{.Entity}}, the record
+// as it is stored (models.go); the Req types, what clients send
+// (requests.go); and the Res types, what they get back (responses.go).
+package models
+
+import (
+{{- if .UsesTime}}
+	"time"
+{{end}}
+{{- if .UsesDate}}
+	"github.com/Elagoht/gesso/date"
+{{- end}}
+)
+
+// {{.Entity}} is one of the module's records, as it is stored. What clients
+// see of it is Res{{.Entity}}, which Response makes.
+type {{.Entity}} struct {
+	ID int64
+{{- range .Fields}}
+	{{.Go}} {{.Type}}
+{{- end}}
+}
+
+// Response is e as clients see it.
+func (e {{.Entity}}) Response() Res{{.Entity}} {
+	//lint:ignore S1016 field by field on purpose: a column added to {{.Entity}} is not shown until it is added here
+	return Res{{.Entity}}{ID: e.ID{{range .Fields}}, {{.Go}}: e.{{.Go}}{{end}}}
+}

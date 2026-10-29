@@ -5,6 +5,8 @@ import (
 	"database/sql"
 
 	"github.com/Elagoht/gesso/db"
+
+	"{{.Models}}"
 )
 
 type repository struct {
@@ -16,8 +18,8 @@ func newRepository(d db.DB) Store { return &repository{db: d} }
 
 const columns = "id{{range .Fields}}, {{lit .Ident}}{{end}}"
 
-func (r *repository) Insert(ctx context.Context, in CreateIn) ({{.Entity}}, error) {
-	e := {{.Entity}}{ {{- range .Fields}}{{.Go}}: in.{{.Go}}, {{end -}} }
+func (r *repository) Insert(ctx context.Context, in models.ReqCreate{{.Entity}}) (models.{{.Entity}}, error) {
+	e := models.{{.Entity}}{ {{- range .Fields}}{{.Go}}: in.{{.Go}}, {{end -}} }
 {{- if eq .Dialect "mysql"}}
 	res, err := r.db.ExecContext(ctx,
 		"INSERT INTO {{.Table}} ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}}{{end}}) VALUES ({{range $i, $f := .Fields}}{{if $i}}, {{end}}?{{end}})",
@@ -35,22 +37,22 @@ func (r *repository) Insert(ctx context.Context, in CreateIn) ({{.Entity}}, erro
 {{- end}}
 }
 
-func (r *repository) ByID(ctx context.Context, id int64) ({{.Entity}}, error) {
-	var e {{.Entity}}
+func (r *repository) ByID(ctx context.Context, id int64) (models.{{.Entity}}, error) {
+	var e models.{{.Entity}}
 	err := r.db.QueryRowContext(ctx, "SELECT "+columns+" FROM {{.Table}} WHERE id = {{ph .Dialect 1}}", id).
 		Scan(&e.ID{{range .Fields}}, &e.{{.Go}}{{end}})
 	return e, err
 }
 
-func (r *repository) List(ctx context.Context, afterID int64, take int) ([]{{.Entity}}, error) {
+func (r *repository) List(ctx context.Context, afterID int64, take int) ([]models.{{.Entity}}, error) {
 	rows, err := r.db.QueryContext(ctx, "SELECT "+columns+" FROM {{.Table}} WHERE id > {{ph .Dialect 1}} ORDER BY id LIMIT {{ph .Dialect 2}}", afterID, take)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []{{.Entity}}{}
+	out := []models.{{.Entity}}{}
 	for rows.Next() {
-		var e {{.Entity}}
+		var e models.{{.Entity}}
 		if err := rows.Scan(&e.ID{{range .Fields}}, &e.{{.Go}}{{end}}); err != nil {
 			return nil, err
 		}
@@ -59,8 +61,9 @@ func (r *repository) List(ctx context.Context, afterID int64, take int) ([]{{.En
 	return out, rows.Err()
 }
 
-func (r *repository) Update(ctx context.Context, in UpdateIn) ({{.Entity}}, error) {
-	e := {{.Entity}}{ID: in.ID{{range .Fields}}, {{.Go}}: in.{{.Go}}{{end}}}
+func (r *repository) Update(ctx context.Context, in models.ReqUpdate{{.Entity}}) (models.{{.Entity}}, error) {
+	//lint:ignore S1016 field by field on purpose: a request and the stored record change apart
+	e := models.{{.Entity}}{ID: in.ID{{range .Fields}}, {{.Go}}: in.{{.Go}}{{end}}}
 	res, err := r.db.ExecContext(ctx,
 		"UPDATE {{.Table}} SET {{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}} = {{ph $.Dialect (add $i 1)}}{{end}} WHERE id = {{ph .Dialect (add (len .Fields) 1)}}",
 		{{range .Fields}}in.{{.Go}}, {{end}}in.ID)
@@ -83,7 +86,7 @@ func (r *repository) Update(ctx context.Context, in UpdateIn) ({{.Entity}}, erro
 
 // Patch writes each field that is set and keeps the rest: one statement, the
 // same whatever is set — a field's flag says whether its value is taken.
-func (r *repository) Patch(ctx context.Context, in PatchIn) error {
+func (r *repository) Patch(ctx context.Context, in models.ReqPatch{{.Entity}}) error {
 	res, err := r.db.ExecContext(ctx,
 		"UPDATE {{.Table}} SET {{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}} = CASE WHEN {{ph $.Dialect (add (mul $i 2) 1)}} THEN {{ph $.Dialect (add (mul $i 2) 2)}} ELSE {{lit $f.Ident}} END{{end}} WHERE id = {{ph .Dialect (add (mul (len .Fields) 2) 1)}}",
 		{{range .Fields}}in.{{.Go}}.Set, in.{{.Go}}.Value, {{end}}in.ID)

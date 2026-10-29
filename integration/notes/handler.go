@@ -2,16 +2,25 @@ package notes
 
 import (
 	"context"
+
+	"github.com/Elagoht/gesso/integration/notes/models"
 )
 
-func (m *Module) get(ctx context.Context, in GetIn) (Note, error) {
-	return m.svc.Get(ctx, in.Slug)
+func (m *Module) get(ctx context.Context, in models.ReqGetNote) (models.ResNote, error) {
+	n, err := m.svc.Get(ctx, in.Slug)
+	return n.Response(), err
 }
 
-func (m *Module) create(ctx context.Context, in CreateIn) (Note, error) {
-	return m.svc.Create(ctx, in)
+func (m *Module) create(ctx context.Context, in models.ReqCreateNote) (models.ResNote, error) {
+	n, err := m.svc.Create(ctx, in)
+	return n.Response(), err
 }
 
-func (m *Module) batch(ctx context.Context, in BatchIn) ([]Note, error) {
-	return m.svc.CreateAll(ctx, in.Notes)
+func (m *Module) batch(ctx context.Context, in models.ReqBatchNotes) ([]models.ResNote, error) {
+	created, err := m.svc.CreateAll(ctx, in.Notes)
+	out := make([]models.ResNote, 0, len(created))
+	for _, n := range created {
+		out = append(out, n.Response())
+	}
+	return out, err
 }

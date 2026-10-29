@@ -37,18 +37,18 @@ nothing from it. The standard library and `golang.org/x/crypto`, nothing else.
   transactions.
 
 ```go
-type GetIn struct {
+type ReqGetNote struct {
     Slug string `path:"slug"`
 }
 
 // Declared once; the server and any caller share it.
-var GetNote = gesso.Endpoint[GetIn, Note]{Method: "GET", Pattern: "/notes/{slug}"}
+var GetNote = gesso.Endpoint[models.ReqGetNote, models.ResNote]{Method: "GET", Pattern: "/notes/{slug}"}
 
 func (m *Module) Routes(r *gesso.Router) {
     GetNote.Handle(r, m.get)
 }
 
-func (m *Module) get(ctx context.Context, in GetIn) (Note, error) {
+func (m *Module) get(ctx context.Context, in models.ReqGetNote) (models.ResNote, error) {
     return m.svc.Get(ctx, in.Slug) // sql.ErrNoRows answers 404
 }
 ```
@@ -61,7 +61,7 @@ err = app.Run()
 
 // From collage, in another process — typed, no code generated:
 api := gesso.NewRemote("http://api.internal:8081", nil)
-note, err := notes.GetNote.Call(ctx, api, notes.GetIn{Slug: "jam"}, gesso.Bearer(tok))
+note, err := notes.GetNote.Call(ctx, api, models.ReqGetNote{Slug: "jam"}, gesso.Bearer(tok))
 
 // Or inside collage, which passes the full path on:
 api, err := gesso.New(gesso.Config{BasePath: "/api"}, notes.New(notes.Deps{DB: pool}))
@@ -69,7 +69,7 @@ err = site.Handle("/api/", api)
 // …the collage-gesso plugin runs its lifecycle, in plugins.go:
 gesso.New(gesso.Options{App: api}) // collage-gesso, imported as gesso there
 // …and pages call it in the same process, with the same code:
-note, err := notes.GetNote.Call(ctx, gesso.NewLocal(api), notes.GetIn{Slug: "jam"}, gesso.Bearer(tok))
+note, err := notes.GetNote.Call(ctx, gesso.NewLocal(api), models.ReqGetNote{Slug: "jam"}, gesso.Bearer(tok))
 ```
 
 Mounted in collage, the [collage-gesso](https://github.com/Elagoht/collage-gesso)

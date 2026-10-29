@@ -22,6 +22,12 @@ As collage does it:
   `DATABASE_URL` and `BASE_PATH`, `api.NewWith(cfg)` takes a config (a collage
   site, a test); migrations run when the app starts, not when it is built, so
   `migrate status` sees the database as it is. `.env` is ignored in git.
+- **`gesso add module` names and places types as `Req…` and `Res…`**: a
+  module's `models` package holds `models.go` (the stored record, with
+  `Response()`), `requests.go` (`ReqCreateDoc`, `ReqUpdateDoc`, `ReqPatchDoc`,
+  `ReqListDocs`, `ReqDocID`) and `responses.go` (`ResDoc`); the endpoints are
+  in `endpoints.go`. *Change:* modules scaffolded before keep their `…In`
+  types; nothing rewrites them.
 
 ## v0.9.0 — 2026-10-29
 

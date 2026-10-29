@@ -3,7 +3,7 @@
 Rules go in a `validate` tag, with go-playground/validator's names:
 
 ```go
-type SignupIn struct {
+type ReqSignup struct {
 	Email    string   `json:"email" validate:"required,email"`
 	Username string   `json:"username" validate:"required,min=3,max=20,alphanum,lowercase"`
 	Age      int      `json:"age" validate:"gte=13"`
@@ -35,7 +35,7 @@ not when a request comes.
 What tags cannot say, a `Validate` method does; it runs after the tags pass:
 
 ```go
-func (in SignupIn) Validate(ctx context.Context) []validate.FieldError {
+func (in ReqSignup) Validate(ctx context.Context) []validate.FieldError {
 	if in.Username == "admin" {
 		return []validate.FieldError{{Field: "username", Code: "reserved", Message: "is reserved"}}
 	}

@@ -56,6 +56,7 @@ type moduleSpec struct {
 	UsesTime bool
 	UsesDate bool
 	IDSQL    string
+	Models   string // the import path of the module's models package
 }
 
 var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -90,19 +91,34 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	if _, err := os.Stat(target); err == nil {
 		return fmt.Errorf("%s already exists", target)
 	}
-	if err := os.MkdirAll(target, 0o755); err != nil {
+	mod, err := readModule(dir)
+	if err != nil {
 		return err
 	}
-	for _, name := range []string{"module.go", "models.go", "handler.go", "service.go", "repository.go", "service_test.go"} {
+	spec.Models = mod + "/" + filepath.ToSlash(filepath.Join(*parent, spec.Pkg, "models"))
+	if err := os.MkdirAll(filepath.Join(target, "models"), 0o755); err != nil {
+		return err
+	}
+	for _, f := range []struct{ name, tmpl string }{
+		{"module.go", "module.go.tmpl"},
+		{"endpoints.go", "endpoints.go.tmpl"},
+		{"handler.go", "handler.go.tmpl"},
+		{"service.go", "service.go.tmpl"},
+		{"repository.go", "repository.go.tmpl"},
+		{"service_test.go", "service_test.go.tmpl"},
+		{"models/models.go", "models_models.go.tmpl"},
+		{"models/requests.go", "models_requests.go.tmpl"},
+		{"models/responses.go", "models_responses.go.tmpl"},
+	} {
 		var buf bytes.Buffer
-		if err := scaffold.ExecuteTemplate(&buf, name+".tmpl", spec); err != nil {
+		if err := scaffold.ExecuteTemplate(&buf, f.tmpl, spec); err != nil {
 			return err
 		}
 		src, err := format.Source(buf.Bytes())
 		if err != nil {
-			return fmt.Errorf("%s: %w\n%s", name, err, buf.String())
+			return fmt.Errorf("%s: %w\n%s", f.name, err, buf.String())
 		}
-		p := filepath.Join(target, name)
+		p := filepath.Join(target, filepath.FromSlash(f.name))
 		if err := os.WriteFile(p, src, 0o644); err != nil {
 			return err
 		}
@@ -125,10 +141,6 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	fmt.Fprintf(stdout, "note: create, update and delete in %s are open to anyone until you guard them (see Routes)\n", spec.Pkg)
 	if appErr != nil {
 		return nil // no gesso new app here: wiring the module is the user's
-	}
-	mod, err := readModule(dir)
-	if err != nil {
-		return err
 	}
 	importPath := mod + "/" + filepath.ToSlash(filepath.Join(*parent, spec.Pkg))
 	wired, err := wireModule(app, spec.Pkg, importPath)
