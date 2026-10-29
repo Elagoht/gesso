@@ -1,0 +1,161 @@
+{{- $d := .Dialect -}}
+package {{.Pkg}}
+
+import (
+	"context"
+	"database/sql"
+
+	"github.com/Elagoht/gesso"
+	"github.com/Elagoht/gesso/db"
+
+	"{{.Models}}"
+)
+
+const columns{{.Entity}} = "id{{range .Fields}}, {{lit .Ident}}{{end}}"
+
+// Constraints answer a duplicate in a unique column as that field's error.
+var Constraints = map[string]string{ {{- range .ConstraintEntries}}"{{index . 0}}": "{{index . 1}}", {{end -}} }
+
+type repository struct {
+	db db.DB
+}
+
+func newRepository(d db.DB) *repository { return &repository{db: d} }
+
+func (r *repository) Insert(ctx context.Context, in models.ReqCreate{{.Entity}}) (models.{{.Entity}}, error) {
+	e := in.Record()
+{{- if eq $d "mysql"}}
+	res, err := r.db.ExecContext(ctx,
+		"INSERT INTO {{.Table}} ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}}{{end}}) VALUES ({{range $i, $f := .Fields}}{{if $i}}, {{end}}?{{end}})",
+		{{range .Fields}}e.{{.Go}}, {{end}})
+	if err != nil {
+		return e, err
+	}
+	e.ID, err = res.LastInsertId()
+	return e, err
+{{- else}}
+	err := r.db.QueryRowContext(ctx,
+		"INSERT INTO {{.Table}} ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}}{{end}}) VALUES ({{range $i, $f := .Fields}}{{if $i}}, {{end}}{{ph $d (add $i 1)}}{{end}}) RETURNING id",
+		{{range .Fields}}e.{{.Go}}, {{end}}).Scan(&e.ID)
+	return e, err
+{{- end}}
+}
+
+func (r *repository) ByKey(ctx context.Context, key {{.KeyGo}}) (models.{{.Entity}}, error) {
+	return r.by(ctx, "{{lit .KeyCol}}", key)
+}
+
+func (r *repository) by(ctx context.Context, col string, key {{.KeyGo}}) (models.{{.Entity}}, error) {
+	var e models.{{.Entity}}
+	err := r.db.QueryRowContext(ctx, "SELECT "+columns{{.Entity}}+" FROM {{.Table}} WHERE "+col+" = {{ph $d 1}}", key).
+		Scan(&e.ID{{range .Fields}}, &e.{{.Go}}{{end}})
+	return e, err
+}
+
+func (r *repository) byID(ctx context.Context, id int64) (models.{{.Entity}}, error) {
+	var e models.{{.Entity}}
+	err := r.db.QueryRowContext(ctx, "SELECT "+columns{{.Entity}}+" FROM {{.Table}} WHERE id = {{ph $d 1}}", id).
+		Scan(&e.ID{{range .Fields}}, &e.{{.Go}}{{end}})
+	return e, err
+}
+{{if .Sort}}
+type cursor{{.Entity}} struct {
+	Sort {{.SortType}} `json:"s"`
+	ID   int64 `json:"i"`
+}
+{{end}}
+// List is a page in {{if .Sort}}{{.Sort.Column}}{{else}}id{{end}} order, after the cursor in.After.
+func (r *repository) List(ctx context.Context, in models.ReqList{{.Plural}}) (gesso.Page[models.{{.Entity}}], error) {
+	var page gesso.Page[models.{{.Entity}}]
+{{- if .Sort}}
+	after, err := gesso.DecodeCursor[cursor{{.Entity}}](in.After)
+	if err != nil {
+		return page, err
+	}
+	var rows *sql.Rows
+	if in.After == "" {
+		rows, err = r.db.QueryContext(ctx, "SELECT "+columns{{.Entity}}+" FROM {{.Table}} ORDER BY {{lit .Sort.Ident}}, id LIMIT {{ph $d 1}}", in.Take+1)
+	} else {
+		rows, err = r.db.QueryContext(ctx, "SELECT "+columns{{.Entity}}+" FROM {{.Table}} WHERE {{lit .Sort.Ident}} > {{ph $d 1}} OR ({{lit .Sort.Ident}} = {{ph $d 2}} AND id > {{ph $d 3}}) ORDER BY {{lit .Sort.Ident}}, id LIMIT {{ph $d 4}}",
+			after.Sort, after.Sort, after.ID, in.Take+1)
+	}
+{{- else}}
+	afterID, err := gesso.DecodeCursor[int64](in.After)
+	if err != nil {
+		return page, err
+	}
+	rows, err := r.db.QueryContext(ctx, "SELECT "+columns{{.Entity}}+" FROM {{.Table}} WHERE id > {{ph $d 1}} ORDER BY id LIMIT {{ph $d 2}}", afterID, in.Take+1)
+{{- end}}
+	if err != nil {
+		return page, err
+	}
+	defer rows.Close()
+	page.Items = []models.{{.Entity}}{}
+	for rows.Next() {
+		var e models.{{.Entity}}
+		if err := rows.Scan(&e.ID{{range .Fields}}, &e.{{.Go}}{{end}}); err != nil {
+			return page, err
+		}
+		page.Items = append(page.Items, e)
+	}
+	if err := rows.Err(); err != nil {
+		return page, err
+	}
+	if len(page.Items) > in.Take {
+		page.Items = page.Items[:in.Take]
+		last := page.Items[in.Take-1]
+		page.Next = gesso.EncodeCursor({{if .Sort}}cursor{{.Entity}}{Sort: last.{{.Sort.Go}}, ID: last.ID}{{else}}last.ID{{end}})
+	}
+	return page, nil
+}
+
+// idOf is the id of the record at key; sql.ErrNoRows when there is none.
+func (r *repository) idOf(ctx context.Context, key {{.KeyGo}}) (int64, error) {
+{{- if .Key}}
+	var id int64
+	err := r.db.QueryRowContext(ctx, "SELECT id FROM {{.Table}} WHERE {{lit .KeyCol}} = {{ph $d 1}}", key).Scan(&id)
+	return id, err
+{{- else}}
+	err := r.db.QueryRowContext(ctx, "SELECT id FROM {{.Table}} WHERE id = {{ph $d 1}}", key).Scan(&key)
+	return key, err
+{{- end}}
+}
+
+func (r *repository) Update(ctx context.Context, in models.ReqUpdate{{.Entity}}) (models.{{.Entity}}, error) {
+	id, err := r.idOf(ctx, in.Key)
+	if err != nil {
+		return models.{{.Entity}}{}, err
+	}
+	e := in.Record()
+	if _, err := r.db.ExecContext(ctx,
+		"UPDATE {{.Table}} SET {{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}} = {{ph $d (add $i 1)}}{{end}} WHERE id = {{ph $d (add (len .Fields) 1)}}",
+		{{range .Fields}}e.{{.Go}}, {{end}}id); err != nil {
+		return models.{{.Entity}}{}, err
+	}
+	return r.byID(ctx, id)
+}
+
+// Patch writes each field that is set and keeps the rest, in one statement.
+func (r *repository) Patch(ctx context.Context, in models.ReqPatch{{.Entity}}) (models.{{.Entity}}, error) {
+	id, err := r.idOf(ctx, in.Key)
+	if err != nil {
+		return models.{{.Entity}}{}, err
+	}
+	if _, err := r.db.ExecContext(ctx,
+		"UPDATE {{.Table}} SET {{range $i, $f := .Fields}}{{if $i}}, {{end}}{{lit $f.Ident}} = CASE WHEN {{ph $d (add (add $i $i) 1)}} THEN {{ph $d (add (add $i $i) 2)}} ELSE {{lit $f.Ident}} END{{end}} WHERE id = {{ph $d (add (add (len .Fields) (len .Fields)) 1)}}",
+		{{range .Fields}}in.{{.Go}}.Set, in.{{.Go}}.Value, {{end}}id); err != nil {
+		return models.{{.Entity}}{}, err
+	}
+	return r.byID(ctx, id)
+}
+
+func (r *repository) Delete(ctx context.Context, key {{.KeyGo}}) error {
+	res, err := r.db.ExecContext(ctx, "DELETE FROM {{.Table}} WHERE {{lit .KeyCol}} = {{ph $d 1}}", key)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return err
+	}
+	return sql.ErrNoRows
+}

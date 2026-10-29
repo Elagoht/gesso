@@ -176,46 +176,50 @@ func exercise(t *testing.T, d *sql.DB, dialect migrate.Dialect) {
 		t.Fatalf("insert: %+v %v", a, err)
 	}
 	b, _ := r.Insert(ctx, models.ReqCreateEvent{Title: "Talk", StartsAt: at, Day: day})
-	got, err := r.ByID(ctx, a.ID)
+	got, err := r.ByKey(ctx, a.ID)
 	if err != nil || got.Title != "Jam" || got.Seats != 30 || !got.StartsAt.Equal(at) || !got.Public || got.Price != 9.5 ||
 		got.Order != 3 || got.Body != long || got.Day != day {
 		t.Fatalf("by id: %+v %v", got, err)
 	}
-	in := models.ReqUpdateEvent{ID: a.ID, Title: "Jam 2", StartsAt: at, Order: 1, Body: "short", Day: day.AddDays(1)}
+	in := models.ReqUpdateEvent{Key: a.ID, ReqCreateEvent: models.ReqCreateEvent{Title: "Jam 2", StartsAt: at, Order: 1, Body: "short", Day: day.AddDays(1)}}
 	if _, err := r.Update(ctx, in); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if got, _ := r.ByID(ctx, a.ID); got.Title != "Jam 2" || got.Order != 1 || got.Day != day.AddDays(1) || got.Public {
+	if got, _ := r.ByKey(ctx, a.ID); got.Title != "Jam 2" || got.Order != 1 || got.Day != day.AddDays(1) || got.Public {
 		t.Fatalf("updated: %+v", got)
 	}
 	if _, err := r.Update(ctx, in); err != nil {
 		t.Fatalf("an update that changes nothing still finds the row: %v", err)
 	}
-	if _, err := r.Update(ctx, models.ReqUpdateEvent{ID: 999_999, StartsAt: at, Day: day}); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := r.Update(ctx, models.ReqUpdateEvent{Key: 999_999, ReqCreateEvent: models.ReqCreateEvent{StartsAt: at, Day: day}}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("update of a missing row: %v", err)
 	}
-	page, err := r.List(ctx, a.ID, 1)
-	if err != nil || len(page) != 1 || page[0].ID != b.ID {
-		t.Fatalf("list after a: %+v %v", page, err)
+	page, err := r.List(ctx, models.ReqListEvents{Take: 1})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != a.ID || page.Next == "" {
+		t.Fatalf("first page: %+v %v", page, err)
+	}
+	page, err = r.List(ctx, models.ReqListEvents{After: page.Next, Take: 1})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != b.ID || page.Next != "" {
+		t.Fatalf("the page after: %+v %v", page, err)
 	}
 	// A patch writes what it sets — the keyword column, a date — and keeps
 	// the rest.
-	if err := r.Patch(ctx, models.ReqPatchEvent{ID: b.ID, Order: gesso.Some(int64(7)), Day: gesso.Some(day.AddDays(2))}); err != nil {
+	if _, err := r.Patch(ctx, models.ReqPatchEvent{Key: b.ID, Order: gesso.Some(int64(7)), Day: gesso.Some(day.AddDays(2))}); err != nil {
 		t.Fatalf("patch: %v", err)
 	}
-	if got, _ := r.ByID(ctx, b.ID); got.Order != 7 || got.Day != day.AddDays(2) || got.Title != "Talk" || !got.StartsAt.Equal(at) {
+	if got, _ := r.ByKey(ctx, b.ID); got.Order != 7 || got.Day != day.AddDays(2) || got.Title != "Talk" || !got.StartsAt.Equal(at) {
 		t.Fatalf("patched: %+v", got)
 	}
-	if err := r.Patch(ctx, models.ReqPatchEvent{ID: b.ID}); err != nil {
+	if _, err := r.Patch(ctx, models.ReqPatchEvent{Key: b.ID}); err != nil {
 		t.Fatalf("a patch that sets nothing still finds the row: %v", err)
 	}
-	if err := r.Patch(ctx, models.ReqPatchEvent{ID: 999_999, Title: gesso.Some("x")}); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := r.Patch(ctx, models.ReqPatchEvent{Key: 999_999, Title: gesso.Some("x")}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("patch of a missing row: %v", err)
 	}
 	if err := r.Delete(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ByID(ctx, a.ID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := r.ByKey(ctx, a.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("deleted: %v", err)
 	}
 	if err := r.Delete(ctx, a.ID); !errors.Is(err, sql.ErrNoRows) {

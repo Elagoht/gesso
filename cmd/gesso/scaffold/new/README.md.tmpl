@@ -3,8 +3,9 @@
 A JSON API on [gesso](https://github.com/Elagoht/gesso), on {{.DialectName}}.
 
 ```sh
-gesso add module notes -fields title:string,body:text
 gesso add auth        # sign-in, a table of users
+gesso add module notes -guard signedIn -field title:string:max=200 -field body:text
+gesso gen             # after changing a model in models/models.go
 gesso dev             # run it, restarted as files change
 go test ./...
 ```

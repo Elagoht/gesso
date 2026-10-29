@@ -83,19 +83,21 @@ thin layer for groups and middleware. No chi.
 ```
 main.go              // gesso.Main(api.New)
 internal/
-  api/api.go         // the database, the modules, migrations as it starts
+  api/api.go         // the database, migrations as it starts
+  api/register.go    // the lists gesso add writes to: modules, migrations, stores
   events/
     module.go        // New(Deps) *Module; Routes; optional Start/Stop
     endpoints.go     // the module's Endpoints: Req in, Res out
     handler.go       // typed handlers: a Req in, the service, a Res out
     service.go       // business rules; knows nothing of HTTP
-    repository.go    // consumer-side interface + implementation
+    repository.gen.go  // the SQL, generated from the model
     queries.sql      // input to code generation
     queries.gen.go   // generated, never edited
     models/
-      models.go      // Event, as it is stored; Response() makes its Res
-      requests.go    // ReqCreateEvent, ReqUpdateEvent, ReqListEvents … (what clients send)
-      responses.go   // ResEvent … (what they get back)
+      models.go      // Event, //gesso:table: as it is stored, and the source of the rest
+      requests.gen.go   // ReqCreateEvent, ReqUpdateEvent, ReqListEvents … (what clients send)
+      responses.gen.go  // ResEvent, Event.Response() (what they get back)
+      schema.gen.json   // what gesso gen compares the model with
     migrations/
       20261028153000_create_events.up.sql
       20261028153000_create_events.down.sql

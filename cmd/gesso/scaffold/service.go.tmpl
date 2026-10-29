@@ -8,71 +8,42 @@ import (
 	"{{.Models}}"
 )
 
-// Store is what the service needs from storage, declared here, where it is used;
-// a unit test hands the service a fake one.
+// Store is what the service needs; repository.gen.go is one, a test's fake another.
 type Store interface {
 	Insert(ctx context.Context, in models.ReqCreate{{.Entity}}) (models.{{.Entity}}, error)
-	ByID(ctx context.Context, id int64) (models.{{.Entity}}, error)
-	// List is up to take records with an id above afterID, by id.
-	List(ctx context.Context, afterID int64, take int) ([]models.{{.Entity}}, error)
+	ByKey(ctx context.Context, key {{.KeyGo}}) (models.{{.Entity}}, error)
+	List(ctx context.Context, in models.ReqList{{.Plural}}) (gesso.Page[models.{{.Entity}}], error)
 	Update(ctx context.Context, in models.ReqUpdate{{.Entity}}) (models.{{.Entity}}, error)
-	// Patch changes the fields in sets, and leaves the rest.
-	Patch(ctx context.Context, in models.ReqPatch{{.Entity}}) error
-	Delete(ctx context.Context, id int64) error
+	Patch(ctx context.Context, in models.ReqPatch{{.Entity}}) (models.{{.Entity}}, error)
+	Delete(ctx context.Context, key {{.KeyGo}}) error
 }
 
-// Service is the module's business logic.
 type Service struct {
 	store Store
 }
 
-// NewService runs on store.
 func NewService(store Store) *Service { return &Service{store: store} }
 
-// Create adds a {{.Entity}}.
 func (s *Service) Create(ctx context.Context, in models.ReqCreate{{.Entity}}) (models.{{.Entity}}, error) {
 	return s.store.Insert(ctx, in)
 }
 
-// Get returns a {{.Entity}}; sql.ErrNoRows reaches gesso as a 404.
-func (s *Service) Get(ctx context.Context, id int64) (models.{{.Entity}}, error) {
-	return s.store.ByID(ctx, id)
+func (s *Service) Get(ctx context.Context, key {{.KeyGo}}) (models.{{.Entity}}, error) {
+	return s.store.ByKey(ctx, key)
 }
 
-// List returns a page of {{.Table}}, oldest first, after the cursor.
-func (s *Service) List(ctx context.Context, after string, take int) (gesso.Page[models.{{.Entity}}], error) {
-	afterID, err := gesso.DecodeCursor[int64](after)
-	if err != nil {
-		return gesso.Page[models.{{.Entity}}]{}, err
-	}
-	// One more than the page: whether it comes says whether a page follows.
-	items, err := s.store.List(ctx, afterID, take+1)
-	if err != nil {
-		return gesso.Page[models.{{.Entity}}]{}, err
-	}
-	page := gesso.Page[models.{{.Entity}}]{Items: items}
-	if len(items) > take {
-		page.Items = items[:take]
-		page.Next = gesso.EncodeCursor(items[take-1].ID)
-	}
-	return page, nil
+func (s *Service) List(ctx context.Context, in models.ReqList{{.Plural}}) (gesso.Page[models.{{.Entity}}], error) {
+	return s.store.List(ctx, in)
 }
 
-// Patch changes some of a {{.Entity}} and returns it whole; sql.ErrNoRows
-// reaches gesso as a 404.
-func (s *Service) Patch(ctx context.Context, in models.ReqPatch{{.Entity}}) (models.{{.Entity}}, error) {
-	if err := s.store.Patch(ctx, in); err != nil {
-		return models.{{.Entity}}{}, err
-	}
-	return s.store.ByID(ctx, in.ID)
-}
-
-// Update replaces a {{.Entity}}; sql.ErrNoRows reaches gesso as a 404.
 func (s *Service) Update(ctx context.Context, in models.ReqUpdate{{.Entity}}) (models.{{.Entity}}, error) {
 	return s.store.Update(ctx, in)
 }
 
-// Delete removes a {{.Entity}}.
-func (s *Service) Delete(ctx context.Context, id int64) error {
-	return s.store.Delete(ctx, id)
+func (s *Service) Patch(ctx context.Context, in models.ReqPatch{{.Entity}}) (models.{{.Entity}}, error) {
+	return s.store.Patch(ctx, in)
+}
+
+func (s *Service) Delete(ctx context.Context, key {{.KeyGo}}) error {
+	return s.store.Delete(ctx, key)
 }

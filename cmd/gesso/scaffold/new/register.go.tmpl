@@ -40,5 +40,7 @@ func commands(d Deps) map[string]func(context.Context, []string, io.Writer) erro
 	return map[string]func(context.Context, []string, io.Writer) error{}
 }
 
-// constraints answer a violated database constraint as its field's error.
-var constraints = map[string]string{}
+// constraints answer a duplicate in a unique column as its field's error.
+func constraints() []map[string]string {
+	return []map[string]string{}
+}

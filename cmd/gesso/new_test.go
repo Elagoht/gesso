@@ -81,7 +81,8 @@ func TestNew(t *testing.T) {
 			if code := run([]string{"add", "auth"}, dir, &out, &errOut, fixedNow); code == 0 {
 				t.Fatal("auth is wired twice")
 			}
-			if code := run([]string{"add", "module", "posts", "-fields", "title:string", "-guard", "signedIn"}, dir, &out, &errOut, fixedNow); code != 0 {
+			if code := run([]string{"add", "module", "posts", "-guard", "signedIn",
+				"-field", "title:string:max=200", "-field", "slug:string:key,slug", "-field", "score:int:optional,sort", "-field", "day:date:optional"}, dir, &out, &errOut, fixedNow); code != 0 {
 				t.Fatalf("add auth makes the signedIn guard: %s", errOut.String())
 			}
 			reg, _ = os.ReadFile(filepath.Join(dir, "internal/api/register.go"))
@@ -112,6 +113,7 @@ func TestNew(t *testing.T) {
 				dsn = filepath.Join(t.TempDir(), "users.db")
 			}
 			if dsn != "" {
+				changeModel(t, dir, bin, dialect, dsn)
 				// On the app's own pool — on MySQL one that takes a statement
 				// per Exec — after its test started it on the same database.
 				cmd := exec.Command(bin, "users", "add", "ada", "-role", "admin")
@@ -268,6 +270,8 @@ func modules(d Deps) []gesso.Module {
 }
 
 func migrations() []fs.FS { return []fs.FS{} }
+
+func constraints() []map[string]string { return []map[string]string{} }
 `
 	got, err := wireModule([]byte(src), "notes", "example.com/app/internal/notes", true)
 	if err != nil {
@@ -328,5 +332,78 @@ func TestWireAuthRefuses(t *testing.T) {
 		if _, err := wireAuth([]byte(changed)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v, want %q", name, err, c.want)
 		}
+	}
+}
+
+// changeModel changes the posts model of a migrated app with rows in it — a new
+// field, a field made unique — and gen's migration applies over the rows; a
+// field taken away is refused, and gen is idempotent.
+func changeModel(t *testing.T, dir, bin, dialect, dsn string) {
+	t.Helper()
+	migrateUp := func() {
+		cmd := exec.Command(bin, "migrate", "up")
+		cmd.Env = append(os.Environ(), "DATABASE_URL="+dsn)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("migrate up: %v\n%s", err, out)
+		}
+	}
+	migrateUp()
+	driver := map[string]string{"sqlite": "sqlite", "postgres": "pgx", "mysql": "mysql"}[dialect]
+	d, err := sql.Open(driver, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.Exec("INSERT INTO posts (title, slug, score) VALUES ('One', 'one', 2), ('Two', 'two', 1)"); err != nil {
+		t.Fatal(err)
+	}
+	models := filepath.Join(dir, "internal/posts/models/models.go")
+	src, _ := os.ReadFile(models)
+	changed := strings.Replace(string(src), "`gesso:\"max=200\"`", "`gesso:\"max=200,unique\"`\n\tSubtitle string `gesso:\"optional,max=80\"`", 1)
+	if changed == string(src) {
+		t.Fatalf("the model is not as add module wrote it:\n%s", src)
+	}
+	if err := os.WriteFile(models, []byte(changed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := run([]string{"gen"}, dir, &out, &errOut, fixedNow); code != 0 {
+		t.Fatalf("gen: %s", errOut.String())
+	}
+	if !strings.Contains(out.String(), "posts_index_title_add_subtitle.up.sql") {
+		t.Fatalf("gen wrote no migration:\n%s", out.String())
+	}
+	out.Reset()
+	if code := run([]string{"gen"}, dir, &out, &errOut, fixedNow); code != 0 || out.Len() != 0 {
+		t.Fatalf("a second gen changed something: %d\n%s", code, out.String())
+	}
+	if code := run([]string{"gen", "-check"}, dir, &out, &errOut, fixedNow); code != 0 {
+		t.Fatalf("gen -check after gen: %s", out.String())
+	}
+	goIn(t, dir, "build", "-o", bin, ".")
+	migrateUp()
+	var n int
+	if err := d.QueryRow("SELECT COUNT(*) FROM posts WHERE subtitle = ''").Scan(&n); err != nil || n != 2 {
+		t.Fatalf("the rows that were there have the new column empty: %d %v", n, err)
+	}
+	_, err = d.Exec("INSERT INTO posts (title, slug, score, subtitle) VALUES ('One', 'uno', 3, '')")
+	if err == nil {
+		t.Fatal("title is unique now")
+	}
+	// The name the database's error gives is the one Constraints maps to the
+	// field, so a duplicate is a 409 on title, not a 500.
+	name := map[string]string{"sqlite": "posts.title", "postgres": "posts_title_unique", "mysql": "posts.posts_title_unique"}[dialect]
+	repo, _ := os.ReadFile(filepath.Join(dir, "internal/posts/repository.gen.go"))
+	if !strings.Contains(err.Error(), name) || !strings.Contains(string(repo), `"`+name+`": "title"`) {
+		t.Fatalf("the error names %q, Constraints:\n%s", err, repo)
+	}
+	if err := os.WriteFile(models, []byte(strings.Replace(changed, "\tSubtitle string `gesso:\"optional,max=80\"`\n", "", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := run([]string{"gen"}, dir, &out, &errOut, fixedNow); code == 0 || !strings.Contains(errOut.String(), "-drop") {
+		t.Fatalf("a field taken away is dropped without -drop: %s", errOut.String())
+	}
+	if err := os.WriteFile(models, []byte(changed), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

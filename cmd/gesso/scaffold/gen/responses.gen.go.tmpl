@@ -1,5 +1,5 @@
 package models
-
+{{if or .UsesTime .UsesDate}}
 import (
 {{- if .UsesTime}}
 	"time"
@@ -8,11 +8,14 @@ import (
 	"github.com/Elagoht/gesso/date"
 {{- end}}
 )
-
-// Res{{.Entity}} is a {{.Entity}} as clients see it.
+{{end}}
 type Res{{.Entity}} struct {
 	ID int64 `json:"id"`
 {{- range .Fields}}
 	{{.Go}} {{.Type}} `json:"{{.JSON}}"`
 {{- end}}
+}
+
+func (e {{.Entity}}) Response() Res{{.Entity}} {
+	return Res{{.Entity}}{ID: e.ID, {{range .Fields}}{{.Go}}: e.{{.Go}}, {{end}}}
 }

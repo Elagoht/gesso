@@ -17,74 +17,61 @@ import (
 	"unicode"
 )
 
-//go:embed scaffold/*.tmpl scaffold/new/*.tmpl
+//go:embed scaffold/*.tmpl scaffold/new/*.tmpl scaffold/gen/*.tmpl
 var scaffoldFS embed.FS
 
-var scaffold = template.Must(template.New("").Funcs(template.FuncMap{
-	"ph": func(dialect string, n int) string {
-		if dialect == "postgres" {
-			return fmt.Sprintf("$%d", n)
-		}
-		return "?"
-	},
-	"add": func(a, b int) int { return a + b },
-	"mul": func(a, b int) int { return a * b },
-	// lit is SQL written inside a Go string literal: a quoted identifier's
-	// double quotes escaped.
-	"lit": func(sql string) string { return strings.ReplaceAll(sql, `"`, `\"`) },
-}).ParseFS(scaffoldFS, "scaffold/*.tmpl"))
+var scaffold = template.Must(template.New("").ParseFS(scaffoldFS, "scaffold/*.tmpl"))
 
-// field is one column of the scaffolded entity.
-type field struct {
-	Go     string // Title
-	JSON   string // title
-	Column string // title
-	Ident  string // the column as SQL names it: title, or "order", quoted where it is a keyword
-	Type   string // string
-	Rule   string // required,max=255
-	Patch  string // notnull,max=255: the rules of a PATCH, where the field may be left out
-	SQL    string // TEXT NOT NULL
-}
-
+// moduleSpec is what the module's own files — written once, the user's after —
+// are rendered from.
 type moduleSpec struct {
-	Pkg      string // events
-	Entity   string // Event
-	Plural   string // Events
-	Table    string // events
-	Dialect  string
-	Fields   []field
-	UsesTime bool
-	UsesDate bool
-	IDSQL    string
-	Models   string // the import path of the module's models package
-	Guard    string // Admin: the guard on the writes, from Guards
-	Guards   string // the import path of internal/guards
+	*model
+	Fields []specField
+	Guard  string // Admin: the guard on the writes
+	Guards string // the import path of internal/guards
+	Sample string // a ReqCreate literal's fields for the service test
 }
+
+type specField struct {
+	mfield
+	Tag string // its gesso tag in models.go
+}
+
+// fieldFlags collects -field, which may be given again and again.
+type fieldFlags []string
+
+func (f *fieldFlags) String() string     { return strings.Join(*f, " ") }
+func (f *fieldFlags) Set(v string) error { *f = append(*f, v); return nil }
 
 var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 func addModule(args []string, dir string, stdout io.Writer, now func() time.Time) error {
 	fs := flag.NewFlagSet("add module", flag.ContinueOnError)
-	fields := fs.String("fields", "name:string", "the entity's fields, name:type, comma-separated; types: string, text, int, bool, float, time, date")
-	dialect := fs.String("dialect", "postgres", "the SQL the repository and migration are written in: postgres, sqlite or mysql (default: the app's, in a gesso new project)")
+	var fieldList fieldFlags
+	fs.Var(&fieldList, "field", "a field, name:type[:options and rules]: slug:string:key,slug,max=100; again for each")
+	short := fs.String("fields", "", "fields without options, comma-separated: title:string,body:text")
+	dialect := fs.String("dialect", "postgres", "postgres, sqlite or mysql (default: the app's)")
 	parent := fs.String("dir", "internal", "the folder the module's folder goes in")
 	entity := fs.String("entity", "", "the entity's Go name (default: the module name, singular, capitalised)")
-	guard := fs.String("guard", "", "a guard from internal/guards on create, update, patch and delete (gesso add guard <name> makes one)")
-	empty := fs.Bool("empty", false, "only the module's layout — module.go, endpoints.go, models/ — for endpoints that are not CRUD")
+	guard := fs.String("guard", "", "a guard from internal/guards on create, update, patch and delete")
+	empty := fs.Bool("empty", false, "only module.go, endpoints.go and models/, for endpoints that are not CRUD")
 	pos, err := parseFlags(fs, args)
-	if err != nil {
-		return err
-	}
-	fs.Visit(func(f *flag.Flag) {
-		if *empty && f.Name == "fields" {
-			err = errors.New("-empty takes no -fields: the module has no table")
-		}
-	})
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 {
 		return errors.New("add module takes one name: gesso add module events")
+	}
+	if *short != "" {
+		for part := range strings.SplitSeq(*short, ",") {
+			fieldList = append(fieldList, strings.TrimSpace(part))
+		}
+	}
+	if *empty && len(fieldList) > 0 {
+		return errors.New("-empty takes no fields: the module has no table")
+	}
+	if !*empty && len(fieldList) == 0 {
+		fieldList = fieldFlags{"name:string"}
 	}
 	app, appErr := os.ReadFile(filepath.Join(dir, *parent, "api", "api.go"))
 	regGo := filepath.Join(dir, *parent, "api", "register.go")
@@ -96,7 +83,7 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 			*dialect = d
 		}
 	}
-	spec, err := newSpec(pos[0], *entity, *fields, *dialect)
+	spec, err := newSpec(pos[0], *entity, fieldList, *dialect)
 	if err != nil {
 		return err
 	}
@@ -115,19 +102,13 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 		}
 		spec.Guards = mod + "/" + filepath.ToSlash(filepath.Join(*parent, "guards"))
 	}
-	if err := os.MkdirAll(filepath.Join(target, "models"), 0o755); err != nil {
-		return err
-	}
 	files := []struct{ name, tmpl string }{
 		{"module.go", "module.go.tmpl"},
 		{"endpoints.go", "endpoints.go.tmpl"},
 		{"handler.go", "handler.go.tmpl"},
 		{"service.go", "service.go.tmpl"},
-		{"repository.go", "repository.go.tmpl"},
 		{"service_test.go", "service_test.go.tmpl"},
 		{"models/models.go", "models_models.go.tmpl"},
-		{"models/requests.go", "models_requests.go.tmpl"},
-		{"models/responses.go", "models_responses.go.tmpl"},
 	}
 	if *empty {
 		files = []struct{ name, tmpl string }{
@@ -136,6 +117,9 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 			{"models/requests.go", "empty_requests.go.tmpl"},
 			{"models/responses.go", "empty_responses.go.tmpl"},
 		}
+	}
+	if err := os.MkdirAll(filepath.Join(target, "models"), 0o755); err != nil {
+		return err
 	}
 	for _, f := range files {
 		var buf bytes.Buffer
@@ -152,17 +136,11 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 		}
 		fmt.Fprintln(stdout, "created", p)
 	}
+	importPath := mod + "/" + filepath.ToSlash(filepath.Join(*parent, spec.Pkg))
 	if *empty {
-		return wire(reg, regErr, regGo, spec.Pkg, mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), false, stdout)
+		return wire(reg, regErr, regGo, spec.Pkg, importPath, false, stdout)
 	}
-	var up, down bytes.Buffer
-	if err := scaffold.ExecuteTemplate(&up, "up.sql.tmpl", spec); err != nil {
-		return err
-	}
-	if err := scaffold.ExecuteTemplate(&down, "down.sql.tmpl", spec); err != nil {
-		return err
-	}
-	paths, err := writeMigration(dir, filepath.Join(target, "migrations"), "create_"+spec.Table, up.String(), down.String(), now)
+	paths, err := genModel(filepath.Join(target, "models"), genModelOptions{root: dir, dialect: *dialect, now: now})
 	for _, p := range paths {
 		fmt.Fprintln(stdout, "created", p)
 	}
@@ -172,29 +150,29 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	if spec.Guard == "" {
 		fmt.Fprintf(stdout, "note: create, update and delete in %s are open to anyone: -guard <name> guards them\n", spec.Pkg)
 	}
-	return wire(reg, regErr, regGo, spec.Pkg, mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), true, stdout)
+	return wire(reg, regErr, regGo, spec.Pkg, importPath, true, stdout)
 }
 
 // wire adds the module to the app's register.go, when there is one.
-func wire(app []byte, appErr error, appGo, pkg, importPath string, withMigrations bool, stdout io.Writer) error {
-	if appErr != nil {
+func wire(reg []byte, regErr error, regGo, pkg, importPath string, crud bool, stdout io.Writer) error {
+	if regErr != nil {
 		return nil // no gesso new app here: wiring the module is the user's
 	}
-	wired, err := wireModule(app, pkg, importPath, withMigrations)
+	wired, err := wireModule(reg, pkg, importPath, crud)
 	if err != nil {
-		if withMigrations {
-			return fmt.Errorf("%s: %w; add %s.New and %s.Migrations to it by hand", appGo, err, pkg, pkg)
-		}
-		return fmt.Errorf("%s: %w; add %s.New to it by hand", appGo, err, pkg)
+		return fmt.Errorf("%s: %w; add %s.New to it by hand", regGo, err, pkg)
 	}
-	if err := os.WriteFile(appGo, wired, 0o644); err != nil {
+	if err := os.WriteFile(regGo, wired, 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, "wired", appGo)
+	fmt.Fprintln(stdout, "wired", regGo)
 	return nil
 }
 
-func newSpec(name, entity, fieldList, dialect string) (moduleSpec, error) {
+// newSpec parses the -field values: name:type[:options], type one of string,
+// text, int, bool, float, time, date; an optional time or date is a pointer,
+// for a column that takes NULL.
+func newSpec(name, entity string, fields []string, dialect string) (moduleSpec, error) {
 	if !identifier.MatchString(name) {
 		return moduleSpec{}, fmt.Errorf("a module name is lower case letters, digits and underscores: %q", name)
 	}
@@ -204,73 +182,60 @@ func newSpec(name, entity, fieldList, dialect string) (moduleSpec, error) {
 	if entity == "" {
 		entity = camel(strings.TrimSuffix(name, "s"))
 	}
-	spec := moduleSpec{
-		Pkg: strings.ReplaceAll(name, "_", ""), Entity: entity, Plural: camel(name), Table: name, Dialect: dialect,
-		IDSQL: map[string]string{
-			"postgres": "id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY",
-			"sqlite":   "id INTEGER PRIMARY KEY",
-			"mysql":    "id BIGINT AUTO_INCREMENT PRIMARY KEY",
-		}[dialect],
+	m := &model{Pkg: strings.ReplaceAll(name, "_", ""), Entity: entity, Table: name, Plural: camel(name), Dialect: dialect}
+	if m.Plural == m.Entity {
+		m.Plural += "List"
 	}
-	if spec.Plural == spec.Entity {
-		spec.Plural += "List"
-	}
+	spec := moduleSpec{model: m}
 	seen := map[string]bool{"id": true}
-	for part := range strings.SplitSeq(fieldList, ",") {
-		col, typ, ok := strings.Cut(strings.TrimSpace(part), ":")
+	for _, part := range fields {
+		col, rest, ok := strings.Cut(part, ":")
+		typ, opts, _ := strings.Cut(rest, ":")
 		if !ok || !identifier.MatchString(col) {
-			return moduleSpec{}, fmt.Errorf("a field is name:type, got %q", part)
+			return moduleSpec{}, fmt.Errorf("a field is name:type[:options], got %q", part)
 		}
 		if seen[col] {
 			return moduleSpec{}, fmt.Errorf("field %q given twice (id is always there)", col)
 		}
 		seen[col] = true
-		f, err := newField(col, typ, dialect)
-		if err != nil {
-			return moduleSpec{}, err
+		goType, ok := map[string]string{"string": "string", "text": "string", "int": "int64", "bool": "bool", "float": "float64", "time": "time.Time", "date": "date.Date"}[typ]
+		if !ok {
+			return moduleSpec{}, fmt.Errorf("field %q: unknown type %q (string, text, int, bool, float, time, date)", col, typ)
 		}
-		spec.UsesTime = spec.UsesTime || f.Type == "time.Time"
-		spec.UsesDate = spec.UsesDate || f.Type == "date.Date"
-		spec.Fields = append(spec.Fields, f)
+		tag := opts
+		if typ == "text" {
+			tag = strings.TrimSuffix("text,"+opts, ",")
+		}
+		if (typ == "time" || typ == "date") && strings.Contains(","+opts+",", ",optional,") {
+			goType = "*" + goType
+		}
+		f, err := newMField(camel(col), goType, tag)
+		if err != nil {
+			return moduleSpec{}, fmt.Errorf("field %q: %w", col, err)
+		}
+		f.Ident = quoteIdent(f.Column, dialect)
+		spec.Fields = append(spec.Fields, specField{f, tag})
+		m.Fields = append(m.Fields, f)
+	}
+	for i := range m.Fields {
+		f := &m.Fields[i]
+		if f.Key {
+			if m.Key != nil {
+				return moduleSpec{}, errors.New("two key fields")
+			}
+			m.Key = f
+			spec.Sample = f.Go + ": " + map[string]string{"string": `"a"`, "int": "1"}[f.Base]
+		}
+		if f.Sort && m.Sort != nil {
+			return moduleSpec{}, errors.New("two sort fields")
+		}
+		if f.Sort {
+			m.Sort = f
+		}
+		m.UsesTime = m.UsesTime || f.Base == "time"
+		m.UsesDate = m.UsesDate || f.Base == "date"
 	}
 	return spec, nil
-}
-
-func newField(col, typ, dialect string) (field, error) {
-	f := field{Go: camel(col), JSON: lowerCamel(col), Column: col, Ident: quoteIdent(col, dialect)}
-	sqlTypes := map[string]map[string]string{
-		"string": {"postgres": "TEXT", "sqlite": "TEXT", "mysql": "VARCHAR(255)"},
-		"text":   {"postgres": "TEXT", "sqlite": "TEXT", "mysql": "TEXT"},
-		"date":   {"postgres": "DATE", "sqlite": "DATE", "mysql": "DATE"},
-		"int":    {"postgres": "BIGINT", "sqlite": "INTEGER", "mysql": "BIGINT"},
-		"bool":   {"postgres": "BOOLEAN", "sqlite": "BOOLEAN", "mysql": "BOOLEAN"},
-		"float":  {"postgres": "DOUBLE PRECISION", "sqlite": "REAL", "mysql": "DOUBLE"},
-		"time":   {"postgres": "TIMESTAMPTZ", "sqlite": "TIMESTAMP", "mysql": "DATETIME(6)"},
-	}
-	types, ok := sqlTypes[typ]
-	if !ok {
-		return f, fmt.Errorf("field %q: unknown type %q (string, text, int, bool, float, time, date)", col, typ)
-	}
-	f.SQL = types[dialect] + " NOT NULL"
-	switch typ {
-	case "string":
-		f.Type, f.Rule = "string", "required,max=255"
-	case "text":
-		f.Type, f.Rule = "string", "required"
-	case "date":
-		f.Type, f.Rule = "date.Date", "required"
-	case "int":
-		f.Type = "int64"
-	case "bool":
-		f.Type = "bool"
-	case "float":
-		f.Type = "float64"
-	case "time":
-		f.Type, f.Rule = "time.Time", "required"
-	}
-	// A PATCH may leave a field out, but not clear it: the column is NOT NULL.
-	f.Patch = strings.TrimSuffix("notnull,"+strings.TrimPrefix(strings.TrimPrefix(f.Rule, "required"), ","), ",")
-	return f, nil
 }
 
 // keywords are words a column cannot be named in one of the dialects without

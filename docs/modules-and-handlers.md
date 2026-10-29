@@ -24,11 +24,11 @@ internal/notes/
   module.go      New(Deps), Routes
   endpoints.go   GetNote = gesso.Endpoint[models.ReqGetNote, models.ResNote]{…}
   handler.go     a Req in, the service, a Res out
-  service.go     the rules; repository.go, the SQL
+  service.go     the rules; repository.gen.go, the SQL
   models/
-    models.go     Note — as it is stored; n.Response() is its ResNote
-    requests.go   ReqCreateNote, ReqGetNote, ReqListNotes … — what clients send
-    responses.go  ResNote … — what they get back
+    models.go         Note, //gesso:table — the source gesso gen writes the rest from
+    requests.gen.go   ReqCreateNote, ReqNoteKey, ReqListNotes … — what clients send
+    responses.gen.go  ResNote, n.Response() — what they get back
 ```
 
 What a client sends is a `Req…`, what it gets back a `Res…`, in their own

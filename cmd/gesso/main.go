@@ -74,7 +74,7 @@ func run(args []string, dir string, stdout, stderr io.Writer, now func() time.Ti
 		}
 	case args[0] == "gen":
 		var stale int
-		stale, err = gen(args[1:], dir, stdout)
+		stale, err = gen(args[1:], dir, stdout, now)
 		if err == nil && stale > 0 {
 			code = 1
 		}

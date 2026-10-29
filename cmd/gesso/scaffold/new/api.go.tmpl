@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 
 	"github.com/Elagoht/gesso"
@@ -60,7 +61,7 @@ func NewWith(cfg Config) (*gesso.App, error) {
 		BasePath:      cfg.BasePath,
 		Logger:        cfg.Logger,
 		Authenticator: authenticator(deps),
-		ErrorMappers:  []gesso.ErrorMapper{db.Errors(classify, constraints)},
+		ErrorMappers:  []gesso.ErrorMapper{db.Errors(classify, merged(constraints()))},
 		OpenAPI:       &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json"},
 		AccessLog:     true,
 		Health:        &gesso.Health{Checks: map[string]func(context.Context) error{"database": d.PingContext}},
@@ -80,6 +81,14 @@ func NewWith(cfg Config) (*gesso.App, error) {
 		app.Command(name, run)
 	}
 	return app, nil
+}
+
+func merged(ms []map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range ms {
+		maps.Copy(out, m)
+	}
+	return out
 }
 
 // schema migrates the database as the app starts: the modules', then the stores'.

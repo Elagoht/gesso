@@ -13,6 +13,19 @@ change.
   `constraints` — moved out of `api.go`, which is setup only and much shorter.
   Generated files carry far fewer comments. An app from v0.10 moves its lists
   by hand, or is regenerated.
+- **The model is the source**: `models/models.go` holds a `//gesso:table`
+  struct with `gesso:"…"` tags; `gesso gen` writes `models/requests.gen.go`,
+  `models/responses.gen.go` and `repository.gen.go` from it, and a migration
+  for what changed since `models/schema.gen.json` — added columns, indexes,
+  uniques; a dropped column only with `-drop`, a type change never
+  (`-no-migration` after your own). Generated requests are `ReqCreateX`,
+  `ReqUpdateX`/`ReqPatchX` (a `Key` from the path), `ReqXKey`, `ReqListXs`;
+  the repository's methods `Insert`, `ByKey`, `List`, `Update`, `Patch`,
+  `Delete`, with `Constraints` for register.go.
+- **`-field name:type[:options and rules]`** on `add module`: `key` (the URL
+  names records by it), `unique` (a 409 on the field, every dialect),
+  `index`, `optional`, `sort`, and validation rules checked when the module is
+  made. `-fields` stays, the short form.
 - **Guards as in collage**: `gesso add guard <name>` writes
   `internal/guards/<name>.go`; `gesso add module … -guard <name>` guards the
   writes and refuses a guard that does not exist. `add auth` writes

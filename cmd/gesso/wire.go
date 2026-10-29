@@ -54,7 +54,9 @@ func wireModule(src []byte, pkg, importPath string, withMigrations bool) ([]byte
 	}
 	lists := []struct{ fn, entry string }{{"modules", pkg + ".New(" + pkg + ".Deps{DB: d.DB})"}}
 	if withMigrations {
-		lists = append(lists, struct{ fn, entry string }{"migrations", pkg + ".Migrations"})
+		lists = append(lists,
+			struct{ fn, entry string }{"migrations", pkg + ".Migrations"},
+			struct{ fn, entry string }{"constraints", pkg + ".Constraints"})
 	}
 	var inserts []insert
 	for _, l := range lists {

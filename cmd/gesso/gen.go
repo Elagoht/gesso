@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"golang.org/x/tools/go/packages"
@@ -66,9 +67,11 @@ var (
 	reserved    = []string{"ctx", "q", "out", "rows", "err", "item", "res"}
 )
 
-func gen(args []string, dir string, stdout io.Writer) (stale int, err error) {
+func gen(args []string, dir string, stdout io.Writer, now func() time.Time) (stale int, err error) {
 	flags := flag.NewFlagSet("gen", flag.ContinueOnError)
-	checkOnly := flags.Bool("check", false, "report stale or missing queries.gen.go files instead of writing them")
+	checkOnly := flags.Bool("check", false, "report stale or missing generated files instead of writing them")
+	drop := flags.Bool("drop", false, "let a field gone from a model drop its column, and its data")
+	noMigration := flags.Bool("no-migration", false, "write no migration for a model's change: you wrote it yourself")
 	pos, err := parseFlags(flags, args)
 	if err != nil {
 		return 0, err
@@ -77,7 +80,7 @@ func gen(args []string, dir string, stdout io.Writer) (stale int, err error) {
 	if len(roots) == 0 {
 		roots = []string{"."}
 	}
-	var files []string
+	var files, modelDirs []string
 	for _, root := range roots {
 		root = filepath.Join(dir, strings.TrimSuffix(root, "/..."))
 		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -90,17 +93,40 @@ func gen(args []string, dir string, stdout io.Writer) (stale int, err error) {
 			if !d.IsDir() && d.Name() == "queries.sql" {
 				files = append(files, p)
 			}
+			if d.IsDir() && d.Name() == "models" {
+				modelDirs = append(modelDirs, p)
+			}
 			return nil
 		})
 		if err != nil {
 			return 0, err
 		}
 	}
-	if len(files) == 0 {
-		return 0, errors.New("no queries.sql found")
+	var errs []error
+	models := 0
+	for _, md := range modelDirs {
+		paths, err := genModel(md, genModelOptions{root: dir, check: *checkOnly, drop: *drop, noMigration: *noMigration, now: now})
+		if errors.Is(err, errNoModel) {
+			continue
+		}
+		models++
+		for _, p := range paths {
+			rel, _ := filepath.Rel(dir, p)
+			if *checkOnly {
+				fmt.Fprintln(stdout, "stale", rel)
+				stale++
+			} else {
+				fmt.Fprintln(stdout, "generated", rel)
+			}
+		}
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(files) == 0 && models == 0 {
+		return 0, errors.New("no queries.sql or //gesso:table model found")
 	}
 	slices.Sort(files)
-	var errs []error
 	for _, f := range files {
 		src, err := generate(f)
 		if err != nil {

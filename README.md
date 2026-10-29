@@ -81,7 +81,7 @@ go install github.com/Elagoht/gesso/cmd/gesso@latest
 gesso new example.com/events -dialect postgres   # main, app wiring, a test
 cd events && go mod tidy
 gesso dev              # run it with .env; rebuilt and restarted as you edit
-gesso add module events -fields title:string,seats:int,starts_at:time,day:date,body:text
+gesso add module events -field title:string:max=200 -field slug:string:key,slug -field day:date:sort
                        # scaffolded under internal/, and wired into internal/api
 gesso add module search -empty   # the layout alone, for endpoints that are not CRUD
 gesso add auth         # sign-in from gesso/auth: a users table, a signedIn guard

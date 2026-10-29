@@ -38,6 +38,9 @@ that arrives after a newer one ran. A file whose first line is
 
 ## gesso gen
 
+A module's model (`models/models.go`, `//gesso:table`) is generated from: see
+[Getting started](getting-started.md). For queries of your own:
+
 ```sql
 -- gesso: dialect postgres
 

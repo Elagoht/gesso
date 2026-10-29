@@ -1,0 +1,52 @@
+package models
+
+import (
+{{- if .UsesTime}}
+	"time"
+{{end}}
+	"github.com/Elagoht/gesso"
+{{- if .UsesDate}}
+	"github.com/Elagoht/gesso/date"
+{{- end}}
+)
+
+type ReqCreate{{.Entity}} struct {
+{{- range .Fields}}
+	{{.Go}} {{.Type}} `json:"{{.JSON}}"{{if .Rule}} validate:"{{.Rule}}"{{end}}`
+{{- end}}
+}
+
+type ReqUpdate{{.Entity}} struct {
+	Key {{.KeyGo}} `path:"{{.KeyPath}}"`
+	ReqCreate{{.Entity}}
+}
+
+type ReqPatch{{.Entity}} struct {
+	Key {{.KeyGo}} `path:"{{.KeyPath}}"`
+{{- range .Fields}}
+	{{.Go}} gesso.Optional[{{.Type}}] `json:"{{.JSON}},omitzero"{{if .Patch}} validate:"{{.Patch}}"{{end}}`
+{{- end}}
+}
+
+type Req{{.Entity}}Key struct {
+	Key {{.KeyGo}} `path:"{{.KeyPath}}"`
+}
+
+type ReqList{{.Plural}} struct {
+	After string `query:"after"`
+	Take  int    `query:"take" default:"20" validate:"min=1,max=100"`
+}
+
+// Record is the {{.Entity}} in describes, without its id.
+func (in ReqCreate{{.Entity}}) Record() {{.Entity}} {
+	return {{.Entity}}{ {{- range .Fields}}{{.Go}}: in.{{.Go}}, {{end -}} }
+}
+
+// Apply sets on e the fields in has.
+func (in ReqPatch{{.Entity}}) Apply(e *{{.Entity}}) {
+{{- range .Fields}}
+	if in.{{.Go}}.Set {
+		e.{{.Go}} = in.{{.Go}}.Value
+	}
+{{- end}}
+}
