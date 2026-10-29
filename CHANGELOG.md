@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## Unreleased
+## v0.14.0 — 2026-10-30
 
 - **`default=<value>`** on a model field: a create or a PUT that leaves the
   field out gets it — a literal (`default=draft`, `default=5`), `@today` for a
