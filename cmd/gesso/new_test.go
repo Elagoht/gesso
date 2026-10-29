@@ -238,3 +238,17 @@ func migrations() []fs.FS { return []fs.FS{} }
 		t.Errorf("no lists: %v", err)
 	}
 }
+
+// TestGoModFile: a released CLI pins the gesso it was released with; a build
+// from a checkout leaves the choice to go mod tidy.
+func TestGoModFile(t *testing.T) {
+	if got, want := string(goModFile("example.com/docs", "v0.9.2")), "module example.com/docs\n\ngo 1.26.10\n\nrequire github.com/Elagoht/gesso v0.9.2\n"; got != want {
+		t.Errorf("released:\n%s\nwant:\n%s", got, want)
+	}
+	if got := string(goModFile("example.com/docs", "")); strings.Contains(got, "require") {
+		t.Errorf("devel build requires a version:\n%s", got)
+	}
+	if v := gessoVersion(); v != "" {
+		t.Errorf("a test binary is no release, and gessoVersion = %q", v)
+	}
+}

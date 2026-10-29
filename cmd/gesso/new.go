@@ -11,8 +11,12 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"text/template"
+
+	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 var newTemplates = template.Must(template.New("").ParseFS(scaffoldFS, "scaffold/new/*.tmpl"))
@@ -77,13 +81,38 @@ func newProject(args []string, dir string, stdout io.Writer) error {
 			return err
 		}
 	}
-	goMod := "module " + spec.Module + "\n\ngo 1.26.10\n"
-	if err := writeNew(filepath.Join(target, "go.mod"), []byte(goMod), stdout); err != nil {
+	if err := writeNew(filepath.Join(target, "go.mod"), goModFile(spec.Module, gessoVersion()), stdout); err != nil {
 		return err
 	}
 	rel, _ := filepath.Rel(dir, target)
 	fmt.Fprintf(stdout, "\nnext:\n  cd %s\n  go mod tidy\n  gesso add module notes -fields title:string,body:text\n  gesso dev\n", rel)
 	return nil
+}
+
+// goModFile is a new project's go.mod: it requires gesso at version, so that
+// go mod tidy does not pick whatever the module proxy last listed as latest —
+// which, for a while after a release, is the one before it.
+func goModFile(mod, version string) []byte {
+	s := "module " + mod + "\n\ngo 1.26.10\n"
+	if version != "" {
+		s += "\nrequire github.com/Elagoht/gesso " + version + "\n"
+	}
+	return []byte(s)
+}
+
+// gessoVersion is the gesso release this CLI belongs to: the two are tagged
+// together, so the CLI installed as cmd/gesso@v0.9.1 scaffolds for gesso v0.9.1.
+// A build from a checkout has no release, and it is "".
+func gessoVersion() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	v := bi.Main.Version
+	if !semver.IsValid(v) || module.IsPseudoVersion(v) || semver.Build(v) != "" {
+		return ""
+	}
+	return v
 }
 
 func writeNew(p string, data []byte, stdout io.Writer) error {
@@ -158,6 +187,9 @@ func initProject(args []string, dir string, stdout io.Writer) error {
 		if err := writeNew(filepath.Join(dir, name), src, stdout); err != nil {
 			return err
 		}
+	}
+	if v := gessoVersion(); v != "" {
+		fmt.Fprintf(stdout, "\nnext: go get github.com/Elagoht/gesso@%s\n", v)
 	}
 	fmt.Fprintf(stdout, `
 next: build the API where the program starts, and serve it. In a collage site,

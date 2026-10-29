@@ -6,6 +6,7 @@ require (
 	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.11.0
+	golang.org/x/mod v0.42.0
 	golang.org/x/tools v0.52.0
 	modernc.org/sqlite v1.61.0
 )
@@ -22,7 +23,6 @@ require (
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
-	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
