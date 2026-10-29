@@ -116,6 +116,25 @@ func gessoVersion() string {
 	return v
 }
 
+// versionLine is what gesso version prints: the release, or for a build from a
+// checkout its commit, and the Go it was built with.
+func versionLine() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "gesso (unknown)"
+	}
+	v := bi.Main.Version
+	if !semver.IsValid(v) || module.IsPseudoVersion(v) {
+		v = "devel"
+		for _, st := range bi.Settings {
+			if st.Key == "vcs.revision" && len(st.Value) >= 7 {
+				v += " " + st.Value[:7]
+			}
+		}
+	}
+	return "gesso " + v + " " + bi.GoVersion
+}
+
 func writeNew(p string, data []byte, stdout io.Writer) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err

@@ -78,6 +78,7 @@ the OnShutdown hooks, after collage's server has stopped.
 
 ```sh
 go install github.com/Elagoht/gesso/cmd/gesso@latest
+gesso version          # which gesso this is
 gesso new example.com/events -dialect postgres   # main, app wiring, a test
 cd events && go mod tidy
 gesso dev              # run it with .env; rebuilt and restarted as you edit

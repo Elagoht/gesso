@@ -7,6 +7,7 @@
 //	gesso add module <name> [-fields title:string,seats:int] [-guard name] [-empty] [-dialect postgres] [-dir internal]
 //	gesso add auth [-dir internal]
 //	gesso add guard <name> [-dir internal]
+//	gesso version
 //	gesso check [packages]
 //	gesso gen [dirs] [-check]
 //
@@ -37,6 +38,7 @@ const usage = `usage:
   gesso add module <name> [-fields title:string,seats:int] [-guard name] [-empty] [-dialect postgres|sqlite|mysql] [-dir internal]
   gesso add auth [-dir internal]     sign-in: a table of users, and a signedIn guard
   gesso add guard <name> [-dir internal]
+  gesso version
   gesso check [packages]   (default ./...)
   gesso gen [dirs] [-check]   queries.sql → queries.gen.go; -check reports stale files
 `
@@ -78,6 +80,9 @@ func run(args []string, dir string, stdout, stderr io.Writer, now func() time.Ti
 		if err == nil && stale > 0 {
 			code = 1
 		}
+	case args[0] == "version" || args[0] == "-v" || args[0] == "--version":
+		fmt.Fprintln(stdout, versionLine())
+		return 0
 	case args[0] == "help" || args[0] == "-h" || args[0] == "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

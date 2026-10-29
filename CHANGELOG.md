@@ -26,6 +26,8 @@ change.
   names records by it), `unique` (a 409 on the field, every dialect),
   `index`, `optional`, `sort`, and validation rules checked when the module is
   made. `-fields` stays, the short form.
+- **`gesso version`** (`-v`, `--version`): the CLI's release — the gesso
+  `gesso new` pins — or a checkout's commit, and the Go it was built with.
 - **Guards as in collage**: `gesso add guard <name>` writes
   `internal/guards/<name>.go`; `gesso add module … -guard <name>` guards the
   writes and refuses a guard that does not exist. `add auth` writes

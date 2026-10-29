@@ -461,3 +461,12 @@ func (s *Service) Report() int { return 0 }
 		t.Errorf("want 5 findings, got %d:\n%s", n, got)
 	}
 }
+
+func TestVersion(t *testing.T) {
+	for _, arg := range []string{"version", "-v", "--version"} {
+		var out, errOut bytes.Buffer
+		if code := run([]string{arg}, t.TempDir(), &out, &errOut, fixedNow); code != 0 || !strings.HasPrefix(out.String(), "gesso ") {
+			t.Fatalf("%s: %d %q %q", arg, code, out.String(), errOut.String())
+		}
+	}
+}
