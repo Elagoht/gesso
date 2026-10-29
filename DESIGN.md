@@ -597,7 +597,8 @@ in a major version.
   `Call`, `Middleware`, `Request`, `ResponseHeader`, `RequestIDFrom`,
   `Optional`/`Some`/`Null`, `Page`/`EncodeCursor`/`DecodeCursor`,
   `Download`, `Stream`/`SSE`, `Metrics`, `Tracer`, `Language`/`Turkish`,
-  `IfMatch`/`ETagOf`.
+  `IfMatch`/`ETagOf`, `App.Routes`/`RouteInfo`/`TypeInfo`/`FieldInfo`,
+  `Inspection` (what `<program> gesso-inspect` prints), `TerminalLogger`.
 - The input tags and their meaning: `path`, `query`, `header`, `json`, `form`,
   `default`, `accept`, `maxsize`, `validate` with the rules §7 and validate's
   doc list.

@@ -69,6 +69,24 @@ func TestRoutes(t *testing.T) {
 	}
 }
 
+func TestRouteTypeNames(t *testing.T) {
+	app, err := gesso.New(gesso.Config{}, pageModule{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := app.Routes()[0].Output.Name; got != "gesso.Page[gesso_test.resNote]" {
+		t.Fatalf("%q", got)
+	}
+}
+
+type pageModule struct{}
+
+func (pageModule) Routes(r *gesso.Router) {
+	r.Handle("GET", "/notes", gesso.Handle(func(context.Context, gesso.Empty) (gesso.Page[resNote], error) {
+		return gesso.Page[resNote]{}, nil
+	}))
+}
+
 func TestTerminalLogs(t *testing.T) {
 	t.Setenv("FORCE_COLOR", "1")
 	t.Setenv("NO_COLOR", "1")

@@ -28,6 +28,20 @@ change.
   made. `-fields` stays, the short form.
 - **`gesso version`** (`-v`, `--version`): the CLI's release — the gesso
   `gesso new` pins — or a checkout's commit, and the Go it was built with.
+- **What collage's CLI had and gesso's did not**: `gesso add endpoint
+  <module>/<name>` (Endpoint, handler, Req/Res, the Routes line), `add
+  command`, `add middleware` (register.go's `appCommands`, `appMiddleware`),
+  `gesso build` (static binary, `-os`/`-arch`, `-i` for a Dockerfile and a
+  systemd unit), `gesso routes`, `gesso inspect`, `gesso check` with stale
+  generated files and unguarded writes and `-json`, `gesso help <command>`,
+  "did you mean", exit codes 0/1/2, `gesso completion bash|zsh|fish`,
+  `gesso man`, `gesso ai init` (AGENTS.md), `gesso new -template demo -force
+  -ai` and `.env.example`. docs/cli.md.
+- **`App.Routes`**, and `gesso.Main` answers `gesso-inspect` with the app as
+  JSON (`Inspection`), serving nothing.
+- **Logs for a person on a terminal** from `gesso.Main`; `gesso.TerminalLogger`.
+- **`gessotest.Identities`** (an Authenticator for tests) and
+  **`gessotest.SignIn`**.
 - **Guards as in collage**: `gesso add guard <name>` writes
   `internal/guards/<name>.go`; `gesso add module … -guard <name>` guards the
   writes and refuses a guard that does not exist. `add auth` writes

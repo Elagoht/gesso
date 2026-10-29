@@ -1,8 +1,6 @@
 package main
 
 import (
-	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -16,14 +14,14 @@ var guardName = regexp.MustCompile(`^[a-z][A-Za-z0-9]*$`)
 // addGuard is gesso add guard: internal/guards/<name>.go, a gesso.Guard that
 // refuses everyone until its check is written.
 func addGuard(args []string, dir string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("add guard", flag.ContinueOnError)
+	fs := newFlags("add guard")
 	parent := fs.String("dir", "internal", "the folder guards/ goes in")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 || !guardName.MatchString(pos[0]) {
-		return errors.New("add guard takes one name, lowerCamel: gesso add guard admin")
+		return usage("add guard takes one name, lowerCamel: gesso add guard admin")
 	}
 	name := pos[0]
 	p := filepath.Join(dir, *parent, "guards", name+".go")

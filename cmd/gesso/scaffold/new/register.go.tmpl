@@ -27,6 +27,11 @@ func modules(d Deps) []gesso.Module {
 	return []gesso.Module{}
 }
 
+// appMiddleware wraps every route, the first outermost.
+func appMiddleware() []gesso.Middleware {
+	return []gesso.Middleware{}
+}
+
 func migrations() []fs.FS {
 	return []fs.FS{}
 }
@@ -36,7 +41,7 @@ func stores() []func(context.Context, *sql.DB, migrate.Dialect) error {
 	return []func(context.Context, *sql.DB, migrate.Dialect) error{}
 }
 
-func commands(d Deps) map[string]func(context.Context, []string, io.Writer) error {
+func appCommands(d Deps) map[string]func(context.Context, []string, io.Writer) error {
 	return map[string]func(context.Context, []string, io.Writer) error{}
 }
 

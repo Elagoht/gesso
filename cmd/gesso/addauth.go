@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -22,14 +21,14 @@ import (
 // users command — wired into register.go, and a signedIn guard. None of auth's
 // code is copied in, so a fix to it arrives with go get.
 func addAuth(args []string, dir string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("add auth", flag.ContinueOnError)
+	fs := newFlags("add auth")
 	parent := fs.String("dir", "internal", "the folder api/ is in")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 0 {
-		return errors.New("add auth takes no arguments")
+		return usage("add auth takes no arguments")
 	}
 	regGo := filepath.Join(dir, *parent, "api", "register.go")
 	src, err := os.ReadFile(regGo)
@@ -137,7 +136,7 @@ func wireAuth(src []byte) ([]byte, error) {
 	for _, l := range []struct{ fn, entry string }{
 		{"modules", "d.Auth"},
 		{"stores", "auth.Migrate"},
-		{"commands", `"users": d.Users.Command(os.Stdin)`},
+		{"appCommands", `"users": d.Users.Command(os.Stdin)`},
 	} {
 		lit := returnedList(f, l.fn)
 		if lit == nil {

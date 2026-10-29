@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"go/format"
 	"io"
@@ -14,6 +13,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"text/template"
+	"time"
 
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
@@ -35,17 +35,28 @@ type projectSpec struct {
 var modulePath = regexp.MustCompile(`^[a-z0-9][a-z0-9._~-]*(/[A-Za-z0-9._~-]+)*$`)
 
 // newProject is gesso new: a project with its main, the app that opens the
-// database and runs every module's migrations, and a test that starts it.
-func newProject(args []string, dir string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("new", flag.ContinueOnError)
+// database and migrates it, its register.go and a test that starts it. With
+// -template demo, sign-in and a notes module too; with -ai, AGENTS.md.
+func newProject(args []string, dir string, stdout io.Writer, now func() time.Time) error {
+	fs := newFlags("new")
 	dialect := fs.String("dialect", "sqlite", "the database: sqlite, postgres or mysql")
 	into := fs.String("dir", "", "the folder to create (default: the module path's last element)")
+	tmpl := fs.String("template", "minimal", "minimal, the app alone; demo, with sign-in and a notes module")
+	force := fs.Bool("force", false, "write into a folder that is not empty, replacing the files the scaffold has")
+	ai := fs.Bool("ai", false, "write AGENTS.md, gesso's rules for coding agents")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 || !modulePath.MatchString(pos[0]) {
-		return errors.New("new takes a module path: gesso new example.com/docs")
+		return usage("new takes a module path: gesso new example.com/docs")
+	}
+	if *tmpl != "minimal" && *tmpl != "demo" {
+		msg := fmt.Sprintf("unknown -template %q: minimal or demo", *tmpl)
+		if c := closest(*tmpl, []string{"minimal", "demo"}); c != "" {
+			msg += fmt.Sprintf(" (did you mean %q?)", c)
+		}
+		return usage(msg)
 	}
 	spec, err := newProjectSpec(pos[0], *dialect)
 	if err != nil {
@@ -56,8 +67,8 @@ func newProject(args []string, dir string, stdout io.Writer) error {
 		target = spec.Name
 	}
 	target = filepath.Join(dir, target)
-	if entries, err := os.ReadDir(target); err == nil && len(entries) > 0 {
-		return fmt.Errorf("%s exists and is not empty", target)
+	if entries, err := os.ReadDir(target); err == nil && len(entries) > 0 && !*force {
+		return fmt.Errorf("%s exists and is not empty: -force writes into it", target)
 	}
 	files := map[string]string{
 		"main.go":                  "main.go.tmpl",
@@ -65,9 +76,10 @@ func newProject(args []string, dir string, stdout io.Writer) error {
 		"internal/api/register.go": "register.go.tmpl",
 		"internal/api/api_test.go": "api_test.go.tmpl",
 		".gitignore":               "gitignore.tmpl",
+		".env.example":             "env.example.tmpl",
 		"README.md":                "README.md.tmpl",
 	}
-	for _, name := range []string{"main.go", "internal/api/api.go", "internal/api/register.go", "internal/api/api_test.go", ".gitignore", "README.md"} {
+	for _, name := range []string{"main.go", "internal/api/api.go", "internal/api/register.go", "internal/api/api_test.go", ".gitignore", ".env.example", "README.md"} {
 		var buf bytes.Buffer
 		if err := newTemplates.ExecuteTemplate(&buf, files[name], spec); err != nil {
 			return err
@@ -85,8 +97,27 @@ func newProject(args []string, dir string, stdout io.Writer) error {
 	if err := writeNew(filepath.Join(target, "go.mod"), goModFile(spec.Module, gessoVersion()), stdout); err != nil {
 		return err
 	}
+	if *tmpl == "demo" {
+		if err := addAuth(nil, target, stdout); err != nil {
+			return err
+		}
+		if err := addModule([]string{"notes", "-guard", "signedIn", "-field", "title:string:max=200", "-field", "body:text", "-field", "published:date:optional"}, target, stdout, now); err != nil {
+			return err
+		}
+	}
+	if *ai {
+		if err := aiInit(nil, target, stdout); err != nil {
+			return err
+		}
+	}
 	rel, _ := filepath.Rel(dir, target)
-	fmt.Fprintf(stdout, "\nnext:\n  cd %s\n  go mod tidy\n  gesso add module notes -fields title:string,body:text\n  gesso dev\n", rel)
+	fmt.Fprintf(stdout, "\nnext:\n  cd %s\n  go mod tidy\n", rel)
+	if *tmpl == "demo" {
+		fmt.Fprintln(stdout, "  go run . users add <username>")
+	} else {
+		fmt.Fprintln(stdout, "  gesso add auth\n  gesso add module notes -guard signedIn -field title:string:max=200 -field body:text")
+	}
+	fmt.Fprintln(stdout, "  gesso dev")
 	return nil
 }
 
@@ -175,14 +206,14 @@ func newProjectSpec(module, dialect string) (projectSpec, error) {
 // module that exists already — a collage site that serves its API in the same
 // process. No main: the module has one.
 func initProject(args []string, dir string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs := newFlags("init")
 	dialect := fs.String("dialect", "sqlite", "the database: sqlite, postgres or mysql")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 0 {
-		return errors.New("init takes no arguments: run it in the module's root")
+		return usage("init takes no arguments: run it in the module's root")
 	}
 	module, err := readModule(dir)
 	if err != nil {

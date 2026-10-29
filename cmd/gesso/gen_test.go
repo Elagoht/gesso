@@ -333,7 +333,7 @@ func TestGenRefusesWithALocation(t *testing.T) {
 			dir := newApp(t, "")
 			writeFiles(t, dir, map[string]string{"notes/models.go": genModels, "notes/queries.sql": c.sql})
 			var out, errOut bytes.Buffer
-			if code := run([]string{"gen"}, dir, &out, &errOut, fixedNow); code != 2 || !strings.Contains(errOut.String(), c.want) {
+			if code := run([]string{"gen"}, dir, &out, &errOut, fixedNow); code != 1 || !strings.Contains(errOut.String(), c.want) {
 				t.Fatalf("code %d, want %q in:\n%s", code, c.want, errOut.String())
 			}
 			if _, err := os.Stat(filepath.Join(dir, "notes/queries.gen.go")); err == nil {

@@ -69,6 +69,20 @@ func wireModule(src []byte, pkg, importPath string, withMigrations bool) ([]byte
 	return reformat(fset, applyInserts(src, inserts), importPath)
 }
 
+// wireList adds entry to the list fn returns, and the import.
+func wireList(src []byte, fn, entry, importPath string) ([]byte, error) {
+	fset := gotoken.NewFileSet()
+	f, err := parser.ParseFile(fset, "register.go", src, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	lit := returnedList(f, fn)
+	if lit == nil {
+		return nil, fmt.Errorf("no func %s returning a list literal (gesso new before v0.11 wrote none)", fn)
+	}
+	return reformat(fset, applyInserts(src, []insert{listInsert(fset, lit, entry)}), importPath)
+}
+
 // returnedList is the composite literal func name returns, or nil.
 func returnedList(f *ast.File, name string) *ast.CompositeLit {
 	for _, d := range f.Decls {

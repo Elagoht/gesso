@@ -61,6 +61,7 @@ func NewWith(cfg Config) (*gesso.App, error) {
 		BasePath:      cfg.BasePath,
 		Logger:        cfg.Logger,
 		Authenticator: authenticator(deps),
+		Middleware:    appMiddleware(),
 		ErrorMappers:  []gesso.ErrorMapper{db.Errors(classify, merged(constraints()))},
 		OpenAPI:       &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json"},
 		AccessLog:     true,
@@ -77,7 +78,7 @@ func NewWith(cfg Config) (*gesso.App, error) {
 		}
 		return errors.Join(migrate.Command(ctx, m, args, out), conn.Close())
 	})
-	for name, run := range commands(deps) {
+	for name, run := range appCommands(deps) {
 		app.Command(name, run)
 	}
 	return app, nil

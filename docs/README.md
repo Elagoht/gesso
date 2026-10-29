@@ -4,6 +4,7 @@ gesso is a Go framework for JSON APIs. This guide walks through it in the order
 an application meets it; [DESIGN.md](../DESIGN.md) is the specification behind
 it, with the reasons.
 
+0. [The command line](cli.md) — every `gesso` command
 1. [Getting started](getting-started.md) — `gesso new`, a first module, running it
 2. [Modules and handlers](modules-and-handlers.md) — routes, typed handlers,
    input, uploads, PATCH, pages, files and streams, ETags, errors, endpoints

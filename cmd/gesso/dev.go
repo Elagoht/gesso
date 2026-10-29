@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -21,11 +22,14 @@ import (
 // ctx ends. A build that fails leaves the running program as it was, and says
 // why.
 func devCommand(ctx context.Context, args []string, dir string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("dev", flag.ContinueOnError)
+	fs := newFlags("dev")
 	every := fs.Duration("poll", 500*time.Millisecond, "how often files are looked at")
 	pkg := fs.String("pkg", ".", "the package to build and run")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError{withSuggestion(err, fs)}
 	}
 	programArgs := fs.Args() // what follows the flags (after --) goes to the program
 	tmp, err := os.MkdirTemp("", "gesso-dev-")

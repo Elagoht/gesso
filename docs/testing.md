@@ -30,3 +30,16 @@ storagetest.Run(t, func(t *testing.T) storage.Storage { return s3store.New(…) 
 ```
 
 `clock.Manual` moves time in tests; `mail.Capture` keeps what was sent.
+
+## Signed in
+
+```go
+app := gessotest.New(t, gesso.Config{Authenticator: gessotest.Identities{
+	"ada": {Subject: "1", Roles: []string{"admin"}},
+}}, notes.New(notes.Deps{DB: tx}))
+_, err := notes.CreateNote.Call(ctx, gesso.NewLocal(app), in, gesso.Bearer("ada"))
+```
+
+`gessotest.Identities` takes a bearer token for the identity it names; no token
+is anonymous. Against the auth module itself, `gessotest.SignIn(t, remote,
+"ada", password)` signs in through `auth.Login` and is the bearer to call with.

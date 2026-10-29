@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,35 +14,18 @@ import (
 
 var migrationName = regexp.MustCompile(`^[a-z0-9][a-z0-9_]*$`)
 
-// parseFlags reads flags wherever they stand among the positional arguments:
-// "add module events -fields x" and "add module -fields x events" both work.
-func parseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
-	var positional []string
-	for {
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		args = fs.Args()
-		if len(args) == 0 {
-			return positional, nil
-		}
-		positional = append(positional, args[0])
-		args = args[1:]
-	}
-}
-
 func migrateNew(args []string, dir string, stdout io.Writer, now func() time.Time) error {
-	fs := flag.NewFlagSet("migrate new", flag.ContinueOnError)
+	fs := newFlags("migrate new")
 	target := fs.String("dir", "migrations", "the migrations folder")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 {
-		return errors.New("migrate new takes one name: gesso migrate new create_events")
+		return usage("migrate new takes one name: gesso migrate new create_events")
 	}
 	if !migrationName.MatchString(pos[0]) {
-		return fmt.Errorf("a migration name is lower case letters, digits and underscores: %q", pos[0])
+		return usage(fmt.Sprintf("a migration name is lower case letters, digits and underscores: %q", pos[0]))
 	}
 	paths, err := writeMigration(dir, filepath.Join(dir, *target), pos[0], "", "", now)
 	if err != nil {

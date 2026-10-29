@@ -86,6 +86,11 @@ func funcName(fn reflect.Value) string {
 	return name
 }
 
+// importPath is the import path before a package name in a type's spelling:
+// gesso.Page[example.com/shop/internal/notes/models.ResNote] reads
+// gesso.Page[models.ResNote].
+var importPath = regexp.MustCompile(`[\w.~-]+(/[\w.~-]+)*/`)
+
 var inlined = regexp.MustCompile(`^.*\.(func)?\d+\.`)
 
 func guardNames(guards []Guard) []string {
@@ -100,7 +105,7 @@ func typeInfo(t reflect.Type) *TypeInfo {
 	if t == emptyType {
 		return nil
 	}
-	ti := &TypeInfo{Name: t.String()}
+	ti := &TypeInfo{Name: importPath.ReplaceAllString(t.String(), "")}
 	if t.Kind() == reflect.Struct {
 		ti.Fields = fieldInfos(t)
 	}

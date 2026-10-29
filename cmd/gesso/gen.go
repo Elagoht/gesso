@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -68,7 +67,7 @@ var (
 )
 
 func gen(args []string, dir string, stdout io.Writer, now func() time.Time) (stale int, err error) {
-	flags := flag.NewFlagSet("gen", flag.ContinueOnError)
+	flags := newFlags("gen")
 	checkOnly := flags.Bool("check", false, "report stale or missing generated files instead of writing them")
 	drop := flags.Bool("drop", false, "let a field gone from a model drop its column, and its data")
 	noMigration := flags.Bool("no-migration", false, "write no migration for a model's change: you wrote it yourself")
