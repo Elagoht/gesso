@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## Unreleased
+## v0.10.0 — 2026-10-29
 
 Sign-in, ready to use, and modules that are not CRUD:
 
