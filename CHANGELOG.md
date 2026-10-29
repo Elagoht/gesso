@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## v0.9.0 (unreleased)
+## v0.9.0 — 2026-10-29
 
 - **mail.SMTP**: STARTTLS by default (implicit TLS on 465; plain only to this
   machine), AUTH PLAIN, text and HTML as multipart/alternative, Turkish
