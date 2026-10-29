@@ -6,6 +6,7 @@ gesso new example.com/notes -dialect sqlite      # or postgres, mysql
 cd notes
 go mod tidy
 gesso add module notes -fields title:string,body:text,published_on:date
+gesso add auth                                   # sign-in; -users sql for a table of users
 gesso dev
 ```
 
@@ -47,7 +48,13 @@ The dialect comes from that file. Field types:
 | `date` | `date.Date` | `required` | DATE |
 
 A column named after an SQL keyword (`order`, `group`) is quoted for you. The
-scaffolded code is yours: rename, add, delete. Then:
+scaffolded code is yours: rename, add, delete.
+
+A module whose endpoints are not create-read-update-delete — a search, a
+report — starts from `gesso add module search -empty`: `module.go`,
+`endpoints.go` and `models/requests.go`, `models/responses.go`, with no table
+and no migration. Sign-in is not scaffolded but wired: `gesso add auth`, see
+[Identity and limits](identity-and-limits.md). Then:
 
 ```sh
 curl -X POST localhost:8080/notes -H 'content-type: application/json' \

@@ -4,7 +4,8 @@
 //	gesso init [-dialect sqlite|postgres|mysql]
 //	gesso dev [-pkg .] [-- program args]
 //	gesso migrate new <name> [-dir migrations]
-//	gesso add module <name> [-fields title:string,seats:int] [-dialect postgres] [-dir internal]
+//	gesso add module <name> [-fields title:string,seats:int] [-empty] [-dialect postgres] [-dir internal]
+//	gesso add auth [-users single|sql] [-dir internal]
 //	gesso check [packages]
 //	gesso gen [dirs] [-check]
 //
@@ -32,7 +33,8 @@ const usage = `usage:
   gesso init [-dialect sqlite|postgres|mysql]   internal/api in an existing module
   gesso dev [-pkg .] [-- args]   run it, with .env; rebuild and restart on changes
   gesso migrate new <name> [-dir migrations]
-  gesso add module <name> [-fields title:string,seats:int] [-dialect postgres|sqlite|mysql] [-dir internal]
+  gesso add module <name> [-fields title:string,seats:int] [-empty] [-dialect postgres|sqlite|mysql] [-dir internal]
+  gesso add auth [-users single|sql] [-dir internal]   sign-in, from gesso/auth
   gesso check [packages]   (default ./...)
   gesso gen [dirs] [-check]   queries.sql → queries.gen.go; -check reports stale files
 `
@@ -58,6 +60,8 @@ func run(args []string, dir string, stdout, stderr io.Writer, now func() time.Ti
 		err = migrateNew(args[2:], dir, stdout, now)
 	case len(args) >= 2 && args[0] == "add" && args[1] == "module":
 		err = addModule(args[2:], dir, stdout, now)
+	case len(args) >= 2 && args[0] == "add" && args[1] == "auth":
+		err = addAuth(args[2:], dir, stdout)
 	case args[0] == "check":
 		var findings int
 		findings, err = check(args[1:], dir, stdout)

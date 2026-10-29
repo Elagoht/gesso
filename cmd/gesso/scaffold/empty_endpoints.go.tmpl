@@ -1,0 +1,13 @@
+package {{.Pkg}}
+
+// The module's endpoints: the server registers them, another process calls them
+// with the same types —
+//
+//	var (
+//		Get{{.Entity}}    = gesso.Endpoint[models.Req{{.Entity}}ID, models.Res{{.Entity}}]{Method: "GET", Pattern: "/{{.Table}}/{id}"}
+//		Create{{.Entity}} = gesso.Endpoint[models.ReqCreate{{.Entity}}, models.Res{{.Entity}}]{Method: "POST", Pattern: "/{{.Table}}"}
+//	)
+//
+// — and each handler a method on Module:
+//
+//	func (m *Module) get(ctx context.Context, in models.Req{{.Entity}}ID) (models.Res{{.Entity}}, error)

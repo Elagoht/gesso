@@ -1,0 +1,10 @@
+// Package models holds the {{.Table}} module's types: the Req types, what
+// clients send (requests.go), and the Res types, what they get back
+// (responses.go).
+package models
+
+// Req{{.Entity}}ID names one by its id, from the path —
+//
+//	type Req{{.Entity}}ID struct {
+//		ID int64 `path:"id"`
+//	}

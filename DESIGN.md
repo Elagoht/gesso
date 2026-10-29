@@ -601,16 +601,17 @@ in a major version.
   doc list.
 - **Packages**: `validate`, `db`, `migrate`, `date`, `clock`, `password`,
   `storage`, `storage/s3`, `cache`, `cache/redis`, `mail`, `token`, `lock`,
-  `queue`, `events`, `ratelimit`, `idempotency`, `gessotest`, and every
-  `*test` suite: their exported names as of v0.9.
+  `queue`, `events`, `ratelimit`, `idempotency`, `auth` (v0.10), `gessotest`,
+  and every `*test` suite: their exported names as of v0.10.
 - **Wire formats**: problem+json's members and codes, the token format
   (`gso_` + 43 base64url characters), the tables gesso's own migrations create
   (`gesso_tokens`, `gesso_jobs`, `gesso_schedule`, `gesso_ratelimit`,
-  `gesso_idempotency` and their history tables) —
+  `gesso_idempotency`, `gesso_users` and their history tables) —
   a later change to one ships as a new migration, never an edited one.
 - **The CLI**: its commands and flags, and that a scaffold, once written, is the
-  application's: a later gesso never edits it except where `add module` wires a
-  module into `internal/api/api.go`.
+  application's: a later gesso never edits it except where `add module` and
+  `add auth` wire into `internal/api/api.go` — each piece found by name, and
+  refused rather than guessed at when it is not where `gesso new` put it.
 
 Not sealed: what the OpenAPI document says beyond being valid OpenAPI 3.1
 describing the routes (it may describe more), log messages and their attributes,

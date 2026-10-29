@@ -17,8 +17,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
-// A project from gesso new, with two modules added in the same second, builds,
-// vets, starts on its database and passes its tests — on each dialect.
+// A project from gesso new, with two modules added in the same second, an empty
+// one and sign-in — one user on SQLite, a table of users on the others —
+// builds, vets, starts on its database and passes its tests, on each dialect.
 func TestNew(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a new project")
@@ -58,8 +59,32 @@ func TestNew(t *testing.T) {
 			if code := run([]string{"add", "module", "tags"}, dir, &out, &errOut, fixedNow); code == 0 {
 				t.Fatal("an existing module is never overwritten")
 			}
+			if code := run([]string{"add", "module", "pages", "-empty"}, dir, &out, &errOut, fixedNow); code != 0 {
+				t.Fatalf("add pages -empty: code %d: %s", code, errOut.String())
+			}
+			if _, err := os.Stat(filepath.Join(dir, "internal/pages/migrations")); err == nil {
+				t.Fatal("an empty module has no migrations")
+			}
+			users := map[string]string{"sqlite": "single", "postgres": "sql", "mysql": "sql"}[dialect]
+			out.Reset()
+			if code := run([]string{"add", "auth", "-users", users}, dir, &out, &errOut, fixedNow); code != 0 {
+				t.Fatalf("add auth: code %d: %s", code, errOut.String())
+			}
+			if code := run([]string{"add", "auth"}, dir, &out, &errOut, fixedNow); code == 0 {
+				t.Fatal("auth is wired twice")
+			}
+			app, _ = os.ReadFile(filepath.Join(dir, "internal/api/api.go"))
+			for _, want := range []string{"Authenticator: authn", "schema{dsn: cfg.Database}, authn}", "pages.New(pages.Deps{DB: d.DB})"} {
+				if !strings.Contains(string(app), want) {
+					t.Fatalf("api.go lacks %s:\n%s", want, app)
+				}
+			}
+			if strings.Contains(string(app), "pages.Migrations") {
+				t.Fatalf("api.go migrates the empty module:\n%s", app)
+			}
+			var dsn string
 			if c.database != nil {
-				if dsn := c.database(t); dsn != "" {
+				if dsn = c.database(t); dsn != "" {
 					t.Setenv("TEST_DATABASE_URL", dsn)
 				}
 			}
@@ -73,6 +98,16 @@ func TestNew(t *testing.T) {
 			goIn(t, dir, "build", "-o", bin, ".")
 			if dialect == "sqlite" {
 				migrateRoundTrip(t, bin, filepath.Join(t.TempDir(), "m.db"))
+			}
+			if users == "sql" && dsn != "" {
+				// On the app's own pool — on MySQL one that takes a statement
+				// per Exec — after its test started it on the same database.
+				cmd := exec.Command(bin, "users", "add", "ada", "-role", "admin")
+				cmd.Env = append(os.Environ(), "DATABASE_URL="+dsn)
+				cmd.Stdin = strings.NewReader("a long password\n")
+				if got, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(got), "added ada") {
+					t.Fatalf("users add: %v\n%s", err, got)
+				}
 			}
 			if n, err := check(nil, dir, &out); err != nil || n != 0 {
 				t.Fatalf("the project breaks the ctx rule: %v %s", err, out.String())
@@ -101,7 +136,8 @@ func migrateRoundTrip(t *testing.T, bin, dbPath string) {
 	t.Helper()
 	run := func(args ...string) string {
 		cmd := exec.Command(bin, append([]string{"migrate"}, args...)...)
-		cmd.Env = append(os.Environ(), "DATABASE_URL="+dbPath)
+		// The app is built for a command too, and its one user is a setting.
+		cmd.Env = append(os.Environ(), "DATABASE_URL="+dbPath, "AUTH_USERNAME=ada", "AUTH_PASSWORD=a long password")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("migrate %v: %v\n%s", args, err, out)
@@ -119,7 +155,7 @@ func migrateRoundTrip(t *testing.T, bin, dbPath string) {
 		t.Fatalf("status: %s", out)
 	}
 	cmd := exec.Command(bin, "migrate", "sideways")
-	cmd.Env = append(os.Environ(), "DATABASE_URL="+dbPath)
+	cmd.Env = append(os.Environ(), "DATABASE_URL="+dbPath, "AUTH_USERNAME=ada", "AUTH_PASSWORD=a long password")
 	if err := cmd.Run(); err == nil {
 		t.Fatal("an unknown subcommand succeeded")
 	}
@@ -222,7 +258,7 @@ func modules(d Deps) []gesso.Module {
 
 func migrations() []fs.FS { return []fs.FS{} }
 `
-	got, err := wireModule([]byte(src), "notes", "example.com/app/internal/notes")
+	got, err := wireModule([]byte(src), "notes", "example.com/app/internal/notes", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,10 +267,10 @@ func migrations() []fs.FS { return []fs.FS{} }
 			t.Errorf("lacks %q:\n%s", want, got)
 		}
 	}
-	if _, err := wireModule(got, "notes", "example.com/app/internal/notes"); err == nil {
+	if _, err := wireModule(got, "notes", "example.com/app/internal/notes", true); err == nil {
 		t.Error("wiring a module twice")
 	}
-	if _, err := wireModule([]byte("package app\n"), "notes", "x/notes"); err == nil || !strings.Contains(err.Error(), "no func") {
+	if _, err := wireModule([]byte("package app\n"), "notes", "x/notes", true); err == nil || !strings.Contains(err.Error(), "no func") {
 		t.Errorf("no lists: %v", err)
 	}
 }
@@ -250,5 +286,37 @@ func TestGoModFile(t *testing.T) {
 	}
 	if v := gessoVersion(); v != "" {
 		t.Errorf("a test binary is no release, and gessoVersion = %q", v)
+	}
+}
+
+// wireAuth refuses an api.go it cannot find its way in, rather than guess:
+// gesso new's before stores, one with an Authenticator of its own.
+func TestWireAuthRefuses(t *testing.T) {
+	var buf bytes.Buffer
+	spec, err := newProjectSpec("example.com/app", "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := newTemplates.ExecuteTemplate(&buf, "api.go.tmpl", spec); err != nil {
+		t.Fatal(err)
+	}
+	src := buf.String()
+	if _, err := wireAuth([]byte(src), "single"); err != nil {
+		t.Fatalf("gesso new's own api.go: %v", err)
+	}
+	for name, c := range map[string]struct{ old, new, want string }{
+		"no stores":           {"func stores()", "func storesRenamed()", "no func stores"},
+		"an authenticator":    {"AccessLog: true,", "AccessLog: true, Authenticator: mine,", "has an Authenticator"},
+		"wired already":       {`"github.com/Elagoht/gesso/db"`, `"github.com/Elagoht/gesso/db"` + "\n\t_ \"github.com/Elagoht/gesso/auth\"", "wired already"},
+		"no Config filled in": {"return NewWith(Config{", "return NewWith(cfgFromEnv{", "New builds no Config"},
+		"gesso.New elsewhere": {"app, err := gesso.New(", "app, err := build(", "no gesso.New"},
+	} {
+		changed := strings.Replace(src, c.old, c.new, 1)
+		if changed == src {
+			t.Fatalf("%s: %q is not in the template", name, c.old)
+		}
+		if _, err := wireAuth([]byte(changed), "single"); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", name, err, c.want)
+		}
 	}
 }

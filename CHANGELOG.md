@@ -3,6 +3,28 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## Unreleased
+
+Sign-in, ready to use, and modules that are not CRUD:
+
+- **`auth` package**: a module serving `POST /auth/login`, `POST /auth/logout`,
+  `GET /auth/me` and `PUT /auth/password`, issuing package token's bearer
+  tokens, and the app's `Authenticator`. Who signs in is an `auth.Users`:
+  `NewSingle` (one user from settings), `NewSQL` (the `gesso_users` table,
+  argon2id, rehashed at sign-in, a `users` command: add, password, roles,
+  delete, list), or your own; `auth/authtest` is the contract. Attempts are
+  limited per address and username, and per address. `auth.Migrate` makes
+  `gesso_tokens` and `gesso_users`.
+- **`gesso add auth [-users single|sql]`** wires it into `internal/api/api.go`,
+  and the test's Config; nothing of it is copied in.
+- **`gesso add module <name> -empty`**: `module.go`, `endpoints.go` and the
+  `models/` files, no table, no migration.
+- **`gesso new`'s api.go** has `stores()`: gesso's own tables — tokens, users,
+  a queue — made after the modules' migrations, on their connection, each in
+  a history of its own. `migrator` returns that connection rather than its
+  Close. An api.go from before has no `stores`: `add auth` refuses it, and
+  says what to add by hand.
+
 ## v0.9.2 — 2026-10-29
 
 - **`gesso new` pins gesso**: the go.mod it writes requires the gesso release

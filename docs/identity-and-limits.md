@@ -1,12 +1,65 @@
 # Identity and limits
 
+## Sign-in: the auth module
+
+```sh
+gesso add auth                # one user: AUTH_USERNAME and AUTH_PASSWORD
+gesso add auth -users sql     # a table of users, with argon2id passwords
+```
+
+wires the `auth` package into `internal/api/api.go`. No code of it is copied
+into the app: a fix to sign-in reaches it with `go get`. What it adds:
+
+```go
+authn, err := auth.New(auth.Options{DB: d, Dialect: dialect, Users: auth.NewSingle(cfg.AuthUsername, cfg.AuthPassword)})
+app, err := gesso.New(gesso.Config{Authenticator: authn, …}, schema{…}, authn, …)
+// and token.Migrate — auth.Migrate for -users sql — in stores()
+```
+
+| Endpoint | |
+| --- | --- |
+| `POST /auth/login` | `{"username", "password"}` → `{"token", "expiresAt"}` |
+| `POST /auth/logout` | revokes the token it is called with |
+| `GET /auth/me` | `{"id", "username", "roles"}` |
+| `PUT /auth/password` | `{"currentPassword", "newPassword"}`: signs every device out, and answers a new token; with `-users sql` |
+
+They are `auth.Login`, `auth.Logout`, `auth.Me` and `auth.ChangePassword`, so
+a collage page calls them with `gesso.NewLocal`. A sign-in lasts 30 days
+(`TokenTTL`). Attempts are limited to 5 a minute per client address and
+username, and 20 per address — never per username alone, which would let anyone
+lock the user out; behind a proxy, give `Options.TrustedProxies`, or every
+client shares the proxy's address.
+
+Who signs in is an `auth.Users`:
+
+- `auth.NewSingle(username, password, roles...)` — a personal site, an admin
+  of one. Its id is the username. The app refuses to start without both.
+- `auth.NewSQL(pool, dialect)` — the `gesso_users` table: usernames matched
+  exactly, argon2id hashes (made again with stronger parameters at the next
+  sign-in), roles. There is no sign-up endpoint; `SQL.Create` is there for one
+  of your own. The app gets a `users` command:
+
+  ```sh
+  app users add ada -role admin    # asks for the password, twice, unechoed
+  app users password ada           # an operator's reset: signs them out
+  app users roles ada editor       # replaces the roles: signs them out
+  app users delete ada
+  app users list
+  ```
+
+- your own — a directory, another service: `Authenticate` and `Lookup`, and
+  `ChangePassword` for `PUT /auth/password`. `auth/authtest` holds it to the
+  contract NewSingle and NewSQL keep.
+
 ## Bearer tokens
+
+The auth module issues them; for a sign-in of your own:
 
 ```go
 tokens := token.NewIssuer(token.NewSQL(pool, migrate.Postgres), nil, 30*24*time.Hour)
 // token.Migrate(ctx, pool, migrate.Postgres) creates its table
 
-app, err := gesso.New(gesso.Config{Authenticator: tokens}, auth.New(tokens), notes.New(…))
+app, err := gesso.New(gesso.Config{Authenticator: tokens}, login.New(tokens), notes.New(…))
 
 raw, rec, err := tokens.Issue(ctx, userID, "editor") // at sign-in: give raw to the client
 err = tokens.Revoke(ctx, token.FromRequest(gesso.Request(ctx)))

@@ -67,7 +67,16 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	dialect := fs.String("dialect", "postgres", "the SQL the repository and migration are written in: postgres, sqlite or mysql (default: the app's, in a gesso new project)")
 	parent := fs.String("dir", "internal", "the folder the module's folder goes in")
 	entity := fs.String("entity", "", "the entity's Go name (default: the module name, singular, capitalised)")
+	empty := fs.Bool("empty", false, "only the module's layout — module.go, endpoints.go, models/ — for endpoints that are not CRUD")
 	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	fs.Visit(func(f *flag.Flag) {
+		if *empty && f.Name == "fields" {
+			err = errors.New("-empty takes no -fields: the module has no table")
+		}
+	})
 	if err != nil {
 		return err
 	}
@@ -99,7 +108,7 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	if err := os.MkdirAll(filepath.Join(target, "models"), 0o755); err != nil {
 		return err
 	}
-	for _, f := range []struct{ name, tmpl string }{
+	files := []struct{ name, tmpl string }{
 		{"module.go", "module.go.tmpl"},
 		{"endpoints.go", "endpoints.go.tmpl"},
 		{"handler.go", "handler.go.tmpl"},
@@ -109,7 +118,16 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 		{"models/models.go", "models_models.go.tmpl"},
 		{"models/requests.go", "models_requests.go.tmpl"},
 		{"models/responses.go", "models_responses.go.tmpl"},
-	} {
+	}
+	if *empty {
+		files = []struct{ name, tmpl string }{
+			{"module.go", "empty_module.go.tmpl"},
+			{"endpoints.go", "empty_endpoints.go.tmpl"},
+			{"models/requests.go", "empty_requests.go.tmpl"},
+			{"models/responses.go", "empty_responses.go.tmpl"},
+		}
+	}
+	for _, f := range files {
 		var buf bytes.Buffer
 		if err := scaffold.ExecuteTemplate(&buf, f.tmpl, spec); err != nil {
 			return err
@@ -123,6 +141,9 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 			return err
 		}
 		fmt.Fprintln(stdout, "created", p)
+	}
+	if *empty {
+		return wire(app, appErr, appGo, spec.Pkg, mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), false, stdout)
 	}
 	var up, down bytes.Buffer
 	if err := scaffold.ExecuteTemplate(&up, "up.sql.tmpl", spec); err != nil {
@@ -139,13 +160,20 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 		return err
 	}
 	fmt.Fprintf(stdout, "note: create, update and delete in %s are open to anyone until you guard them (see Routes)\n", spec.Pkg)
+	return wire(app, appErr, appGo, spec.Pkg, mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), true, stdout)
+}
+
+// wire adds the module to the app's api.go, when there is one.
+func wire(app []byte, appErr error, appGo, pkg, importPath string, withMigrations bool, stdout io.Writer) error {
 	if appErr != nil {
 		return nil // no gesso new app here: wiring the module is the user's
 	}
-	importPath := mod + "/" + filepath.ToSlash(filepath.Join(*parent, spec.Pkg))
-	wired, err := wireModule(app, spec.Pkg, importPath)
+	wired, err := wireModule(app, pkg, importPath, withMigrations)
 	if err != nil {
-		return fmt.Errorf("%s: %w; add %s.New and %s.Migrations to it by hand", appGo, err, spec.Pkg, spec.Pkg)
+		if withMigrations {
+			return fmt.Errorf("%s: %w; add %s.New and %s.Migrations to it by hand", appGo, err, pkg, pkg)
+		}
+		return fmt.Errorf("%s: %w; add %s.New to it by hand", appGo, err, pkg)
 	}
 	if err := os.WriteFile(appGo, wired, 0o644); err != nil {
 		return err

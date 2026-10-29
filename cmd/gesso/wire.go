@@ -46,7 +46,7 @@ func readModule(dir string) (string, error) {
 // modules returns, pkg.Migrations to what migrations returns, and the import.
 // Each list is found by its function's name, and the text is inserted before
 // the list's closing brace, so the rest of the file is left as it is.
-func wireModule(src []byte, pkg, importPath string) ([]byte, error) {
+func wireModule(src []byte, pkg, importPath string, withMigrations bool) ([]byte, error) {
 	fset := gotoken.NewFileSet()
 	f, err := parser.ParseFile(fset, "api.go", src, parser.ParseComments)
 	if err != nil {
@@ -57,31 +57,19 @@ func wireModule(src []byte, pkg, importPath string) ([]byte, error) {
 			return nil, fmt.Errorf("%s is wired already", pkg)
 		}
 	}
-	type insert struct {
-		at   int
-		text string
+	entries := map[string]string{"modules": pkg + ".New(" + pkg + ".Deps{DB: d.DB})"}
+	if withMigrations {
+		entries["migrations"] = pkg + ".Migrations"
 	}
 	var inserts []insert
-	for fn, entry := range map[string]string{
-		"modules":    pkg + ".New(" + pkg + ".Deps{DB: d.DB})",
-		"migrations": pkg + ".Migrations",
-	} {
+	for fn, entry := range entries {
 		lit := returnedList(f, fn)
 		if lit == nil {
 			return nil, fmt.Errorf("no func %s returning a list literal", fn)
 		}
-		at := fset.Position(lit.Rbrace).Offset
-		text := entry + ","
-		if len(lit.Elts) == 0 || fset.Position(lit.Lbrace).Line == fset.Position(lit.Rbrace).Line {
-			text = "\n" + text + "\n"
-		} else if last := lit.Elts[len(lit.Elts)-1]; fset.Position(last.End()).Line == fset.Position(lit.Rbrace).Line {
-			text = ",\n" + entry + ",\n" // the last element sits on the brace's line
-		} else {
-			text += "\n"
-		}
-		inserts = append(inserts, insert{at, text})
+		inserts = append(inserts, listInsert(fset, lit, entry))
 	}
-	if inserts[0].at < inserts[1].at {
+	if len(inserts) == 2 && inserts[0].at < inserts[1].at {
 		inserts[0], inserts[1] = inserts[1], inserts[0]
 	}
 	out := src
