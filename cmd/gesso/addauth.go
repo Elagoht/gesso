@@ -59,7 +59,7 @@ func addAuth(args []string, dir string, stdout io.Writer) error {
 	}
 	fmt.Fprint(stdout, `  go mod tidy
   go run . users add <username> -role admin
-  gesso add module notes -guard signedIn
+  gesso add module <name> -guard signedIn -field <field>:<type>
 `)
 	return nil
 }

@@ -49,15 +49,15 @@ const addModuleHelp = `Each -field is name:type[:options and rules].
 
 Types: string, text, int, bool, float, time, date.
 Options:
-  key       the URL names a record by it, /docs/{slug}, instead of the id; unique
+  key       the URL names a record by it, /<module>/{<field>}, instead of the id; unique
   unique    a unique index; a duplicate is a 409 on the field
   index     an index
   optional  not required; an optional time or date is NULL when left out
   sort      the list is in its order, then the id's
 Rules: validate's — max=200, email, slug, oneof=draft published …
 
-  gesso add module docs -guard signedIn \\
-    -field title:string:max=200 -field slug:string:key,slug -field order:int:optional,sort
+  gesso add module <name> -guard <guard> -field <field>:<type>[:options,rules]
+  a field: slug:string:key,slug,max=100
 
 The model lands in models/models.go: change it later, then gesso gen.`
 
@@ -66,7 +66,7 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	var fieldList fieldFlags
 	fs.Var(&fieldList, "field", "a field, name:type[:options and rules]: slug:string:key,slug,max=100; again for each")
 	short := fs.String("fields", "", "fields without options, comma-separated: title:string,body:text")
-	dialect := fs.String("dialect", "postgres", "postgres, sqlite or mysql (default: the app's)")
+	dialect := fs.String("dialect", "", "postgres, sqlite or mysql (default: the app's, else postgres)")
 	parent := fs.String("dir", "internal", "the folder the module's folder goes in")
 	entity := fs.String("entity", "", "the entity's Go name (default: the module name, singular, capitalised)")
 	guard := fs.String("guard", "", "a guard from internal/guards on create, update, patch and delete")
@@ -98,6 +98,9 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 		if d := appDialect(app); d != "" {
 			*dialect = d
 		}
+	}
+	if *dialect == "" {
+		*dialect = "postgres"
 	}
 	spec, err := newSpec(pos[0], *entity, fieldList, *dialect)
 	if err != nil {

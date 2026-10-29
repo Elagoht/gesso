@@ -28,7 +28,7 @@ var commands []command
 func init() {
 	commands = []command{
 		{name: "new", args: "<module path>", summary: "make a project: main.go, internal/api, a test",
-			help: "A module path like example.com/notes; the folder is its last element unless -dir names one.",
+			help: "A module path such as example.com/<name>; the folder is its last element unless -dir names one.",
 			run:  func(c cli, a []string) (int, error) { return 0, newProject(a, c.dir, c.stdout, c.now) }},
 		{name: "init", summary: "add internal/api to the Go module here, a collage site say",
 			run: func(c cli, a []string) (int, error) { return 0, initProject(a, c.dir, c.stdout) }},

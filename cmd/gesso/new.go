@@ -22,14 +22,13 @@ import (
 var newTemplates = template.Must(template.New("").ParseFS(scaffoldFS, "scaffold/new/*.tmpl"))
 
 type projectSpec struct {
-	Module            string // example.com/docs
-	Name              string // docs
-	Dialect           string // sqlite
-	DialectGo         string // SQLite
-	DialectName       string // SQLite
-	DSNDoc            string
-	DefaultDSN        string
-	ConstraintExample string
+	Module      string // example.com/<name>
+	Name        string // <name>
+	Dialect     string // sqlite
+	DialectGo   string // SQLite
+	DialectName string // SQLite
+	DSNDoc      string
+	DefaultDSN  string
 }
 
 var modulePath = regexp.MustCompile(`^[a-z0-9][a-z0-9._~-]*(/[A-Za-z0-9._~-]+)*$`)
@@ -49,7 +48,7 @@ func newProject(args []string, dir string, stdout io.Writer, now func() time.Tim
 		return err
 	}
 	if len(pos) != 1 || !modulePath.MatchString(pos[0]) {
-		return usage("new takes a module path: gesso new example.com/docs")
+		return usage("new takes a module path: gesso new <module path>")
 	}
 	if *tmpl != "minimal" && *tmpl != "demo" {
 		msg := fmt.Sprintf("unknown -template %q: minimal or demo", *tmpl)
@@ -115,7 +114,7 @@ func newProject(args []string, dir string, stdout io.Writer, now func() time.Tim
 	if *tmpl == "demo" {
 		fmt.Fprintln(stdout, "  go run . users add <username>")
 	} else {
-		fmt.Fprintln(stdout, "  gesso add auth\n  gesso add module notes -guard signedIn -field title:string:max=200 -field body:text")
+		fmt.Fprintln(stdout, "  gesso add auth\n  gesso add module <name> -field <field>:<type>   (gesso help add module)")
 	}
 	fmt.Fprintln(stdout, "  gesso dev")
 	return nil
@@ -185,17 +184,14 @@ func newProjectSpec(module, dialect string) (projectSpec, error) {
 		s.DialectGo, s.DialectName = "SQLite", "SQLite"
 		s.DSNDoc = "the SQLite file"
 		s.DefaultDSN = name + ".db"
-		s.ConstraintExample = `{"notes.slug": "slug"}, the table and column SQLite names`
 	case "postgres":
 		s.DialectGo, s.DialectName = "Postgres", "PostgreSQL"
 		s.DSNDoc = "the PostgreSQL URL"
 		s.DefaultDSN = "postgres://localhost:5432/" + name + "?sslmode=disable"
-		s.ConstraintExample = `{"notes_slug_key": "slug"}, the constraint's name`
 	case "mysql":
 		s.DialectGo, s.DialectName = "MySQL", "MySQL"
 		s.DSNDoc = "the MySQL DSN"
 		s.DefaultDSN = "root@tcp(127.0.0.1:3306)/" + name
-		s.ConstraintExample = `{"notes.slug": "slug"}, the key's name as MySQL reports it`
 	default:
 		return s, fmt.Errorf("unknown dialect %q: sqlite, postgres or mysql", dialect)
 	}
@@ -254,7 +250,7 @@ in newApp, before collage.New:
 
 then, after it, app.Handle("/api/", gessoAPI), and run its lifecycle with
 collage plugin add elagoht/gesso (pass gessoAPI to plugins). Pages call it with
-gesso.NewLocal(gessoAPI). Modules: gesso add module notes -fields title:string
+gesso.NewLocal(gessoAPI). Modules: gesso add module <name> -field <field>:<type>
 `, spec.DefaultDSN, spec.DSNDoc)
 	return nil
 }

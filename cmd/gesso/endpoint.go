@@ -36,9 +36,9 @@ func (m *Module) {{.Handler}}(ctx context.Context, in {{.In}}) ({{.Out}}, error)
 
 type endpointSpec struct {
 	Pkg, Models  string
-	Go, Handler  string // ReorderDocs, reorderDocs
+	Go, Handler  string // the Endpoint and its handler
 	Method, Path string
-	In, Out      string // models.ReqReorderDocs, gesso.Empty
+	In, Out      string // models.Req…, gesso.Empty
 	HasTypes     bool
 	reqFields    []string // Go field lines
 	resFields    []string
@@ -68,11 +68,11 @@ func addEndpoint(args []string, dir string, stdout io.Writer) error {
 		return err
 	}
 	if len(pos) != 1 {
-		return usage("add endpoint takes <module>/<name>: gesso add endpoint docs/reorder")
+		return usage("add endpoint takes <module>/<name>")
 	}
 	modName, name, ok := strings.Cut(pos[0], "/")
 	if !ok || !identifier.MatchString(modName) || !identifier.MatchString(name) {
-		return usage("add endpoint takes <module>/<name>, lower case: gesso add endpoint docs/reorder")
+		return usage("add endpoint takes <module>/<name>, lower case")
 	}
 	*method = strings.ToUpper(*method)
 	if !map[string]bool{"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}[*method] {
