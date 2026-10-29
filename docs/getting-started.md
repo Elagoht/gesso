@@ -6,15 +6,26 @@ gesso new example.com/notes -dialect sqlite      # or postgres, mysql
 cd notes
 go mod tidy
 gesso add module notes -fields title:string,body:text,published_on:date
-go run .
+gesso dev
 ```
+
+`gesso dev` builds the program and runs it in development, and rebuilds and
+restarts it whenever a `.go`, `.sql`, `go.mod` or environment file changes. A
+build that fails leaves the running version up and prints why. Ctrl-C stops
+both.
+
+The program's `main` is one line, `gesso.Main(api.New)`, as in collage. It
+reads the environment file itself — `.env.development` under `gesso dev` (or
+`.env` when there is none), `.env` when built and run — `KEY=value` lines, a
+variable your shell sets winning. So a deployed binary needs only a `.env`
+beside it.
 
 `gesso new` writes:
 
 | File | What it is |
 | --- | --- |
-| `main.go` | reads `ADDR`, `BASE_PATH` and `DATABASE_URL`, builds the app, runs it until SIGINT or SIGTERM |
-| `internal/api/api.go` | opens the database, runs every module's migrations, maps database errors to answers, serves `/openapi.json` |
+| `main.go` | `gesso.Main(api.New)`: the environment file, then serve until SIGINT or SIGTERM, or run a command |
+| `internal/api/api.go` | `New` reads `DATABASE_URL` and `BASE_PATH`; opens the database, runs every module's migrations as the app starts, maps database errors to answers, serves `/openapi.json`, adds the `migrate` command |
 | `internal/api/api_test.go` | starts the app on an empty database |
 
 In a module that exists — a collage site — `gesso init -dialect sqlite` writes
@@ -51,6 +62,8 @@ The app migrates the database as it starts; to look or step back:
 go run . migrate status
 go run . migrate down        # the newest; down 3 for three
 ```
+
+`-addr` (or `ADDR`) says where it listens, `:8080` by default.
 
 Other commands:
 

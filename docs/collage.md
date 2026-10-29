@@ -17,7 +17,8 @@ The token comes from the API's sign-in and lives in collage's session.
 
 ## One process
 
-In the collage site's root:
+collage.Main already reads the site's `.env`, so `os.Getenv` works in
+`newApp`. In the collage site's root:
 
 ```sh
 gesso init -dialect sqlite              # internal/api: database, migrations, OpenAPI
@@ -30,7 +31,7 @@ Then, in `main.go`'s `newApp`, build the API before `collage.New`, hand it to
 off an API:
 
 ```go
-gessoAPI, err := api.New(context.Background(), api.Config{
+gessoAPI, err := api.NewWith(api.Config{
 	BasePath: "/api",
 	Database: cmp.Or(os.Getenv("DATABASE_URL"), "site.db"),
 	Logger:   slog.Default(),

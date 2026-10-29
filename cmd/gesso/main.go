@@ -2,6 +2,7 @@
 //
 //	gesso new <module path> [-dialect sqlite|postgres|mysql] [-dir name]
 //	gesso init [-dialect sqlite|postgres|mysql]
+//	gesso dev [-pkg .] [-- program args]
 //	gesso migrate new <name> [-dir migrations]
 //	gesso add module <name> [-fields title:string,seats:int] [-dialect postgres] [-dir internal]
 //	gesso check [packages]
@@ -13,9 +14,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -26,6 +30,7 @@ func main() {
 const usage = `usage:
   gesso new <module path> [-dialect sqlite|postgres|mysql] [-dir name]
   gesso init [-dialect sqlite|postgres|mysql]   internal/api in an existing module
+  gesso dev [-pkg .] [-- args]   run it, with .env; rebuild and restart on changes
   gesso migrate new <name> [-dir migrations]
   gesso add module <name> [-fields title:string,seats:int] [-dialect postgres|sqlite|mysql] [-dir internal]
   gesso check [packages]   (default ./...)
@@ -45,6 +50,10 @@ func run(args []string, dir string, stdout, stderr io.Writer, now func() time.Ti
 		err = newProject(args[1:], dir, stdout)
 	case args[0] == "init":
 		err = initProject(args[1:], dir, stdout)
+	case args[0] == "dev":
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err = devCommand(ctx, args[1:], dir, stdout, stderr)
+		stop()
 	case len(args) >= 2 && args[0] == "migrate" && args[1] == "new":
 		err = migrateNew(args[2:], dir, stdout, now)
 	case len(args) >= 2 && args[0] == "add" && args[1] == "module":

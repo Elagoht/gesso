@@ -3,6 +3,26 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## v0.9.1 (unreleased)
+
+As collage does it:
+
+- **`gesso.Main(api.New)`**: a program's whole `main`. It reads the working
+  directory's `.env` — `.env.development`, or `.env`, under `gesso dev` — a
+  variable the environment sets winning; hands `api.New` a `gesso.Env` (Dev,
+  Addr from `-addr`/`ADDR`, a Logger); serves until SIGTERM, or runs the app's
+  command named on the command line: `app migrate status`.
+  `gesso.LoadEnvFile` for a program of its own making.
+- **`App.Command`** registers such a command; **`migrate.Command`** is the
+  migrate one (status, up, down [n]).
+- **`gesso dev`**: builds and runs the program in development (`GESSO_DEV=1`),
+  rebuilding and restarting it on changes to `.go`, `.sql`, `go.mod` and the
+  environment files; a failed build keeps the running version.
+- `gesso new`: `main.go` is `gesso.Main(api.New)`; `api.New(env)` reads
+  `DATABASE_URL` and `BASE_PATH`, `api.NewWith(cfg)` takes a config (a collage
+  site, a test); migrations run when the app starts, not when it is built, so
+  `migrate status` sees the database as it is. `.env` is ignored in git.
+
 ## v0.9.0 — 2026-10-29
 
 - **mail.SMTP**: STARTTLS by default (implicit TLS on 465; plain only to this

@@ -80,6 +80,7 @@ the OnShutdown hooks, after collage's server has stopped.
 go install github.com/Elagoht/gesso/cmd/gesso@latest
 gesso new example.com/events -dialect postgres   # main, app wiring, a test
 cd events && go mod tidy
+gesso dev              # run it with .env; rebuilt and restarted as you edit
 gesso add module events -fields title:string,seats:int,starts_at:time,day:date,body:text
                        # scaffolded under internal/, and wired into internal/api
 gesso migrate new add_event_city -dir internal/events/migrations

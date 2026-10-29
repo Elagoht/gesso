@@ -57,13 +57,12 @@ func newProject(args []string, dir string, stdout io.Writer) error {
 	}
 	files := map[string]string{
 		"main.go":                  "main.go.tmpl",
-		"migrate.go":               "migrate.go.tmpl",
 		"internal/api/api.go":      "api.go.tmpl",
 		"internal/api/api_test.go": "api_test.go.tmpl",
 		".gitignore":               "gitignore.tmpl",
 		"README.md":                "README.md.tmpl",
 	}
-	for _, name := range []string{"main.go", "migrate.go", "internal/api/api.go", "internal/api/api_test.go", ".gitignore", "README.md"} {
+	for _, name := range []string{"main.go", "internal/api/api.go", "internal/api/api_test.go", ".gitignore", "README.md"} {
 		var buf bytes.Buffer
 		if err := newTemplates.ExecuteTemplate(&buf, files[name], spec); err != nil {
 			return err
@@ -83,7 +82,7 @@ func newProject(args []string, dir string, stdout io.Writer) error {
 		return err
 	}
 	rel, _ := filepath.Rel(dir, target)
-	fmt.Fprintf(stdout, "\nnext:\n  cd %s\n  go mod tidy\n  gesso add module notes -fields title:string,body:text\n  go run .\n", rel)
+	fmt.Fprintf(stdout, "\nnext:\n  cd %s\n  go mod tidy\n  gesso add module notes -fields title:string,body:text\n  gesso dev\n", rel)
 	return nil
 }
 
@@ -164,7 +163,7 @@ func initProject(args []string, dir string, stdout io.Writer) error {
 next: build the API where the program starts, and serve it. In a collage site,
 in newApp, before collage.New:
 
-	gessoAPI, err := api.New(context.Background(), api.Config{
+	gessoAPI, err := api.NewWith(api.Config{
 		BasePath: "/api",
 		Database: cmp.Or(os.Getenv("DATABASE_URL"), %q), // %s
 		Logger:   slog.Default(),

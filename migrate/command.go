@@ -1,34 +1,23 @@
-package main
+package migrate
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strconv"
-
-	"{{.Module}}/internal/api"
 )
 
-// migrateCommand runs "migrate status | up | down [n]" and returns the exit code.
-func migrateCommand(args []string, dsn string) int {
-	if err := runMigrate(args, dsn); err != nil {
-		fmt.Fprintln(os.Stderr, "migrate:", err)
-		return 1
-	}
-	return 0
-}
-
-func runMigrate(args []string, dsn string) (err error) {
+// Command runs a migrate command on m, writing what it did to out — the
+// "migrate" command of an app's binary:
+//
+//	status      every migration, applied or pending
+//	up          apply the pending ones
+//	down [n]    revert the newest n (1)
+func Command(ctx context.Context, m *Migrator, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("want status, up or down [n]")
 	}
-	m, closeDB, err := api.Migrator(dsn)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, closeDB()) }()
-	ctx := context.Background()
 	switch args[0] {
 	case "status":
 		st, err := m.Status(ctx)
@@ -36,25 +25,26 @@ func runMigrate(args []string, dsn string) (err error) {
 			return err
 		}
 		for _, s := range st {
-			fmt.Printf("%d  %-8s %s\n", s.Version, s.State, s.Name)
+			fmt.Fprintf(out, "%d  %-8s %s\n", s.Version, s.State, s.Name)
 		}
 		return nil
 	case "up":
 		done, err := m.Up(ctx)
 		for _, mg := range done {
-			fmt.Printf("applied  %d %s\n", mg.Version, mg.Name)
+			fmt.Fprintf(out, "applied  %d %s\n", mg.Version, mg.Name)
 		}
 		return err
 	case "down":
 		n := 1
 		if len(args) > 1 {
+			var err error
 			if n, err = strconv.Atoi(args[1]); err != nil || n < 1 {
 				return fmt.Errorf("down takes a count of 1 or more, got %q", args[1])
 			}
 		}
 		done, err := m.Down(ctx, n)
 		for _, mg := range done {
-			fmt.Printf("reverted %d %s\n", mg.Version, mg.Name)
+			fmt.Fprintf(out, "reverted %d %s\n", mg.Version, mg.Name)
 		}
 		return err
 	}

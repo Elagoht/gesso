@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -120,6 +121,7 @@ type App struct {
 	draining atomic.Bool // Run is stopping: readiness answers 503
 	metrics  *metrics
 	ready    readiness // the last readiness result
+	commands map[string]func(context.Context, []string, io.Writer) error
 }
 
 // New builds an app from its modules. Every route problem — a bad pattern, two

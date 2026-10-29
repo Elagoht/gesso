@@ -5,12 +5,14 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
+	"os"
 
 	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/db"
@@ -56,9 +58,24 @@ var constraints = map[string]string{}
 // dialect is the SQL the migrations and the repositories are written in.
 var dialect = migrate.{{.DialectGo}}
 
-// New opens the database, brings its schema up to date and builds the app. The
-// app closes the database when it shuts down.
-func New(ctx context.Context, cfg Config) (*gesso.App, error) {
+// New builds the API from the environment gesso.Main read:
+//
+//	DATABASE_URL  {{.DSNDoc}} (default {{.DefaultDSN}})
+//	BASE_PATH     the prefix every route is under: "/api" behind a proxy that
+//	              passes the full path on
+func New(env gesso.Env) (*gesso.App, error) {
+	return NewWith(Config{
+		Addr:     env.Addr,
+		BasePath: os.Getenv("BASE_PATH"),
+		Database: cmp.Or(os.Getenv("DATABASE_URL"), "{{.DefaultDSN}}"),
+		Logger:   env.Logger,
+	})
+}
+
+// NewWith builds the API from cfg: a collage site, or a test, gives one of
+// its own. The database's migrations run when the app starts — Run, or
+// collage-gesso when collage serves — and it closes when the app shuts down.
+func NewWith(cfg Config) (*gesso.App, error) {
 	if cfg.Database == "" {
 		return nil, errors.New("api: Config.Database is empty: name the database")
 	}
@@ -66,20 +83,52 @@ func New(ctx context.Context, cfg Config) (*gesso.App, error) {
 	if err != nil {
 		return nil, err
 	}
-	app, err := build(ctx, d, cfg)
+	app, err := gesso.New(gesso.Config{
+		Addr:         cfg.Addr,
+		BasePath:     cfg.BasePath,
+		Logger:       cfg.Logger,
+		ErrorMappers: []gesso.ErrorMapper{db.Errors(classify, constraints)},
+		// The OpenAPI document maps every route, to anyone who asks: guard it, or
+		// leave Path empty to only generate it, before the API is public.
+		OpenAPI:   &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json"},
+		AccessLog: true,
+		// /healthz answers while the process runs; /readyz while the database
+		// does too, and turns 503 when the app begins to stop.
+		Health: &gesso.Health{Checks: map[string]func(context.Context) error{"database": d.PingContext}},
+	}, append([]gesso.Module{schema{dsn: cfg.Database}}, modules(Deps{DB: d})...)...)
 	if err != nil {
 		return nil, errors.Join(err, d.Close())
 	}
 	app.OnShutdown(func(context.Context) error { return d.Close() })
+	app.Command("migrate", func(ctx context.Context, args []string, out io.Writer) error {
+		m, closeDB, err := migrator(cfg.Database)
+		if err != nil {
+			return err
+		}
+		return errors.Join(migrate.Command(ctx, m, args, out), closeDB())
+	})
 	return app, nil
 }
 
-// Migrator is the app's migrations on the database at dsn, for the migrate
-// command, and the closing of the connection it opened.
-func Migrator(dsn string) (*migrate.Migrator, func() error, error) {
-	if dsn == "" {
-		return nil, nil, errors.New("api: no database named")
+// schema brings the database up to date as the app starts, before it serves.
+type schema struct{ dsn string }
+
+func (schema) Routes(*gesso.Router) {}
+
+func (s schema) Start(ctx context.Context) error {
+	m, closeDB, err := migrator(s.dsn)
+	if err != nil {
+		return err
 	}
+	_, err = m.Up(ctx)
+	return errors.Join(err, closeDB())
+}
+
+// migrator is the app's migrations on the database at dsn, and the closing
+// of the connection it opened{{if eq .Dialect "mysql"}} — one of its own, which takes several statements in
+// one Exec; the app's pool does not, so an injected "; DROP" is never a second
+// statement{{end}}.
+func migrator(dsn string) (*migrate.Migrator, func() error, error) {
 {{- if eq .Dialect "mysql"}}
 	d, err := openMigrator(dsn)
 {{- else}}
@@ -93,44 +142,6 @@ func Migrator(dsn string) (*migrate.Migrator, func() error, error) {
 		return nil, nil, errors.Join(err, d.Close())
 	}
 	return m, d.Close, nil
-}
-
-func build(ctx context.Context, d *sql.DB, cfg Config) (*gesso.App, error) {
-	if err := d.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("api: database: %w", err)
-	}
-{{- if eq .Dialect "mysql"}}
-	// Migrations run on a connection of their own that takes several
-	// statements in one Exec; the app's pool does not, so an injected "; DROP"
-	// is never a second statement.
-	md, err := openMigrator(cfg.Database)
-	if err != nil {
-		return nil, err
-	}
-	defer md.Close()
-	m, err := migrate.New(md, dialect, migrations()...)
-{{- else}}
-	m, err := migrate.New(d, dialect, migrations()...)
-{{- end}}
-	if err != nil {
-		return nil, err
-	}
-	if _, err := m.Up(ctx); err != nil {
-		return nil, fmt.Errorf("api: migrations: %w", err)
-	}
-	return gesso.New(gesso.Config{
-		Addr:         cfg.Addr,
-		BasePath:     cfg.BasePath,
-		Logger:       cfg.Logger,
-		ErrorMappers: []gesso.ErrorMapper{db.Errors(classify, constraints)},
-		// The OpenAPI document maps every route, to anyone who asks: guard it, or
-		// leave Path empty to only generate it, before the API is public.
-		OpenAPI:      &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json"},
-		AccessLog:    true,
-		// /healthz answers while the process runs; /readyz while the database
-		// does too, and turns 503 when the app begins to stop.
-		Health: &gesso.Health{Checks: map[string]func(context.Context) error{"database": d.PingContext}},
-	}, modules(Deps{DB: d})...)
 }
 {{if eq .Dialect "sqlite"}}
 // open opens the SQLite file at path: foreign keys enforced, readers beside

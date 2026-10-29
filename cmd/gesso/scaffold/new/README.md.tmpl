@@ -5,8 +5,17 @@ A JSON API on [gesso](https://github.com/Elagoht/gesso), on {{.DialectName}}.
 ```sh
 go mod tidy
 gesso add module notes -fields title:string,body:text,published_on:date
-go run .                        # DATABASE_URL={{.DefaultDSN}}
+gesso dev                       # run it; rebuilt and restarted as files change
+go run .                        # or once
 go test ./...
+```
+
+Settings come from the environment, or a `.env` file beside the program —
+`.env.development` under `gesso dev`:
+
+```sh
+DATABASE_URL={{.DefaultDSN}}
+ADDR=:8080
 ```
 
 `gesso add module` scaffolds a module under `internal/` and adds it to

@@ -1,48 +1,14 @@
-// Command {{.Name}} serves the API. Its settings come from the environment:
-//
-//	ADDR          where it listens (default :8080)
-//	BASE_PATH     the prefix every route is under, "/api" behind a proxy that
-//	              passes the full path on (default: none)
-//	DATABASE_URL  {{.DSNDoc}} (default {{.DefaultDSN}})
-//
-// It brings the database up to date as it starts. To look or to step back:
-//
-//	{{.Name}} migrate status    every migration, applied or pending
-//	{{.Name}} migrate up        apply the pending ones, and stop
-//	{{.Name}} migrate down [n]  revert the newest n (1)
+// Command {{.Name}} serves the API: gesso.Main reads .env (.env.development under
+// gesso dev), builds it with api.New, and serves it until SIGINT or SIGTERM —
+// or runs one of its commands: {{.Name}} migrate status | up | down [n].
 package main
 
 import (
-	"context"
-	"log/slog"
-	"os"
+	"github.com/Elagoht/gesso"
 
 	"{{.Module}}/internal/api"
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "migrate" {
-		os.Exit(migrateCommand(os.Args[2:], env("DATABASE_URL", "{{.DefaultDSN}}")))
-	}
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	a, err := api.New(context.Background(), api.Config{
-		Addr:     env("ADDR", ":8080"),
-		BasePath: os.Getenv("BASE_PATH"),
-		Database: env("DATABASE_URL", "{{.DefaultDSN}}"),
-		Logger:   logger,
-	})
-	if err == nil {
-		err = a.Run()
-	}
-	if err != nil {
-		logger.Error("{{.Name}}", "error", err)
-		os.Exit(1)
-	}
-}
-
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+	gesso.Main(api.New)
 }
