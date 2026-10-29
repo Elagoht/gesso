@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## Unreleased
+## v0.9.2 — 2026-10-29
 
 - **`gesso new` pins gesso**: the go.mod it writes requires the gesso release
   the CLI was installed as (`cmd/gesso@v0.9.2` → `gesso v0.9.2`). `go mod tidy`
