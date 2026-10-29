@@ -8,9 +8,11 @@ go run . users add ada -role admin      # the first user; the password is asked 
 gesso add module notes -guard signedIn  # writes need a signed-in user
 ```
 
-`add auth` wires the `auth` package into `internal/api/register.go` — none of
-its code is copied in, so a fix reaches the app with `go get` — and writes the
-`signedIn` guard.
+`add auth` adds `auth.New()` to `app.Register` in `register.go` — none of its
+code is copied in, so a fix reaches the app with `go get` — and writes the
+`signedIn` guard. On an app with a `Config.Database`, `auth.New()` keeps the
+users in a table, makes its tables as the app starts, adds the `users`
+command, and is the app's authenticator.
 
 | Endpoint | |
 | --- | --- |
@@ -25,13 +27,22 @@ address and username, 20 per address — never per username alone. Behind a
 proxy, set `auth.Options.TrustedProxies`.
 
 The users are in `gesso_users`: usernames matched exactly, argon2id hashes,
-roles. No sign-up endpoint; `SQL.Create` is there for one of your own. The
-`users` command: `add <name> [-role r]...`, `password <name>`, `roles <name>
-[role]...`, `delete <name>`, `list` — the last three sign the user out.
+roles. No sign-up endpoint; `SQL.Create` is there for one of your own:
+
+```go
+authn, _ := gesso.ModuleOf[*auth.Module](app)
+u, err := authn.Users().(*auth.SQL).Create(ctx, "ada", password)
+```
+
+The `users` command: `add <name> [-role r]...`, `password <name>`, `roles
+<name> [role]...`, `delete <name>`, `list`. Each request reads its user again:
+a role taken away or a user deleted counts from the next request.
+`gesso.IdentityFrom(ctx)` gives the user's id as `Subject`, the username as
+`Name`, and the roles.
 
 Another source of users — one from your own settings (`auth.NewSingle`), a
-directory — is an `auth.Users` given to `auth.New` in `newDeps`;
-`auth/authtest` is its contract.
+directory — is an `auth.Users`: `auth.New(auth.Options{Users: users})` in
+`register.go`. `auth/authtest` is its contract.
 
 ## Guards
 
@@ -48,21 +59,28 @@ func Admin(r *http.Request) error {
 }
 ```
 
-`-guard` goes on create, update, patch and delete; reads stay open. It refuses a
-guard that does not exist.
+`-guard` goes on create, update, patch, delete and reorder (`//gesso:write`),
+`-read` on get and list (`//gesso:read`); without `-read`, reads stay open.
+Both refuse a guard that does not exist. A guard can also hide a field, or
+records, from those who do not pass it: see [Modules and
+handlers](modules-and-handlers.md).
 
 ## Bearer tokens
 
 The auth module issues them; for a sign-in of your own:
 
 ```go
-tokens := token.NewIssuer(token.NewSQL(pool, migrate.Postgres), nil, 30*24*time.Hour)
-// token.Migrate(ctx, pool, migrate.Postgres) creates its table
+// in your sign-in module's Init
+m.tokens = token.NewIssuer(token.NewSQL(app.DB(), app.Dialect()), nil, 30*24*time.Hour)
+app.Schema(token.Migrate) // its table
 
-app, err := gesso.New(gesso.Config{Authenticator: tokens}, login.New(tokens), notes.New(…))
+// registered, the module is the app's authenticator
+func (m *Module) Authenticate(r *http.Request) (gesso.Identity, bool, error) {
+	return m.tokens.Authenticate(r)
+}
 
-raw, rec, err := tokens.Issue(ctx, userID, "editor") // at sign-in: give raw to the client
-err = tokens.Revoke(ctx, token.FromRequest(gesso.Request(ctx)))
+raw, rec, err := m.tokens.Issue(ctx, userID, "editor") // at sign-in: give raw to the client
+err = m.tokens.Revoke(ctx, token.FromRequest(gesso.Request(ctx)))
 ```
 
 Tokens are opaque (`gso_…`); only their SHA-256 is stored. No credential is
@@ -75,6 +93,7 @@ never a cookie.
 CreateNote.Handle(r, m.create, gesso.Guards(gesso.RequireIdentity))
 r.Group("/admin", func(g *gesso.Router) { g.Guard(gesso.RequireRole("admin")) … })
 id, ok := gesso.IdentityFrom(ctx)
+if gesso.Allowed(ctx, guards.Admin) { … }
 ```
 
 A guard runs before the input is read: a refused caller learns nothing of what
@@ -105,10 +124,10 @@ By default the buckets are in the process's memory, so N replicas let a client
 through N times as often. To share them:
 
 ```go
-ratelimit.Migrate(ctx, pool, migrate.Postgres) // the gesso_ratelimit table
+app.Schema(ratelimit.Migrate) // the gesso_ratelimit table
 limit := ratelimit.New(ratelimit.Options{
 	Requests: 5, Per: time.Minute,
-	Store:    ratelimit.NewSQL(pool, migrate.Postgres), // MySQL, SQLite too
+	Store:    ratelimit.NewSQL(app.DB(), app.Dialect()),
 })
 ```
 
@@ -122,8 +141,8 @@ A client that retries a POST — the network failed after it was sent — must
 not pay twice. With the `idempotency` middleware it sends `Idempotency-Key`:
 
 ```go
-idempotency.Migrate(ctx, pool, migrate.Postgres)
-keys := idempotency.New(idempotency.Options{Store: idempotency.NewSQL(pool, migrate.Postgres)})
+app.Schema(idempotency.Migrate)
+keys := idempotency.New(idempotency.Options{Store: idempotency.NewSQL(app.DB(), app.Dialect())})
 r.Group("/orders", func(g *gesso.Router) { g.Use(keys.Middleware()); … })
 ```
 
@@ -139,7 +158,7 @@ calling `api.example.com` — needs the API's leave:
 ```go
 gesso.New(gesso.Config{CORS: &gesso.CORS{
 	Origins: []string{"https://app.example.com"},
-}}, …)
+}})
 ```
 
 gesso answers the browser's preflight (`OPTIONS`) for a route that exists, and

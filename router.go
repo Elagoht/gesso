@@ -136,6 +136,8 @@ func (r *Router) Handle(method, pattern string, h http.Handler) {
 	}
 	if r.auth != nil {
 		h = authenticating{auth: r.auth, next: h, errs: &r.app.errs}
+	} else {
+		h = authenticating{app: r.app, next: h, errs: &r.app.errs}
 	}
 	for _, mw := range slices.Backward(r.mws) {
 		h = mw(h)

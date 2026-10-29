@@ -3,6 +3,56 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## Unreleased
+
+The model writes the module, and the app writes almost nothing. This breaks
+v0.12 apps: make the project again with `gesso new`, `gesso add auth` and
+`gesso add module`, move the model's fields over, and keep your own code as
+hooks.
+
+- **`main.go` makes the app, `register.go` registers**: `gesso.Config` takes
+  `Env` (Main's address, logger and `BASE_PATH`) and `Database`
+  (`gesso/sqlite`, `gesso/postgres`, `gesso/mysql`: `sqlite.Open(path)`); the
+  app opens it, migrates it as it starts, closes it, answers unique violations
+  409 on their field, and adds `migrate`. `register.go` is
+  `app.Register(auth.New(), docs.New())`, with `app.Command` and `app.Use`
+  lines from `gesso add command|middleware`. `internal/api/api.go`, `Deps`,
+  `newDeps` and the lists are gone (`gesso init`, for a collage site, still
+  writes `internal/api`: `api.New(url, basePath)`).
+- **Modules set themselves up**: `gesso.Initializer` (`Init(app)`), with
+  `App.DB`, `App.Dialect`, `App.Migrations`, `App.Schema`, `App.Constraints`,
+  `App.Command`, `App.Use`, `gesso.ModuleOf`. A registered module that is an
+  Authenticator is the app's, found per request, so registration order does
+  not matter.
+- **Short routes**: `gesso.Get(r, "/docs/{slug}", m.get, opts...)` (and
+  `Post`, `Put`, `Patch`, `Delete`) take In and Out from the handler, and
+  return the Endpoint. `gesso.Allowed(ctx, guard)`.
+- **`auth.New()`** takes no options on an app with a database: users in a
+  table, its migrations, the `users` command, the authenticator.
+  `auth.New(auth.Options{…})` for anything else. `gesso.Identity.Name` is the
+  username, read again each request with the roles.
+- **`gesso gen` writes the whole module**: `module.gen.go` (the module, its
+  routes, handlers and Endpoints) beside `repository.gen.go` and the requests
+  and responses. `add module` writes only `models/models.go`; `endpoints.go`,
+  `handler.go` and `service.go` are gone. Your code goes in hooks gen finds by
+  name on `*Module`: `BeforeCreate`, `BeforeUpdate` (in a transaction, on the
+  merged record), `BeforeDelete`, and `routes` for routes of your own, where
+  `gesso add endpoint` writes.
+- **The model says more**:
+  - `//gesso:sortable`: records in the client's order; new ones last;
+    `PUT /<table>/order` with `{"keys": […]}` reorders what the caller sees.
+  - `//gesso:write <guard>`, `//gesso:read <guard>` (`add module -guard`,
+    `-read`, `-sortable`).
+  - `listable`: the list answers these fields (`ResXItem`), a record all.
+  - `filterable`: `?author=ada`. `orderable`: `?order=title`, `?order=-title`.
+  - `guard=<guard>`: a field only the guard's callers see and write; a PUT by
+    others keeps it.
+  - `gate=<guard>` on a bool: records with it false exist only for the guard's
+    callers.
+  - An optional time or date is a pointer.
+- `gesso new` has no `/healthz` until `Config.Health` is set; its test starts
+  the app and asks for `/openapi.json`.
+
 ## v0.12.0 — 2026-10-29
 
 - **Swagger UI**: `OpenAPIConfig.UI` serves it at a path, `gesso.ServeSwaggerUI()`

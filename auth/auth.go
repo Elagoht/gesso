@@ -2,12 +2,12 @@
 // and ChangePassword, issues the bearer tokens of package token, and is the
 // app's gesso.Authenticator.
 //
-//	authn, err := auth.New(auth.Options{DB: d, Dialect: dialect, Users: auth.NewSingle(user, pass)})
-//	app, err := gesso.New(gesso.Config{Authenticator: authn, …}, authn, notes.New(…))
+//	app.Register(auth.New(), …)
 //
-// Its tables are made by token.Migrate — the tokens' — or by Migrate, the
-// tokens' and NewSQL's users', each in a history of its own: gesso new's
-// api.go runs them, from its stores, on the connection its migrations run on.
+// Registered with no Options on an app with a Config.Database, it keeps the
+// users in a table (NewSQL) and the tokens beside them, makes both tables as
+// the app starts (Migrate), adds the "users" command, and is the app's
+// authenticator. Options set another source of users, another token store.
 //
 // Who may sign in is a Users: NewSingle, one user from the server's settings;
 // NewSQL, a table of users with argon2id password hashes, managed with its
@@ -29,6 +29,7 @@ import (
 	"math"
 	"net/http"
 	"net/netip"
+	"os"
 	"strconv"
 	"time"
 
@@ -74,10 +75,44 @@ type Module struct {
 	addr    func(*http.Request) string
 }
 
-// New builds the module from opts.
-func New(opts Options) (*Module, error) {
+// New is the module; it is built from opts, at most one, when the app
+// registers it.
+func New(opts ...Options) *Module {
+	m := &Module{}
+	if len(opts) > 0 {
+		m.opts = opts[0]
+	}
+	return m
+}
+
+// Init builds the module, taking from app what opts leave out: the database
+// for the tokens and, with no Users, for a table of users with its command.
+func (m *Module) Init(app *gesso.App) error {
+	opts := m.opts
+	if (opts.Users == nil || (opts.TokenStore == nil && opts.DB == nil)) && app.DB() != nil {
+		if opts.DB == nil {
+			opts.DB, opts.Dialect = app.DB(), app.Dialect()
+		}
+		if opts.Users == nil {
+			users := NewSQL(opts.DB, opts.Dialect)
+			opts.Users = users
+			app.Schema(Migrate)
+			app.Command("users", users.Command(os.Stdin))
+		} else if opts.TokenStore == nil {
+			app.Schema(token.Migrate)
+		}
+	}
+	built, err := build(opts)
+	if err != nil {
+		return err
+	}
+	*m = *built
+	return nil
+}
+
+func build(opts Options) (*Module, error) {
 	if opts.Users == nil {
-		return nil, errors.New("auth: Options.Users is nil: name who may sign in")
+		return nil, errors.New("auth: no users: give Options.Users, or the app a Config.Database")
 	}
 	if s, ok := opts.Users.(*Single); ok && s.empty() {
 		return nil, errors.New("auth: NewSingle needs a username and a password")
@@ -85,7 +120,7 @@ func New(opts Options) (*Module, error) {
 	store := opts.TokenStore
 	if store == nil {
 		if opts.DB == nil {
-			return nil, errors.New("auth: Options.DB is nil: the tokens need a database, or a TokenStore")
+			return nil, errors.New("auth: the tokens need a database — Options.DB or the app's — or a TokenStore")
 		}
 		store = token.NewSQL(opts.DB, opts.Dialect)
 	}
@@ -116,13 +151,29 @@ func New(opts Options) (*Module, error) {
 	}, nil
 }
 
+// Users are who may sign in: a *SQL when the module made the table itself.
+func (m *Module) Users() Users { return m.opts.Users }
+
 // Tokens is the module's token issuer: Purge it from a scheduled job, revoke a
 // subject's tokens when the application locks them out.
 func (m *Module) Tokens() *token.Issuer { return m.tokens }
 
-// Authenticate finds the request's identity from its bearer token.
+// Authenticate finds the request's identity from its bearer token, with the
+// user's name and roles as they are now: a role taken away, a user deleted,
+// count from the next request.
 func (m *Module) Authenticate(r *http.Request) (gesso.Identity, bool, error) {
-	return m.tokens.Authenticate(r)
+	id, ok, err := m.tokens.Authenticate(r)
+	if !ok || err != nil {
+		return id, ok, err
+	}
+	u, err := m.opts.Users.Lookup(r.Context(), id.Subject)
+	if errors.Is(err, ErrNoUser) {
+		return gesso.Identity{}, false, gesso.ErrInvalidToken
+	}
+	if err != nil {
+		return gesso.Identity{}, false, err
+	}
+	return gesso.Identity{Subject: u.ID, Name: u.Username, Roles: u.Roles}, true, nil
 }
 
 // Routes registers the endpoints; ChangePassword only when the Users are a

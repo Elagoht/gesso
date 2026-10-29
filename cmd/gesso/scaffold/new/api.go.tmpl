@@ -1,180 +1,20 @@
-// Package api builds the app from its settings. The modules, their migrations
-// and gesso's own tables are listed in register.go.
+// Package api is the site's JSON API, served beside its pages.
 package api
 
 import (
-	"cmp"
-	"context"
-	"database/sql"
-	"errors"
-	"io"
-	"log/slog"
-	"maps"
-	"os"
-
 	"github.com/Elagoht/gesso"
-	"github.com/Elagoht/gesso/db"
-	"github.com/Elagoht/gesso/migrate"
-{{- if eq .Dialect "sqlite"}}
-	"modernc.org/sqlite"
-{{- else if eq .Dialect "postgres"}}
-	"github.com/jackc/pgx/v5/pgconn"
-	_ "github.com/jackc/pgx/v5/stdlib"
-{{- else}}
-	"github.com/go-sql-driver/mysql"
-{{- end}}
+	"github.com/Elagoht/gesso/{{.Dialect}}"
 )
 
-type Config struct {
-	Addr     string
-	BasePath string // "/api" when collage mounts the app at /api/
-	Database string // {{.DSNDoc}}
-	Logger   *slog.Logger
-}
-
-var dialect = migrate.{{.DialectGo}}
-
-// New reads DATABASE_URL (default {{.DefaultDSN}}) and BASE_PATH.
-func New(env gesso.Env) (*gesso.App, error) {
-	return NewWith(Config{
-		Addr:     env.Addr,
-		BasePath: os.Getenv("BASE_PATH"),
-		Database: cmp.Or(os.Getenv("DATABASE_URL"), "{{.DefaultDSN}}"),
-		Logger:   env.Logger,
-	})
-}
-
-func NewWith(cfg Config) (*gesso.App, error) {
-	if cfg.Database == "" {
-		return nil, errors.New("api: Config.Database is empty")
-	}
-	d, err := open(cfg.Database)
-	if err != nil {
-		return nil, err
-	}
-	deps, err := newDeps(d)
-	if err != nil {
-		return nil, errors.Join(err, d.Close())
-	}
+// New is the API under basePath, keeping its records in the database at url.
+func New(url, basePath string) (*gesso.App, error) {
 	app, err := gesso.New(gesso.Config{
-		Addr:          cfg.Addr,
-		BasePath:      cfg.BasePath,
-		Logger:        cfg.Logger,
-		Authenticator: authenticator(deps),
-		Middleware:    appMiddleware(),
-		ErrorMappers:  []gesso.ErrorMapper{db.Errors(classify, merged(constraints()))},
-		OpenAPI:       &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json", UI: "/swagger"},
-		AccessLog:     true,
-		Health:        &gesso.Health{Checks: map[string]func(context.Context) error{"database": d.PingContext}},
-	}, append([]gesso.Module{schema{dsn: cfg.Database}}, modules(deps)...)...)
-	if err != nil {
-		return nil, errors.Join(err, d.Close())
-	}
-	app.OnShutdown(func(context.Context) error { return d.Close() })
-	app.Command("migrate", func(ctx context.Context, args []string, out io.Writer) error {
-		m, conn, err := migrator(cfg.Database)
-		if err != nil {
-			return err
-		}
-		return errors.Join(migrate.Command(ctx, m, args, out), conn.Close())
+		BasePath: basePath,
+		Database: {{.Dialect}}.Open(url),
+		OpenAPI:  &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json", UI: "/swagger"},
 	})
-	for name, run := range appCommands(deps) {
-		app.Command(name, run)
-	}
-	return app, nil
-}
-
-func merged(ms []map[string]string) map[string]string {
-	out := map[string]string{}
-	for _, m := range ms {
-		maps.Copy(out, m)
-	}
-	return out
-}
-
-// schema migrates the database as the app starts: the modules', then the stores'.
-type schema struct{ dsn string }
-
-func (schema) Routes(*gesso.Router) {}
-
-func (s schema) Start(ctx context.Context) error {
-	m, conn, err := migrator(s.dsn)
-	if err != nil {
-		return err
-	}
-	if _, err := m.Up(ctx); err != nil {
-		return errors.Join(err, conn.Close())
-	}
-	for _, store := range stores() {
-		if err := store(ctx, conn, dialect); err != nil {
-			return errors.Join(err, conn.Close())
-		}
-	}
-	return conn.Close()
-}
-
-func migrator(dsn string) (*migrate.Migrator, *sql.DB, error) {
-{{- if eq .Dialect "mysql"}}
-	d, err := openMigrator(dsn)
-{{- else}}
-	d, err := open(dsn)
-{{- end}}
-	if err != nil {
-		return nil, nil, err
-	}
-	m, err := migrate.New(d, dialect, migrations()...)
-	if err != nil {
-		return nil, nil, errors.Join(err, d.Close())
-	}
-	return m, d, nil
-}
-{{if eq .Dialect "sqlite"}}
-func open(path string) (*sql.DB, error) {
-	return sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
-}
-
-func classify(err error) (db.Violation, bool) {
-	var se *sqlite.Error
-	if !errors.As(err, &se) {
-		return db.Violation{}, false
-	}
-	return db.SQLiteViolation(se.Code(), se.Error())
-}
-{{else if eq .Dialect "postgres"}}
-func open(dsn string) (*sql.DB, error) { return sql.Open("pgx", dsn) }
-
-func classify(err error) (db.Violation, bool) {
-	var pe *pgconn.PgError
-	if !errors.As(err, &pe) {
-		return db.Violation{}, false
-	}
-	return db.PostgresViolation(pe.Code, pe.ConstraintName)
-}
-{{else}}
-func open(dsn string) (*sql.DB, error) { return openMySQL(dsn, false) }
-
-// openMigrator takes several statements per Exec, as a migration file needs;
-// the app's pool does not.
-func openMigrator(dsn string) (*sql.DB, error) { return openMySQL(dsn, true) }
-
-func openMySQL(dsn string, multi bool) (*sql.DB, error) {
-	cfg, err := mysql.ParseDSN(dsn)
 	if err != nil {
 		return nil, err
 	}
-	cfg.MultiStatements, cfg.ParseTime = multi, true
-	c, err := mysql.NewConnector(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return sql.OpenDB(c), nil
+	return app, register(app)
 }
-
-func classify(err error) (db.Violation, bool) {
-	var me *mysql.MySQLError
-	if !errors.As(err, &me) {
-		return db.Violation{}, false
-	}
-	return db.MySQLViolation(me.Number, me.Message)
-}
-{{end -}}

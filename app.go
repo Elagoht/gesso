@@ -3,9 +3,11 @@ package gesso
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -18,12 +20,20 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/Elagoht/gesso/migrate"
 )
 
 const defaultMaxBody = 1 << 20
 
 // Config is an App's settings. The zero value serves at "/" with sensible limits.
 type Config struct {
+	// Env, when set, gives what Main read: Addr, Logger and BasePath, unless
+	// they are set here.
+	Env Env
+	// Database, when set, is the app's database: gesso/sqlite, gesso/postgres or
+	// gesso/mysql. Modules take it in Init with App.DB.
+	Database Database
 	// BasePath is the prefix every route is under: "/api" when collage mounts the
 	// app with app.Handle("/api/", …), which passes the full path on; "" when the
 	// app runs as its own process at the root.
@@ -52,7 +62,8 @@ type Config struct {
 	OpenAPI *OpenAPIConfig
 	// Authenticator finds the identity of every request, for every module: each
 	// module's router starts with it, and one that needs another (a partner API
-	// with signed requests) replaces it with Router.Authenticate. Nil leaves
+	// with signed requests) replaces it with Router.Authenticate. Nil takes a
+	// registered module that is an Authenticator — the sign-in module — or leaves
 	// every request anonymous until a router sets one.
 	Authenticator Authenticator
 	// Middleware wraps every module's routes, outermost first, outside what a
@@ -85,6 +96,7 @@ type Config struct {
 }
 
 // Module is a feature: it registers its routes. A module that also implements
+// Initializer is set up from the app before its routes; one that implements
 // Starter or Stopper is started by Start and stopped by Shutdown.
 type Module interface {
 	Routes(r *Router)
@@ -126,12 +138,29 @@ type App struct {
 
 	routes      []RouteInfo
 	registering string // the module whose Routes runs, for RouteInfo.Module
+
+	db            *sql.DB
+	migrations    []fs.FS
+	schemas       []func(context.Context, *sql.DB, migrate.Dialect) error
+	constraints   map[string]string
+	authenticator Authenticator // Config.Authenticator, or the module that is one
+	docServed     bool          // the OpenAPI routes are registered
+	middleware    []Middleware  // Config.Middleware and App.Use
 }
 
-// New builds an app from its modules. Every route problem — a bad pattern, two
-// routes for one path, a Use after routes, an input gesso cannot decode — is
-// reported here, together, not at the first request.
+// New builds an app, with its modules or with Register after. Every route
+// problem — a bad pattern, two routes for one path, a Use after routes, an
+// input gesso cannot decode — is reported together, not at the first request.
 func New(cfg Config, modules ...Module) (*App, error) {
+	if cfg.Addr == "" {
+		cfg.Addr = cfg.Env.Addr
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = cfg.Env.Logger
+	}
+	if cfg.BasePath == "" {
+		cfg.BasePath = cfg.Env.BasePath
+	}
 	if cfg.Addr == "" {
 		cfg.Addr = ":8080"
 	}
@@ -180,10 +209,12 @@ func New(cfg Config, modules ...Module) (*App, error) {
 		cfg.Health = &c
 	}
 	a := &App{
-		metrics: newMetrics(),
-		cfg:     cfg,
-		mux:     http.NewServeMux(),
-		errs:    errorWriter{logger: cfg.Logger, mappers: slices.Clone(cfg.ErrorMappers), langs: maps.Clone(cfg.Languages)},
+		metrics:       newMetrics(),
+		cfg:           cfg,
+		mux:           http.NewServeMux(),
+		errs:          errorWriter{logger: cfg.Logger, mappers: slices.Clone(cfg.ErrorMappers), langs: maps.Clone(cfg.Languages)},
+		constraints:   map[string]string{},
+		authenticator: cfg.Authenticator,
 	}
 	cors, err := newCORS(cfg.CORS)
 	if err != nil {
@@ -196,27 +227,70 @@ func New(cfg Config, modules ...Module) (*App, error) {
 		}
 		a.basePath = bp
 	}
+	a.middleware = slices.Clone(cfg.Middleware)
 	if slices.ContainsFunc(cfg.Middleware, func(m Middleware) bool { return m == nil }) {
 		a.fail(errors.New("gesso: nil middleware in Config.Middleware"))
 	}
+	if cfg.Database != nil {
+		if err := a.openDatabase(); err != nil {
+			return nil, err
+		}
+	}
+	_ = a.Register(modules...)
+	if err := errors.Join(a.errList...); err != nil {
+		if a.db != nil {
+			err = errors.Join(err, a.db.Close())
+		}
+		return nil, err
+	}
+	return a, nil
+}
+
+// Register adds modules to the app: each is set up (Initializer), becomes the
+// app's authenticator if it is one and none is set, and registers its routes.
+// It returns every problem at once. Register before serving.
+func (a *App) Register(modules ...Module) error {
+	start := len(a.errList)
 	for _, m := range modules {
 		if m == nil {
 			a.fail(errors.New("gesso: nil module"))
 			continue
 		}
+		name := strings.TrimPrefix(reflect.TypeOf(m).String(), "*")
+		if in, ok := m.(Initializer); ok {
+			if err := in.Init(a); err != nil {
+				a.fail(fmt.Errorf("gesso: %s: %w", name, err))
+				continue
+			}
+		}
+		if au, ok := m.(Authenticator); ok && a.cfg.Authenticator == nil {
+			if a.authenticator != nil {
+				a.fail(fmt.Errorf("gesso: %s and another module both authenticate: set Config.Authenticator", name))
+			}
+			a.authenticator = au
+		}
 		a.modules = append(a.modules, m)
-		a.registering = strings.TrimPrefix(reflect.TypeOf(m).String(), "*")
-		m.Routes(&Router{app: a, auth: cfg.Authenticator, mws: slices.Clone(cfg.Middleware)})
+		a.registering = name
+		m.Routes(&Router{app: a, mws: slices.Clone(a.middleware)})
 	}
 	if len(a.errList) == 0 {
 		if err := a.buildOpenAPI(); err != nil {
 			a.fail(fmt.Errorf("gesso: openapi: %w", err))
 		}
 	}
-	if err := errors.Join(a.errList...); err != nil {
-		return nil, err
+	return errors.Join(a.errList[start:]...)
+}
+
+// Use adds middleware around the routes of the modules registered from now on,
+// after Config.Middleware.
+func (a *App) Use(mws ...Middleware) {
+	for _, m := range mws {
+		if m == nil {
+			a.fail(errors.New("gesso: nil middleware in App.Use"))
+			return
+		}
 	}
-	return a, nil
+	a.middleware = append(a.middleware, mws...)
 }
 
 func (a *App) fail(err error) { a.errList = append(a.errList, err) }
@@ -363,6 +437,12 @@ func (a *App) Start(ctx context.Context) error {
 	defer a.mu.Unlock()
 	if a.running || a.shutdown {
 		return errors.New("gesso: Start called twice")
+	}
+	if a.db != nil {
+		if err := a.migrateUp(ctx); err != nil {
+			a.failed.Store(true)
+			return err
+		}
 	}
 	for _, m := range a.modules {
 		if s, ok := m.(Starter); ok {

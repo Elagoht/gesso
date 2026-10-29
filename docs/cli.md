@@ -7,34 +7,37 @@ gesso help                # every command; gesso help <command> for one
 
 | Command | |
 | --- | --- |
-| `gesso new <module path>` | a project: `main.go`, `internal/api`, `.env.example`, a test. `-template demo` adds sign-in and a notes module; `-ai` writes `AGENTS.md`; `-force` writes into a folder that is not empty |
-| `gesso init` | `internal/api` in a Go module that exists — a collage site |
+| `gesso new <module path>` | a project: `main.go`, `register.go`, `.env.example`, a test. `-dialect` sqlite (default), postgres or mysql; `-template demo` adds sign-in and a notes module; `-ai` writes `AGENTS.md`; `-force` writes into a folder that is not empty |
+| `gesso init` | `internal/api/api.go` and `register.go` in a Go module that exists — a collage site; `-dialect` |
 | `gesso dev` | run it, rebuilt and restarted as files change, with `.env.development` or `.env` |
 | `gesso build` | the binary to deploy: `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"`, `-os linux -arch amd64` for another machine, `-i` to write a Dockerfile and a systemd unit beside it |
 | `gesso routes` | every endpoint: method, path, module, guards, its Req and Res; then the app's commands |
 | `gesso inspect` | the same, and each Req's and Res's fields, as JSON — for an editor |
 | `gesso check` | `ctx` rules, stale generated files (errors), writes with no guard (warnings); `-json` for an editor; exits 1 on an error |
-| `gesso gen` | the code models and `queries.sql` describe, and a migration for a model's change |
+| `gesso gen [dirs]` | the code models and `queries.sql` describe, and a migration for a model's change; `-check` reports stale files, `-drop` lets a field's column go, `-no-migration` when you wrote the migration |
 | `gesso migrate new <name>` | an empty migration pair |
-| `gesso add module <name>` | a CRUD module from `-field`s, see [Getting started](getting-started.md) |
-| `gesso add endpoint <module>/<name>` | one endpoint in a module: its `Endpoint` and handler in `<name>.go`, its `Req`/`Res` in the models, its line in `Routes` |
-| `gesso add auth` | sign-in, see [Identity and limits](identity-and-limits.md) |
-| `gesso add guard <name>` | `internal/guards/<name>.go`, for `-guard` |
-| `gesso add command <name>` | `internal/commands/<name>.go`, run as `app <name>` |
-| `gesso add middleware <name>` | `internal/middleware/<name>.go`, around every route |
+| `gesso add module <name>` | a CRUD module from its model, registered in `register.go`: `-field`, `-fields`, `-guard`, `-read`, `-sortable`, `-empty`, `-entity`, `-dialect`; see [Getting started](getting-started.md) |
+| `gesso add endpoint <module>/<name>` | one endpoint in a module: its handler in `<name>.go`, its `Req`/`Res` in `models/requests.go` and `models/responses.go`, its route in `routes.go` (or `Routes`, in an empty module) |
+| `gesso add auth` | `auth.New()` in `register.go`, and the `signedIn` guard; see [Identity and limits](identity-and-limits.md) |
+| `gesso add guard <name>` | `internal/guards/<name>.go`, for `-guard` and `-read` |
+| `gesso add command <name>` | `internal/commands/<name>.go`, run as `app <name>`; `app.Command` in `register.go` |
+| `gesso add middleware <name>` | `internal/middleware/<name>.go`, around every route; `app.Use` in `register.go` |
 | `gesso ai init` | gesso's rules for coding agents in `AGENTS.md`, between markers; the rest of the file is kept |
 | `gesso completion bash\|zsh\|fish` | a shell completion script |
 | `gesso man [-install]` | the manual page |
 | `gesso version` | the CLI's release and its Go |
 
 ```sh
-gesso add endpoint docs/reorder -method PUT -path /docs-order -guard signedIn -field slugs:strings
+gesso add endpoint docs/publish -method PUT -path /docs/{slug}/publish -guard signedIn
 gesso add endpoint docs/stats -method GET -res total:int
 ```
 
 `add endpoint`'s `-field name:type[:rules]` and `-res name:type` take `string`,
 `text`, `int`, `bool`, `float`, `time`, `date`, `strings`, `ints`; a `{param}`
 in `-path` becomes a field of the Req. Without `-res` it answers nothing (204).
+The route is `gesso.Put(r, "/docs/{slug}/publish", m.publishDocs,
+gesso.Guards(guards.SignedIn))`; in a generated module, `add endpoint` runs
+`gesso gen` after, so `module.gen.go` calls `routes`.
 
 `routes`, `inspect` and `check` build the project and run it as
 `<program> gesso-inspect`: `gesso.Main` answers that by printing the app — it

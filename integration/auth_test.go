@@ -85,11 +85,7 @@ func TestAuthModuleSQL(t *testing.T) {
 			if err := auth.Migrate(ctx, d, q.dialect); err != nil {
 				t.Fatal(err)
 			}
-			authn, err := auth.New(auth.Options{DB: d, Dialect: q.dialect, Users: users})
-			if err != nil {
-				t.Fatal(err)
-			}
-			app, err := gesso.New(gesso.Config{Authenticator: authn}, authn)
+			app, err := gesso.New(gesso.Config{}, auth.New(auth.Options{DB: d, Dialect: q.dialect, Users: users}))
 			if err != nil {
 				t.Fatal(err)
 			}

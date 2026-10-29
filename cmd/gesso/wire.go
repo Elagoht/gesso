@@ -9,19 +9,23 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
-var dialectVar = regexp.MustCompile(`(?m)^var dialect = migrate\.(Postgres|MySQL|SQLite)\b`)
+var dialectImport = regexp.MustCompile(`"github\.com/Elagoht/gesso/(sqlite|postgres|mysql)"`)
 
-// appDialect is the dialect a gesso new app declares, or "".
-func appDialect(src []byte) string {
-	m := dialectVar.FindSubmatch(src)
-	if m == nil {
-		return ""
+// projectDialect is the database the app in dir opens — the gesso/sqlite,
+// gesso/postgres or gesso/mysql its main.go (gesso new) or internal/api/api.go
+// (gesso init) imports — or "".
+func projectDialect(dir string) string {
+	for _, p := range []string{"main.go", filepath.Join("internal", "api", "api.go")} {
+		if src, err := os.ReadFile(filepath.Join(dir, p)); err == nil {
+			if m := dialectImport.FindSubmatch(src); m != nil {
+				return string(m[1])
+			}
+		}
 	}
-	return map[string]string{"Postgres": "postgres", "MySQL": "mysql", "SQLite": "sqlite"}[string(m[1])]
+	return ""
 }
 
 // readModule is the module path in dir's go.mod.
@@ -38,65 +42,89 @@ func readModule(dir string) (string, error) {
 	return "", errors.New("go.mod has no module line")
 }
 
-// wireModule adds a module to a register.go: pkg.New(pkg.Deps{DB: d.DB}) to
-// what modules returns, pkg.Migrations to what migrations returns, and the
-// import. Each list is found by its function's name.
-func wireModule(src []byte, pkg, importPath string, withMigrations bool) ([]byte, error) {
-	fset := gotoken.NewFileSet()
-	f, err := parser.ParseFile(fset, "register.go", src, parser.ParseComments)
-	if err != nil {
-		return nil, err
-	}
-	for _, imp := range f.Imports {
-		if p, _ := strconv.Unquote(imp.Path.Value); p == importPath {
-			return nil, fmt.Errorf("%s is wired already", pkg)
+// registerFile is the app's register.go: the project root's (gesso new), or
+// internal/api's (gesso init).
+func registerFile(dir string) (string, []byte, error) {
+	for _, p := range []string{filepath.Join(dir, "register.go"), filepath.Join(dir, "internal", "api", "register.go")} {
+		if src, err := os.ReadFile(p); err == nil {
+			return p, src, nil
 		}
 	}
-	lists := []struct{ fn, entry string }{{"modules", pkg + ".New(" + pkg + ".Deps{DB: d.DB})"}}
-	if withMigrations {
-		lists = append(lists,
-			struct{ fn, entry string }{"migrations", pkg + ".Migrations"},
-			struct{ fn, entry string }{"constraints", pkg + ".Constraints"})
-	}
-	var inserts []insert
-	for _, l := range lists {
-		lit := returnedList(f, l.fn)
-		if lit == nil {
-			return nil, fmt.Errorf("no func %s returning a list literal", l.fn)
-		}
-		inserts = append(inserts, listInsert(fset, lit, l.entry))
-	}
-	return reformat(fset, applyInserts(src, inserts), importPath)
+	return "", nil, errors.New("no register.go: this adds to an app gesso new or gesso init made")
 }
 
-// wireList adds entry to the list fn returns, and the import.
-func wireList(src []byte, fn, entry, importPath string) ([]byte, error) {
-	fset := gotoken.NewFileSet()
-	f, err := parser.ParseFile(fset, "register.go", src, parser.ParseComments)
-	if err != nil {
-		return nil, err
-	}
-	lit := returnedList(f, fn)
-	if lit == nil {
-		return nil, fmt.Errorf("no func %s returning a list literal (gesso new before v0.11 wrote none)", fn)
-	}
-	return reformat(fset, applyInserts(src, []insert{listInsert(fset, lit, entry)}), importPath)
-}
-
-// returnedList is the composite literal func name returns, or nil.
-func returnedList(f *ast.File, name string) *ast.CompositeLit {
+// registerFunc is func register(app *gesso.App) error, the name its app goes
+// by, and the app.Register call it returns.
+func registerFunc(f *ast.File) (*ast.FuncDecl, string, *ast.CallExpr, error) {
 	for _, d := range f.Decls {
 		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Recv != nil || fn.Name.Name != name || fn.Body == nil {
+		if !ok || fn.Recv != nil || fn.Name.Name != "register" || fn.Body == nil {
 			continue
 		}
-		for _, st := range fn.Body.List {
-			if ret, ok := st.(*ast.ReturnStmt); ok && len(ret.Results) == 1 {
-				if lit, ok := ret.Results[0].(*ast.CompositeLit); ok {
-					return lit
+		if len(fn.Type.Params.List) != 1 || len(fn.Type.Params.List[0].Names) != 1 {
+			break
+		}
+		app := fn.Type.Params.List[0].Names[0].Name
+		if n := len(fn.Body.List); n > 0 {
+			if ret, ok := fn.Body.List[n-1].(*ast.ReturnStmt); ok && len(ret.Results) == 1 {
+				if call, ok := ret.Results[0].(*ast.CallExpr); ok {
+					if sel, ok := call.Fun.(*ast.SelectorExpr); ok && isName(sel.X, app) && sel.Sel.Name == "Register" {
+						return fn, app, call, nil
+					}
 				}
 			}
 		}
+		return nil, "", nil, fmt.Errorf("func register does not end in return %s.Register(…)", app)
 	}
-	return nil
+	return nil, "", nil, errors.New("no func register(app *gesso.App) error")
+}
+
+// wireRegister adds entry — docs.New() — to what register passes to
+// app.Register, and its import.
+func wireRegister(src []byte, entry, importPath string) ([]byte, error) {
+	fset := gotoken.NewFileSet()
+	f, err := parser.ParseFile(fset, "register.go", src, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	_, _, call, err := registerFunc(f)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range call.Args {
+		if string(src[fset.Position(a.Pos()).Offset:fset.Position(a.End()).Offset]) == entry {
+			return nil, fmt.Errorf("%s is registered already", entry)
+		}
+	}
+	at := fset.Position(call.Rparen).Offset
+	text := "\n" + entry + ",\n"
+	if n := len(call.Args); n > 0 {
+		if fset.Position(call.Args[n-1].End()).Line == fset.Position(call.Rparen).Line {
+			text = ",\n" + entry + ",\n"
+		} else {
+			text = entry + ",\n"
+		}
+	}
+	return reformat(fset, applyInserts(src, []insert{{at: at, text: text}}), importPath)
+}
+
+// wireStatement adds stmt — app.Command("seed", commands.Seed(app)) — to
+// register before it registers the modules, and its import. A word in stmt
+// naming the app is written as register names it.
+func wireStatement(src []byte, stmt func(app string) string, importPath string) ([]byte, error) {
+	fset := gotoken.NewFileSet()
+	f, err := parser.ParseFile(fset, "register.go", src, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	fn, app, _, err := registerFunc(f)
+	if err != nil {
+		return nil, err
+	}
+	ret := fn.Body.List[len(fn.Body.List)-1]
+	line := stmt(app)
+	if strings.Contains(string(src), line) {
+		return nil, fmt.Errorf("%s is there already", line)
+	}
+	return reformat(fset, applyInserts(src, []insert{{at: fset.Position(ret.Pos()).Offset, text: line + "\n"}}), importPath)
 }

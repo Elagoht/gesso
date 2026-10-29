@@ -1,0 +1,201 @@
+{{- $m := . -}}
+package {{.Pkg}}
+
+import (
+	"context"
+	"embed"
+	"errors"
+
+	"github.com/Elagoht/gesso"
+{{- if or .Hooks.BeforeUpdate .Sortable}}
+	"github.com/Elagoht/gesso/db"
+{{- end}}
+{{- if .Guards}}
+
+	"{{.Guards}}"
+{{- end}}
+	"{{.Models}}"
+)
+
+//go:embed migrations
+var migrations embed.FS
+
+var (
+	Create{{.Entity}} = gesso.Endpoint[models.ReqCreate{{.Entity}}, models.Res{{.Entity}}]{Method: "POST", Pattern: "/{{.Table}}"}
+	Get{{.Entity}} = gesso.Endpoint[models.Req{{.Entity}}Key, models.Res{{.Entity}}]{Method: "GET", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }"}
+	List{{.Plural}} = gesso.Endpoint[models.ReqList{{.Plural}}, gesso.Page[models.{{.ListItem}}]]{Method: "GET", Pattern: "/{{.Table}}"}
+	Update{{.Entity}} = gesso.Endpoint[models.ReqUpdate{{.Entity}}, models.Res{{.Entity}}]{Method: "PUT", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }"}
+	Patch{{.Entity}} = gesso.Endpoint[models.ReqPatch{{.Entity}}, models.Res{{.Entity}}]{Method: "PATCH", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }"}
+	Delete{{.Entity}} = gesso.Endpoint[models.Req{{.Entity}}Key, gesso.Empty]{Method: "DELETE", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }"}
+{{- if .Sortable}}
+	Reorder{{.Plural}} = gesso.Endpoint[models.ReqReorder{{.Plural}}, gesso.Empty]{Method: "PUT", Pattern: "/{{.Table}}/order"}
+{{- end}}
+)
+{{- if .Sortable}}
+
+// ErrReorderKeys answers a reorder that does not list every record once.
+var ErrReorderKeys = gesso.Unprocessable("reorder_keys", "list the key of every record once")
+{{- end}}
+
+type Module struct {
+	app  *gesso.App
+	repo *repository
+}
+
+func New() *Module { return &Module{} }
+
+func (m *Module) Init(app *gesso.App) error {
+	if app.DB() == nil {
+		return errors.New("{{.Pkg}} keeps its records in the app's Config.Database, and there is none")
+	}
+	m.app, m.repo = app, newRepository(app.DB())
+	app.Migrations(migrations)
+	app.Constraints(map[string]string{ {{- range .ConstraintEntries}}"{{index . 0}}": "{{index . 1}}", {{end -}} })
+	return nil
+}
+
+func (m *Module) Routes(r *gesso.Router) {
+{{- if .Write}}
+	write := gesso.Guards(guards.{{.Write}})
+{{- end}}
+{{- if .Read}}
+	read := gesso.Guards(guards.{{.Read}})
+{{- end}}
+	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201){{if .Write}}, write{{end}})
+	Get{{.Entity}}.Handle(r, m.get{{if .Read}}, read{{end}})
+	List{{.Plural}}.Handle(r, m.list{{if .Read}}, read{{end}})
+	Update{{.Entity}}.Handle(r, m.update{{if .Write}}, write{{end}})
+	Patch{{.Entity}}.Handle(r, m.patch{{if .Write}}, write{{end}})
+	Delete{{.Entity}}.Handle(r, m.delete{{if .Write}}, write{{end}})
+{{- if .Sortable}}
+	Reorder{{.Plural}}.Handle(r, m.reorder{{if .Write}}, write{{end}})
+{{- end}}
+{{- if .Hooks.Routes}}
+	m.routes(r)
+{{- end}}
+}
+{{- if .Guarded}}
+
+func (m *Module) access(ctx context.Context) models.{{.Entity}}Access {
+	return models.{{.Entity}}Access{ {{- range .Guarded}}{{.}}: gesso.Allowed(ctx, guards.{{.}}), {{end -}} }
+}
+{{- end}}
+{{- if .Gate}}
+
+// open reports whether the caller sees the records whose {{.Gate.Go}} is false.
+func (m *Module) open(ctx context.Context) bool { return gesso.Allowed(ctx, guards.{{.Gate.GateGuard}}) }
+{{- end}}
+
+func (m *Module) create(ctx context.Context, in models.ReqCreate{{.Entity}}) (models.Res{{.Entity}}, error) {
+{{- if .Guarded}}
+	a := m.access(ctx)
+	if in.Forbidden(a) {
+		return models.Res{{.Entity}}{}, gesso.ErrForbidden
+	}
+{{- end}}
+	e := in.Record()
+{{- if .Hooks.BeforeCreate}}
+	if err := m.BeforeCreate(ctx, &e); err != nil {
+		return models.Res{{.Entity}}{}, err
+	}
+{{- end}}
+	e, err := m.repo.insert(ctx, e)
+	return e.Response({{if .Guarded}}a{{end}}), err
+}
+
+func (m *Module) get(ctx context.Context, in models.Req{{.Entity}}Key) (models.Res{{.Entity}}, error) {
+	e, err := m.repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
+	return e.Response({{if .Guarded}}m.access(ctx){{end}}), err
+}
+
+func (m *Module) list(ctx context.Context, in models.ReqList{{.Plural}}) (gesso.Page[models.{{.ListItem}}], error) {
+	page, err := m.repo.list(ctx, in{{if .Gate}}, m.open(ctx){{end}})
+{{- if .Guarded}}
+	a := m.access(ctx)
+{{- end}}
+	out := gesso.Page[models.{{.ListItem}}]{Items: make([]models.{{.ListItem}}, 0, len(page.Items)), Next: page.Next}
+	for _, e := range page.Items {
+		out.Items = append(out.Items, e.{{if .Listable}}Item{{else}}Response{{end}}({{if .Guarded}}a{{end}}))
+	}
+	return out, err
+}
+
+func (m *Module) update(ctx context.Context, in models.ReqUpdate{{.Entity}}) (models.Res{{.Entity}}, error) {
+{{- if .Guarded}}
+	a := m.access(ctx)
+	if in.Forbidden(a) {
+		return models.Res{{.Entity}}{}, gesso.ErrForbidden
+	}
+	return m.write(ctx, in.Patch(a), a)
+{{- else}}
+	return m.write(ctx, in.Patch())
+{{- end}}
+}
+
+func (m *Module) patch(ctx context.Context, in models.ReqPatch{{.Entity}}) (models.Res{{.Entity}}, error) {
+{{- if .Guarded}}
+	a := m.access(ctx)
+	if in.Forbidden(a) {
+		return models.Res{{.Entity}}{}, gesso.ErrForbidden
+	}
+	return m.write(ctx, in, a)
+{{- else}}
+	return m.write(ctx, in)
+{{- end}}
+}
+
+func (m *Module) write(ctx context.Context, in models.ReqPatch{{.Entity}}{{if .Guarded}}, a models.{{.Entity}}Access{{end}}) (models.Res{{.Entity}}, error) {
+{{- if .Hooks.BeforeUpdate}}
+	var e models.{{.Entity}}
+	err := db.InTx(ctx, m.app.DB(), func(tx db.DB) error {
+		repo := newRepository(tx)
+		var err error
+		if e, err = repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}}); err != nil {
+			return err
+		}
+		in.Apply(&e)
+		if err := m.BeforeUpdate(ctx, &e); err != nil {
+			return err
+		}
+		return repo.save(ctx, e)
+	})
+	return e.Response({{if .Guarded}}a{{end}}), err
+{{- else}}
+	id, err := m.repo.idOf(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
+	if err != nil {
+		return models.Res{{.Entity}}{}, err
+	}
+	if err := m.repo.patch(ctx, id, in); err != nil {
+		return models.Res{{.Entity}}{}, err
+	}
+	e, err := m.repo.byID(ctx, id)
+	return e.Response({{if .Guarded}}a{{end}}), err
+{{- end}}
+}
+
+func (m *Module) delete(ctx context.Context, in models.Req{{.Entity}}Key) (gesso.Empty, error) {
+{{- if .Hooks.BeforeDelete}}
+	e, err := m.repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
+	if err != nil {
+		return gesso.Empty{}, err
+	}
+	if err := m.BeforeDelete(ctx, e); err != nil {
+		return gesso.Empty{}, err
+	}
+	return gesso.Empty{}, m.repo.delete(ctx, e.ID)
+{{- else}}
+	id, err := m.repo.idOf(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
+	if err != nil {
+		return gesso.Empty{}, err
+	}
+	return gesso.Empty{}, m.repo.delete(ctx, id)
+{{- end}}
+}
+{{- if .Sortable}}
+
+func (m *Module) reorder(ctx context.Context, in models.ReqReorder{{.Plural}}) (gesso.Empty, error) {
+	return gesso.Empty{}, db.InTx(ctx, m.app.DB(), func(tx db.DB) error {
+		return newRepository(tx).reorder(ctx, in.Keys{{if .Gate}}, m.open(ctx){{end}})
+	})
+}
+{{- end}}

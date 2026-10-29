@@ -27,6 +27,8 @@ type Env struct {
 	Dev bool
 	// Addr is where to listen: -addr, ADDR, or ":8080".
 	Addr string
+	// BasePath is BASE_PATH: "/api" when collage serves the app under /api/.
+	BasePath string
 	// Logger writes text to standard error in development, JSON to standard
 	// output otherwise.
 	Logger *slog.Logger
@@ -35,7 +37,7 @@ type Env struct {
 // Main runs the program "gesso new" scaffolds, around newApp, which builds the
 // app from env:
 //
-//	func main() { gesso.Main(api.New) }
+//	func main() { gesso.Main(newApp) }
 //
 // Before newApp runs it loads the working directory's environment file —
 // .env.development, or .env, in development; .env otherwise — leaving alone
@@ -70,7 +72,7 @@ func runMain(newApp func(Env) (*App, error), args []string, stdout, stderr io.Wr
 		}
 		return 2
 	}
-	env := Env{Dev: dev, Addr: *addr, Logger: slog.New(slog.NewJSONHandler(stdout, nil))}
+	env := Env{Dev: dev, Addr: *addr, BasePath: os.Getenv("BASE_PATH"), Logger: slog.New(slog.NewJSONHandler(stdout, nil))}
 	if terminal, color := onTerminal(stderr); terminal {
 		env.Logger = slog.New(newTerminalHandler(stderr, color))
 	} else if dev {

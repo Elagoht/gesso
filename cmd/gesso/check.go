@@ -8,7 +8,6 @@ import (
 	"go/token"
 	"go/types"
 	"io"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -107,7 +106,7 @@ func check(args []string, dir string, out io.Writer) (int, error) {
 			reports = append(reports, report{"error", "stale-gen", err.Error()})
 		}
 	}
-	if _, err := os.Stat(filepath.Join(dir, "internal", "api")); err == nil {
+	if _, _, err := registerFile(dir); err == nil {
 		if in, err := loadInspection(dir, *pkg); err == nil {
 			for _, r := range in.Routes {
 				if r.Method != "GET" && r.Method != "HEAD" && len(r.Guards) == 0 && r.Module != "auth.Module" {

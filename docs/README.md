@@ -6,11 +6,12 @@ it, with the reasons.
 
 0. [The command line](cli.md) — every `gesso` command
 1. [Getting started](getting-started.md) — `gesso new`, a first module, running it
-2. [Modules and handlers](modules-and-handlers.md) — routes, typed handlers,
-   input, uploads, PATCH, pages, files and streams, ETags, errors, endpoints
+2. [Modules and handlers](modules-and-handlers.md) — `Init`, generated
+   modules, hooks, routes, typed handlers, input, uploads, PATCH, pages, files
+   and streams, ETags, errors, endpoints
 3. [Validation](validation.md) — the rules, `dive`, your own checks
-4. [The database](database.md) — `db.DB`, transactions, migrations, dialects,
-   `gesso gen`, dates
+4. [The database](database.md) — `Config.Database`, `db.DB`, transactions,
+   migrations, dialects, `gesso gen`, dates
 5. [Identity and limits](identity-and-limits.md) — sign-in, bearer tokens,
    guards, rate limits, idempotency keys, CORS
 6. [Work outside the request](background.md) — the queue, schedules, events,

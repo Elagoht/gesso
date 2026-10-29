@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.12.0 released — the v1 surface sealed (§14)** (2026-10-29). §12 lists the phases.
+Status: **v0.13.0 in progress (v0.12.0 released) — the v1 surface sealed (§14)** (2026-10-29). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
@@ -81,22 +81,21 @@ thin layer for groups and middleware. No chi.
 ## 5. Layout
 
 ```
-main.go              // gesso.Main(api.New)
+main.go              // makes the app: gesso.New(gesso.Config{Env, Database, OpenAPI})
+register.go          // app.Register(auth.New(), events.New()), app.Command, app.Use
 internal/
-  api/api.go         // the database, migrations as it starts
-  api/register.go    // the lists gesso add writes to: modules, migrations, stores
+  guards/            // gesso.Guard funcs: signedIn.go, admin.go
   events/
-    module.go        // New(Deps) *Module; Routes; optional Start/Stop
-    endpoints.go     // the module's Endpoints: Req in, Res out
-    handler.go       // typed handlers: a Req in, the service, a Res out
-    service.go       // business rules; knows nothing of HTTP
-    repository.gen.go  // the SQL, generated from the model
-    queries.sql      // input to code generation
-    queries.gen.go   // generated, never edited
+    module.gen.go      // Module, New, Init, Routes, the handlers, the Endpoints
+    repository.gen.go  // the SQL, written out for the dialect
+    hooks.go           // the app's own: BeforeCreate, BeforeUpdate, BeforeDelete
+    routes.go          // the app's own routes, beside the generated ones
+    queries.sql        // input to code generation
+    queries.gen.go     // generated, never edited
     models/
       models.go      // Event, //gesso:table: as it is stored, and the source of the rest
       requests.gen.go   // ReqCreateEvent, ReqUpdateEvent, ReqListEvents … (what clients send)
-      responses.gen.go  // ResEvent, Event.Response() (what they get back)
+      responses.gen.go  // ResEvent, ResEventItem, Event.Response() (what they get back)
       schema.gen.json   // what gesso gen compares the model with
     migrations/
       20261028153000_create_events.up.sql
@@ -111,25 +110,24 @@ record is apart from both, so a column can be added without showing it.
 ## 6. Dependency injection
 
 ```go
-type Deps struct {
-    DB      db.DB
-    Storage gesso.Storage
-    Clock   gesso.Clock
-}
+func New() *Module { return &Module{} }
 
-func New(d Deps) *Module {
-    repo := newRepository(d.DB)
-    return &Module{svc: NewService(repo, d.Storage, d.Clock)}
+func (m *Module) Init(app *gesso.App) error {
+    m.repo = newRepository(app.DB())
+    app.Migrations(migrations)
+    return nil
 }
 
 func (m *Module) Routes(r *gesso.Router) {
-    r.Get("/events/{id}", gesso.Handle(m.get))
+    gesso.Get(r, "/events/{id}", m.get)
 }
 ```
 
-`main` builds every dependency once and passes it down. Modules that depend on one
-another take a small interface the consumer declares, never another module's
-concrete service. Side effects that cross modules (invalidate a cache when an event
+The app owns what every module shares — the database, the authenticator, the
+commands — and a module takes what it needs in `Init`, when `app.Register`
+registers it. Modules that depend on one another take a small interface the
+consumer declares (or `gesso.ModuleOf`), never another module's concrete
+service. Side effects that cross modules (invalidate a cache when an event
 changes) go through an in-process event bus, not through a direct reference.
 
 Generating the wiring (in the manner of `wire`, at build time) is possible later; a
@@ -583,14 +581,48 @@ ClientAddr comes from 127.0.0.1, so an app that trusts loopback trusts it.
   it first. `gessotest.FakeDB` is one, so a service that uses transactions is
   unit-tested with fake repositories and no database.
 
+- 2026-10-29 — **The model writes the module; the app writes almost nothing.**
+  After v0.12 the user found the framework crowded: `api.go` and `register.go`
+  carried an app's plumbing (opening the database, migrating, the error mapper,
+  the lists of migrations, stores, constraints and commands), endpoints were
+  long `Endpoint[ReqX, ResX]{Method, Pattern}` values, and the model could not
+  say what a list shows, who sees a field, or that records keep an order. Now:
+  `main.go` makes the app (`Config.Database` from gesso/sqlite, postgres or
+  mysql), `register.go` is `app.Register(...)`, and modules declare their parts
+  in `Init`. `gesso gen` writes the whole CRUD module — `module.gen.go` with its
+  routes and handlers — from the model, whose directives and options cover the
+  list's fields, filters and orders, field guards, record gates and a client's
+  order (`//gesso:sortable`); what is the app's own is hooks gen finds by name.
+  Constraints that shaped it:
+  - no `[]any` in generated code: every statement is written out at gen time,
+    a filter not asked for or a gate that is open passing a true that makes its
+    condition hold (`(? OR author = ?)`), one statement per order;
+  - a field guard hides the field from responses, refuses its write (403) and
+    keeps it through a PUT; a guarded field is never a filter or an order, which
+    would leak it;
+  - a gate filters every path — get (404), list, cursor, update, delete,
+    reorder — and a reorder moves only what the caller sees, the others keeping
+    their positions;
+  - the sign-in module is an authenticator found when a request comes, so the
+    order of `Register` does not matter; it re-reads the user each request, so
+    `Identity.Name` is current and a removed role counts at once;
+  - the drivers live in gesso/sqlite, postgres and mysql, and no package a
+    core-only app loads (tests included) imports them, so its go.sum stays free
+    of them.
+
 ## 14. The v1 surface
 
-Sealed on 2026-10-29, after the security review: from v1.0.0 these change only
-in a major version.
+Sealed on 2026-10-29, after the security review, and opened again the same day
+for v0.13 — the user's verdict on the trial was that too much of an app was
+setup code and the model did too little (see the decision of 2026-10-29 in §13).
+From v1.0.0 these change only in a major version.
 
-- **gesso**: `New`, `Config` (and `CORS`, `Health`, `OpenAPIConfig`), `App`
-  (`ServeHTTP`, `Run`, `Start`, `Shutdown`, `OnShutdown`, `OpenAPI`), `Module`,
-  `Starter`, `Stopper`, `Router` (`Use`, `Authenticate`, `Guard`, `Intercept`,
+- **gesso**: `New`, `Config` (and `CORS`, `Health`, `OpenAPIConfig`, `Env`,
+  `Database`), `App` (`ServeHTTP`, `Run`, `Start`, `Shutdown`, `OnShutdown`,
+  `OpenAPI`, `Register`, `Use`, `DB`, `Dialect`, `Migrations`, `Schema`,
+  `Constraints`, `Command`), `Module`, `Initializer`, `ModuleOf`, `Starter`,
+  `Stopper`, `Get`/`Post`/`Put`/`Patch`/`Delete`, `Allowed`, `ServeSwaggerUI`,
+  `Router` (`Use`, `Authenticate`, `Guard`, `Intercept`,
   `Group`, `Handle`, the method helpers), `Handle`, `HandlerFunc` and its
   options (`Status`, `Guards`, `MaxBodyBytes`, `Summary`, `Description`,
   `Tags`), `Empty`, `File`/`NewFile`, `Endpoint`, `Remote`/`NewRemote`/
@@ -608,17 +640,24 @@ in a major version.
   doc list.
 - **Packages**: `validate`, `db`, `migrate`, `date`, `clock`, `password`,
   `storage`, `storage/s3`, `cache`, `cache/redis`, `mail`, `token`, `lock`,
-  `queue`, `events`, `ratelimit`, `idempotency`, `auth` (v0.10), `gessotest`,
-  and every `*test` suite: their exported names as of v0.10.
+  `queue`, `events`, `ratelimit`, `idempotency`, `auth`, `sqlite`, `postgres`,
+  `mysql`, `gessotest`, and every `*test` suite: their exported names as of
+  v0.13.
+- **The model**: `//gesso:table`, `//gesso:sortable`, `//gesso:write`,
+  `//gesso:read`; the field options `key`, `unique`, `index`, `optional`,
+  `sort`, `text`, `listable`, `filterable`, `orderable`, `guard=`, `gate=` and
+  validate's rules; the hooks gen calls (`BeforeCreate`, `BeforeUpdate`,
+  `BeforeDelete`, `routes`); and the routes, requests and responses gen writes
+  from them.
 - **Wire formats**: problem+json's members and codes, the token format
   (`gso_` + 43 base64url characters), the tables gesso's own migrations create
   (`gesso_tokens`, `gesso_jobs`, `gesso_schedule`, `gesso_ratelimit`,
   `gesso_idempotency`, `gesso_users` and their history tables) —
   a later change to one ships as a new migration, never an edited one.
 - **The CLI**: its commands and flags, and that a scaffold, once written, is the
-  application's: a later gesso never edits it except where `add module` and
-  `add auth` wire into `internal/api/register.go` — each piece found by name, and
-  refused rather than guessed at when it is not where `gesso new` put it.
+  application's: a later gesso never edits it except where `add` registers into
+  `register.go`'s `register` — found by name, and refused rather than guessed
+  at when it is not where `gesso new` put it — and the `*.gen.go` files gen owns.
 
 Not sealed: what the OpenAPI document says beyond being valid OpenAPI 3.1
 describing the routes (it may describe more), log messages and their attributes,

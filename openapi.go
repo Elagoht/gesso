@@ -115,6 +115,10 @@ func (a *App) buildOpenAPI() error {
 		return err
 	}
 	a.openapi = doc
+	if a.docServed {
+		return nil
+	}
+	a.docServed = true
 	if oc.Path != "" {
 		a.register("GET "+a.basePath+oc.Path, openAPIHandler{app: a})
 	}

@@ -46,7 +46,7 @@ func (in ReqSignup) Validate(ctx context.Context) []validate.FieldError {
 ## In the client's language
 
 ```go
-gesso.New(gesso.Config{Languages: map[string]gesso.Language{"tr": gesso.Turkish}}, …)
+gesso.New(gesso.Config{Languages: map[string]gesso.Language{"tr": gesso.Turkish}})
 ```
 
 A request with `Accept-Language: tr` gets its field errors and problem details

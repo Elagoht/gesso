@@ -12,10 +12,42 @@ import (
 type Res{{.Entity}} struct {
 	ID int64 `json:"id"`
 {{- range .Fields}}
-	{{.Go}} {{.Type}} `json:"{{.JSON}}"`
+	{{.Go}} {{.ResType}} `json:"{{.JSON}}{{if .Guard}},omitempty{{end}}"`
 {{- end}}
 }
 
-func (e {{.Entity}}) Response() Res{{.Entity}} {
-	return Res{{.Entity}}{ID: e.ID, {{range .Fields}}{{.Go}}: e.{{.Go}}, {{end}}}
+func (e {{.Entity}}) Response({{if .Guarded}}a {{.Entity}}Access{{end}}) Res{{.Entity}} {
+	r := Res{{.Entity}}{ID: e.ID, {{range .Fields}}{{if not .Guard}}{{.Go}}: e.{{.Go}}, {{end}}{{end}}}
+{{- range .Fields}}
+{{- if .Guard}}
+	if a.{{.Guard}} {
+		r.{{.Go}} = {{if not .Nullable}}&{{end}}e.{{.Go}}
+	}
+{{- end}}
+{{- end}}
+	return r
 }
+{{- if .Listable}}
+
+// Res{{.Entity}}Item is a {{.Entity}} in the list: its listable fields.
+type Res{{.Entity}}Item struct {
+	ID int64 `json:"id"`
+{{- range .Fields}}
+{{- if or .Listable .Key}}
+	{{.Go}} {{.ResType}} `json:"{{.JSON}}{{if .Guard}},omitempty{{end}}"`
+{{- end}}
+{{- end}}
+}
+
+func (e {{.Entity}}) Item({{if .Guarded}}a {{.Entity}}Access{{end}}) Res{{.Entity}}Item {
+	r := Res{{.Entity}}Item{ID: e.ID, {{range .Fields}}{{if and (or .Listable .Key) (not .Guard)}}{{.Go}}: e.{{.Go}}, {{end}}{{end}}}
+{{- range .Fields}}
+{{- if and .Listable .Guard}}
+	if a.{{.Guard}} {
+		r.{{.Go}} = {{if not .Nullable}}&{{end}}e.{{.Go}}
+	}
+{{- end}}
+{{- end}}
+	return r
+}
+{{- end}}

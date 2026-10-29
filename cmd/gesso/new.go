@@ -29,13 +29,14 @@ type projectSpec struct {
 	DialectName string // SQLite
 	DSNDoc      string
 	DefaultDSN  string
+	RegisterPkg string // main, or api under gesso init
 }
 
 var modulePath = regexp.MustCompile(`^[a-z0-9][a-z0-9._~-]*(/[A-Za-z0-9._~-]+)*$`)
 
-// newProject is gesso new: a project with its main, the app that opens the
-// database and migrates it, its register.go and a test that starts it. With
-// -template demo, sign-in and a notes module too; with -ai, AGENTS.md.
+// newProject is gesso new: main.go, which makes the app, register.go, which
+// adds its modules, and a test that starts it. With -template demo, sign-in
+// and a notes module too; with -ai, AGENTS.md.
 func newProject(args []string, dir string, stdout io.Writer, now func() time.Time) error {
 	fs := newFlags("new")
 	dialect := fs.String("dialect", "sqlite", "the database: sqlite, postgres or mysql")
@@ -69,16 +70,16 @@ func newProject(args []string, dir string, stdout io.Writer, now func() time.Tim
 	if entries, err := os.ReadDir(target); err == nil && len(entries) > 0 && !*force {
 		return fmt.Errorf("%s exists and is not empty: -force writes into it", target)
 	}
+	spec.RegisterPkg = "main"
 	files := map[string]string{
-		"main.go":                  "main.go.tmpl",
-		"internal/api/api.go":      "api.go.tmpl",
-		"internal/api/register.go": "register.go.tmpl",
-		"internal/api/api_test.go": "api_test.go.tmpl",
-		".gitignore":               "gitignore.tmpl",
-		".env.example":             "env.example.tmpl",
-		"README.md":                "README.md.tmpl",
+		"main.go":      "main.go.tmpl",
+		"register.go":  "register.go.tmpl",
+		"main_test.go": "main_test.go.tmpl",
+		".gitignore":   "gitignore.tmpl",
+		".env.example": "env.example.tmpl",
+		"README.md":    "README.md.tmpl",
 	}
-	for _, name := range []string{"main.go", "internal/api/api.go", "internal/api/register.go", "internal/api/api_test.go", ".gitignore", ".env.example", "README.md"} {
+	for _, name := range []string{"main.go", "register.go", "main_test.go", ".gitignore", ".env.example", "README.md"} {
 		var buf bytes.Buffer
 		if err := newTemplates.ExecuteTemplate(&buf, files[name], spec); err != nil {
 			return err
@@ -100,7 +101,7 @@ func newProject(args []string, dir string, stdout io.Writer, now func() time.Tim
 		if err := addAuth(nil, target, stdout); err != nil {
 			return err
 		}
-		if err := addModule([]string{"notes", "-guard", "signedIn", "-field", "title:string:max=200", "-field", "body:text", "-field", "published:date:optional"}, target, stdout, now); err != nil {
+		if err := addModule([]string{"notes", "-guard", "signedIn", "-field", "title:string:listable,orderable,max=200", "-field", "body:text", "-field", "published:date:listable,optional"}, target, stdout, now); err != nil {
 			return err
 		}
 	}
@@ -116,7 +117,7 @@ func newProject(args []string, dir string, stdout io.Writer, now func() time.Tim
 	} else {
 		fmt.Fprintln(stdout, "  gesso add auth\n  gesso add module <name> -field <field>:<type>   (gesso help add module)")
 	}
-	fmt.Fprintln(stdout, "  gesso dev")
+	fmt.Fprintln(stdout, "  gesso dev     (then http://localhost:8080/swagger)")
 	return nil
 }
 
@@ -222,7 +223,8 @@ func initProject(args []string, dir string, stdout io.Writer) error {
 	if _, err := os.Stat(filepath.Join(dir, "internal", "api")); err == nil {
 		return errors.New("internal/api exists already")
 	}
-	for name, tmpl := range map[string]string{"internal/api/api.go": "api.go.tmpl", "internal/api/register.go": "register.go.tmpl", "internal/api/api_test.go": "api_test.go.tmpl"} {
+	spec.RegisterPkg = "api"
+	for name, tmpl := range map[string]string{"internal/api/api.go": "api.go.tmpl", "internal/api/register.go": "register.go.tmpl"} {
 		var buf bytes.Buffer
 		if err := newTemplates.ExecuteTemplate(&buf, tmpl, spec); err != nil {
 			return err
@@ -242,15 +244,11 @@ func initProject(args []string, dir string, stdout io.Writer) error {
 next: build the API where the program starts, and serve it. In a collage site,
 in newApp, before collage.New:
 
-	gessoAPI, err := api.NewWith(api.Config{
-		BasePath: "/api",
-		Database: cmp.Or(os.Getenv("DATABASE_URL"), %q), // %s
-		Logger:   slog.Default(),
-	})
+	gessoAPI, err := api.New(cmp.Or(os.Getenv("DATABASE_URL"), %q), "/api")
 
 then, after it, app.Handle("/api/", gessoAPI), and run its lifecycle with
 collage plugin add elagoht/gesso (pass gessoAPI to plugins). Pages call it with
 gesso.NewLocal(gessoAPI). Modules: gesso add module <name> -field <field>:<type>
-`, spec.DefaultDSN, spec.DSNDoc)
+`, spec.DefaultDSN)
 	return nil
 }

@@ -63,7 +63,7 @@ func TestDev(t *testing.T) {
 		t.Fatal(errOut.String())
 	}
 	dir := filepath.Join(root, "app")
-	seedModule(t, dir, "require modernc.org/sqlite v1.61.0\n")
+	seedModule(t, dir, "")
 	goIn(t, dir, "mod", "tidy")
 	l, _ := net.Listen("tcp", "127.0.0.1:0")
 	addr := l.Addr().String()
@@ -82,9 +82,9 @@ func TestDev(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- devCommand(ctx, []string{"-poll", "100ms"}, dir, &out, &errOut) }()
 	base := "http://" + addr
-	waitFor(t, "the app to answer", 60*time.Second, func() bool { return strings.Contains(get(base+"/healthz"), "ok") })
+	waitFor(t, "the app to answer", 60*time.Second, func() bool { return strings.Contains(get(base+"/openapi.json"), `"app"`) })
 
-	api := filepath.Join(dir, "internal/api/api.go")
+	api := filepath.Join(dir, "main.go")
 	src, _ := os.ReadFile(api)
 	if err := os.WriteFile(api, bytes.Replace(src, []byte(`Title: "app"`), []byte(`Title: "changed"`), 1), 0o644); err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestDev(t *testing.T) {
 	waitFor(t, "the failed build to be reported", 60*time.Second, func() bool {
 		return strings.Contains(errOut.String(), "the build failed")
 	})
-	if !strings.Contains(get(base+"/healthz"), "ok") {
+	if !strings.Contains(get(base+"/openapi.json"), `"changed"`) {
 		t.Fatal("a failed build stopped the running version")
 	}
 
@@ -113,7 +113,7 @@ func TestDev(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("dev did not stop")
 	}
-	if get(base+"/healthz") != "" {
+	if get(base+"/openapi.json") != "" {
 		t.Fatal("the app outlived dev")
 	}
 	if !strings.Contains(out.String(), "changed, rebuilding") {

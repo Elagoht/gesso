@@ -72,11 +72,8 @@ type fixture struct {
 func newAPI(t *testing.T, users auth.Users) fixture {
 	t.Helper()
 	c := clock.NewManual(time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC))
-	authn, err := auth.New(auth.Options{Users: users, TokenStore: token.NewMemory(), Clock: c})
-	if err != nil {
-		t.Fatal(err)
-	}
-	app, err := gesso.New(gesso.Config{Authenticator: authn}, authn)
+	authn := auth.New(auth.Options{Users: users, TokenStore: token.NewMemory(), Clock: c})
+	app, err := gesso.New(gesso.Config{}, authn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +201,7 @@ func TestNewRefuses(t *testing.T) {
 		"empty password": {Users: auth.NewSingle("ada", ""), TokenStore: token.NewMemory()},
 		"no database":    {Users: auth.NewSingle("ada", "pass")},
 	} {
-		if _, err := auth.New(opts); err == nil {
+		if _, err := gesso.New(gesso.Config{}, auth.New(opts)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}

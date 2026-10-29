@@ -5,19 +5,21 @@ This is a JSON API on gesso (github.com/Elagoht/gesso). Use the CLI, don't hand-
 
 | To add | Run |
 | --- | --- |
-| a CRUD module | `gesso add module <name> -field title:string:max=200 -field slug:string:key,slug …` |
+| a CRUD module | `gesso add module <name> -field <field>:<type>[:options,rules] …` (`-guard`, `-read`, `-sortable`) |
+| a module with no table | `gesso add module <name> -empty` |
 | one endpoint in a module | `gesso add endpoint <module>/<name> -method PUT -field …` |
 | sign-in | `gesso add auth` (users table, `app users add <name>`, the `signedIn` guard) |
 | a guard | `gesso add guard <name>`, then `-guard <name>` on add module / add endpoint |
 | a command / middleware | `gesso add command <name>` / `gesso add middleware <name>` |
 | a migration of your own | `gesso migrate new <name>` |
 
-- **A module's model is its source.** `internal/<module>/models/models.go` holds a `//gesso:table` struct with `gesso:"…"` tags (`key`, `unique`, `index`, `optional`, `sort`, `text`, validate rules). Change it, then run `gesso gen`: it rewrites the `*.gen.go` files and writes the migration. Never edit a `*.gen.go` file or `schema.gen.json`.
+- **A module's model is its source.** `internal/<module>/models/models.go` holds a `//gesso:table` struct (`//gesso:write`, `//gesso:read`, `//gesso:sortable` beside it) with `gesso:"…"` tags (`key`, `unique`, `index`, `optional`, `sort`, `text`, `listable`, `filterable`, `orderable`, `guard=<guard>`, `gate=<guard>`, validate rules). Change it, then run `gesso gen`: it rewrites the `*.gen.go` files and writes the migration. Never edit a `*.gen.go` file or `schema.gen.json`.
+- Code of your own in a generated module goes in files of its package: `BeforeCreate`, `BeforeUpdate`, `BeforeDelete` and `routes(r)` on `*Module`. Run `gesso gen` after adding one.
 - `gesso gen` refuses a dropped field without `-drop` and any type change; for a type change write the migration (`gesso migrate new`) and run `gesso gen -no-migration`.
 - Custom SQL goes in the module's `queries.sql`; `gesso gen` turns it into `queries.gen.go`.
 - What clients send is `Req…` (`models/requests.go`), what they get back `Res…` (`models/responses.go`).
-- `internal/api/register.go` lists the modules, migrations, stores, middleware, commands and constraints; the CLI adds to it. `internal/api/api.go` is setup.
-- Every database call and every service or repository method takes `ctx` first. No singletons: dependencies come in through `Deps`.
-- Settings come from the environment or `.env` (`.env.development` under `gesso dev`); read them in `api.New`, nowhere else.
+- `main.go` makes the app (`newApp`); `register.go` registers modules, commands and middleware; the CLI adds to it. A module takes the database and the rest in `Init(app *gesso.App)`: `app.DB()`, never a global.
+- Every database call takes `ctx` first.
+- Settings come from the environment or `.env` (`.env.development` under `gesso dev`); read them in `newApp`, nowhere else.
 - Before finishing: `go vet ./...`, `go test ./...`, `gesso check`.
 <!-- gesso:end -->

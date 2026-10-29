@@ -10,7 +10,7 @@ endpoints both import:
 
 ```go
 api := gesso.NewRemote("http://api.internal:8080", nil)
-note, err := notes.GetNote.Call(ctx, api, models.ReqGetNote{Slug: slug}, gesso.Bearer(token))
+note, err := notes.GetNote.Call(ctx, api, models.ReqNoteKey{Key: id}, gesso.Bearer(token))
 ```
 
 The token comes from the API's sign-in and lives in collage's session.
@@ -21,21 +21,21 @@ collage.Main already reads the site's `.env`, so `os.Getenv` works in
 `newApp`. In the collage site's root:
 
 ```sh
-gesso init -dialect sqlite              # internal/api: database, migrations, OpenAPI
-gesso add module notes -fields title:string,body:text   # wired into internal/api
+gesso init -dialect sqlite              # internal/api: api.go and register.go
+gesso add module notes -fields title:string,body:text   # registered in internal/api/register.go
 collage plugin add elagoht/gesso        # runs the API's lifecycle
 ```
+
+`internal/api/api.go` is `New(url, basePath string) (*gesso.App, error)`: the
+app with its database at `url`, OpenAPI at `/openapi.json`, Swagger UI at
+`/swagger`, all under `basePath`; then `register`.
 
 Then, in `main.go`'s `newApp`, build the API before `collage.New`, hand it to
 `plugins`, and mount it — with the site's own `Handle`, which keeps middleware
 off an API:
 
 ```go
-gessoAPI, err := api.NewWith(api.Config{
-	BasePath: "/api",
-	Database: cmp.Or(os.Getenv("DATABASE_URL"), "site.db"),
-	Logger:   slog.Default(),
-})
+gessoAPI, err := api.New(cmp.Or(os.Getenv("DATABASE_URL"), "site.db"), "/api")
 if err != nil {
 	return nil, err
 }

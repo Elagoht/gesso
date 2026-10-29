@@ -1,15 +1,28 @@
 # The database
 
-gesso has no ORM and chooses no driver. Repositories take a `db.DB` — what
-`*sql.DB` and `*sql.Tx` both are — so the same code runs on the pool or in a
-transaction:
+`Config.Database` is the app's database, one of:
 
 ```go
-err := db.InTx(ctx, s.db, func(tx db.DB) error {
-	if err := s.store(tx).Insert(ctx, note); err != nil {
+sqlite.Open("notes.db")                       // gesso/sqlite: a file
+postgres.Open("postgres://…@host:5432/notes") // gesso/postgres
+mysql.Open("user:pass@tcp(host:3306)/notes")  // gesso/mysql
+```
+
+The app opens it, migrates it as it starts, closes it at shutdown, answers its
+constraint violations as field errors, adds the `migrate` command, and, when
+`Config.Health` is set, a `database` readiness check. Modules take the pool
+in `Init` with `app.DB()`.
+
+gesso has no ORM. Repositories take a `db.DB` — what `*sql.DB` and `*sql.Tx`
+both are — so the same code runs on the pool or in a transaction:
+
+```go
+err := db.InTx(ctx, m.app.DB(), func(tx db.DB) error {
+	if err := m.store(tx).Insert(ctx, note); err != nil {
 		return err
 	}
-	return SendWelcome.Enqueue(ctx, s.queue, tx, Welcome{…}) // commits with it
+	_, err := SendWelcome.Enqueue(ctx, m.queue, tx, Welcome{…}) // commits with it
+	return err
 })
 ```
 
@@ -18,23 +31,25 @@ An `InTx` inside a transaction is a savepoint.
 ## Migrations
 
 Each module carries `migrations/` (`20261028153000_create_notes.up.sql`, with an
-optional `.down.sql`), embedded and applied as one history ordered by version.
-Applied files are checksummed: an edited one stops `Up`, as does an older one
-that arrives after a newer one ran. A file whose first line is
-`-- gesso:no-transaction` runs outside a transaction.
+optional `.down.sql`), embedded and added in `Init` with `app.Migrations`; the
+app applies them all as one history ordered by version. Applied files are
+checksummed: an edited one stops `Up`, as does an older one that arrives after
+a newer one ran. A file whose first line is `-- gesso:no-transaction` runs
+outside a transaction. A library's tables — the queue's, the rate limits' — are
+a step of their own after the files: `app.Schema(queue.Migrate)`.
 
 ## Dialects
 
 | | PostgreSQL | MySQL | SQLite |
 | --- | --- | --- | --- |
+| package | `gesso/postgres`, pgx | `gesso/mysql`, go-sql-driver | `gesso/sqlite`, modernc (no cgo) |
 | placeholders | `$1` | `?` | `?` |
 | migration lock | advisory lock | `GET_LOCK` | the write lock |
 | DDL in a transaction | yes | **no**: keep one DDL statement per migration | yes |
-| driver settings | — | `multiStatements=true`, `parseTime=true` | foreign keys on |
+| driver settings | — | `parseTime`; several statements per Exec only for migrations | foreign keys on, WAL, a 5s busy timeout |
 
-`gesso new` writes those settings. Violations become answers through
-`db.Errors(classify, fields)`, where `classify` is the driver's three lines
-(`gesso new` writes them) and `fields` names the field a constraint guards.
+A unique constraint's violation is a 409 on the field `app.Constraints` names
+for it — `{"docs.slug": "slug"}`; a generated module names its own.
 
 ## gesso gen
 

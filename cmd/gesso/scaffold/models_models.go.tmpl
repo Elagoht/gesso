@@ -9,9 +9,16 @@ import (
 {{- end}}
 )
 {{end}}
-// {{.Entity}} is the source of the module's CRUD code: change it, then run gesso gen.
-//
 //gesso:table {{.Table}}
+{{- if .Sortable}}
+//gesso:sortable
+{{- end}}
+{{- if .Write}}
+//gesso:write {{.Write}}
+{{- end}}
+{{- if .Read}}
+//gesso:read {{.Read}}
+{{- end}}
 type {{.Entity}} struct {
 	ID int64
 {{- range .Fields}}

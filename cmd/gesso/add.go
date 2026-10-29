@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"embed"
 	"errors"
-	"flag"
 	"fmt"
 	"go/format"
 	"io"
@@ -22,14 +21,12 @@ var scaffoldFS embed.FS
 
 var scaffold = template.Must(template.New("").ParseFS(scaffoldFS, "scaffold/*.tmpl"))
 
-// moduleSpec is what the module's own files — written once, the user's after —
-// are rendered from.
+// moduleSpec is what a new module's models.go is rendered from.
 type moduleSpec struct {
 	*model
-	Fields []specField
-	Guard  string // Admin: the guard on the writes
-	Guards string // the import path of internal/guards
-	Sample string // a ReqCreate literal's fields for the service test
+	Fields      []specField
+	Write, Read string // the guards' names, for //gesso:write and //gesso:read
+	Sortable    bool   // //gesso:sortable
 }
 
 type specField struct {
@@ -49,11 +46,16 @@ const addModuleHelp = `Each -field is name:type[:options and rules].
 
 Types: string, text, int, bool, float, time, date.
 Options:
-  key       the URL names a record by it, /<module>/{<field>}, instead of the id; unique
-  unique    a unique index; a duplicate is a 409 on the field
-  index     an index
-  optional  not required; an optional time or date is NULL when left out
-  sort      the list is in its order, then the id's
+  key            the URL names a record by it, /<module>/{<field>}, instead of the id; unique
+  unique         a unique index; a duplicate is a 409 on the field
+  index          an index
+  optional       not required; an optional time or date is NULL when left out
+  sort           the list is in its order, then the id's
+  listable       the list answers it; a record answers every field
+  filterable     the list filters by it: ?author=ada
+  orderable      the client may order the list by it: ?order=title, ?order=-title
+  guard=<guard>  only the guard's callers see and write it
+  gate=<guard>   on a bool: a record with it false is the guard's callers' only
 Rules: validate's — max=200, email, slug, oneof=draft published …
 
   gesso add module <name> -guard <guard> -field <field>:<type>[:options,rules]
@@ -66,46 +68,49 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	var fieldList fieldFlags
 	fs.Var(&fieldList, "field", "a field, name:type[:options and rules]: slug:string:key,slug,max=100; again for each")
 	short := fs.String("fields", "", "fields without options, comma-separated: title:string,body:text")
-	dialect := fs.String("dialect", "", "postgres, sqlite or mysql (default: the app's, else postgres)")
+	dialect := fs.String("dialect", "", "postgres, sqlite or mysql (default: the app's)")
 	parent := fs.String("dir", "internal", "the folder the module's folder goes in")
 	entity := fs.String("entity", "", "the entity's Go name (default: the module name, singular, capitalised)")
-	guard := fs.String("guard", "", "a guard from internal/guards on create, update, patch and delete")
-	empty := fs.Bool("empty", false, "only module.go, endpoints.go and models/, for endpoints that are not CRUD")
+	guard := fs.String("guard", "", "a guard from internal/guards on create, update, patch, delete and reorder: //gesso:write")
+	read := fs.String("read", "", "a guard from internal/guards on get and list: //gesso:read")
+	sortable := fs.Bool("sortable", false, "kept in the client's order, with PUT /<name>/order: //gesso:sortable")
+	empty := fs.Bool("empty", false, "a module with no table, for endpoints of your own")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 {
-		return usage("add module takes one name: gesso add module events")
+		return usage("add module takes one name: gesso add module <name>")
 	}
 	if *short != "" {
 		for part := range strings.SplitSeq(*short, ",") {
 			fieldList = append(fieldList, strings.TrimSpace(part))
 		}
 	}
-	if *empty && len(fieldList) > 0 {
-		return usage("-empty takes no fields: the module has no table")
+	if *empty && (len(fieldList) > 0 || *guard != "" || *read != "" || *sortable) {
+		return usage("-empty takes no fields, guards or -sortable: the module has no table")
 	}
 	if !*empty && len(fieldList) == 0 {
 		fieldList = fieldFlags{"name:string"}
 	}
-	app, appErr := os.ReadFile(filepath.Join(dir, *parent, "api", "api.go"))
-	regGo := filepath.Join(dir, *parent, "api", "register.go")
-	reg, regErr := os.ReadFile(regGo)
-	given := false
-	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "dialect" })
-	if appErr == nil && !given {
-		if d := appDialect(app); d != "" {
-			*dialect = d
-		}
-	}
 	if *dialect == "" {
-		*dialect = "postgres"
+		*dialect = projectDialect(dir)
 	}
-	spec, err := newSpec(pos[0], *entity, fieldList, *dialect)
+	if *dialect == "" && !*empty {
+		return errors.New("which database? the app's main.go opens none of gesso/sqlite, gesso/postgres, gesso/mysql: give -dialect")
+	}
+	spec, err := newSpec(pos[0], *entity, fieldList, cmpOr(*dialect, "sqlite"))
 	if err != nil {
 		return err
 	}
+	for _, g := range []string{*guard, *read} {
+		if g != "" {
+			if _, err := guardFor(dir, *parent, g); err != nil {
+				return err
+			}
+		}
+	}
+	spec.Write, spec.Read, spec.Sortable = *guard, *read, *sortable
 	target := filepath.Join(dir, *parent, spec.Pkg)
 	if _, err := os.Stat(target); err == nil {
 		return fmt.Errorf("%s already exists", target)
@@ -114,25 +119,10 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	if err != nil {
 		return err
 	}
-	spec.Models = mod + "/" + filepath.ToSlash(filepath.Join(*parent, spec.Pkg, "models"))
-	if *guard != "" {
-		if spec.Guard, err = guardFor(dir, *parent, *guard); err != nil {
-			return err
-		}
-		spec.Guards = mod + "/" + filepath.ToSlash(filepath.Join(*parent, "guards"))
-	}
-	files := []struct{ name, tmpl string }{
-		{"module.go", "module.go.tmpl"},
-		{"endpoints.go", "endpoints.go.tmpl"},
-		{"handler.go", "handler.go.tmpl"},
-		{"service.go", "service.go.tmpl"},
-		{"service_test.go", "service_test.go.tmpl"},
-		{"models/models.go", "models_models.go.tmpl"},
-	}
+	files := []struct{ name, tmpl string }{{"models/models.go", "models_models.go.tmpl"}}
 	if *empty {
 		files = []struct{ name, tmpl string }{
 			{"module.go", "empty_module.go.tmpl"},
-			{"endpoints.go", "empty_endpoints.go.tmpl"},
 			{"models/requests.go", "empty_requests.go.tmpl"},
 			{"models/responses.go", "empty_responses.go.tmpl"},
 		}
@@ -155,37 +145,44 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 		}
 		fmt.Fprintln(stdout, "created", p)
 	}
-	importPath := mod + "/" + filepath.ToSlash(filepath.Join(*parent, spec.Pkg))
-	if *empty {
-		return wire(reg, regErr, regGo, spec.Pkg, importPath, false, stdout)
+	if !*empty {
+		paths, err := genModel(filepath.Join(target, "models"), genModelOptions{root: dir, dialect: *dialect, now: now})
+		for _, p := range paths {
+			fmt.Fprintln(stdout, "created", p)
+		}
+		if err != nil {
+			return err
+		}
+		if *guard == "" {
+			fmt.Fprintf(stdout, "note: anyone may write to %s: -guard <name>, or //gesso:write <guard> in its models.go, guards it\n", spec.Pkg)
+		}
 	}
-	paths, err := genModel(filepath.Join(target, "models"), genModelOptions{root: dir, dialect: *dialect, now: now})
-	for _, p := range paths {
-		fmt.Fprintln(stdout, "created", p)
-	}
-	if err != nil {
-		return err
-	}
-	if spec.Guard == "" {
-		fmt.Fprintf(stdout, "note: create, update and delete in %s are open to anyone: -guard <name> guards them\n", spec.Pkg)
-	}
-	return wire(reg, regErr, regGo, spec.Pkg, importPath, true, stdout)
+	return register(dir, spec.Pkg+".New()", mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), stdout)
 }
 
-// wire adds the module to the app's register.go, when there is one.
-func wire(reg []byte, regErr error, regGo, pkg, importPath string, crud bool, stdout io.Writer) error {
-	if regErr != nil {
-		return nil // no gesso new app here: wiring the module is the user's
-	}
-	wired, err := wireModule(reg, pkg, importPath, crud)
+// register adds entry to the app's register.go, when there is one.
+func register(dir, entry, importPath string, stdout io.Writer) error {
+	regGo, src, err := registerFile(dir)
 	if err != nil {
-		return fmt.Errorf("%s: %w; add %s.New to it by hand", regGo, err, pkg)
+		fmt.Fprintf(stdout, "note: no register.go here: register %s with app.Register yourself\n", entry)
+		return nil
+	}
+	wired, err := wireRegister(src, entry, importPath)
+	if err != nil {
+		return fmt.Errorf("%s: %w; add %s to app.Register by hand", regGo, err, entry)
 	}
 	if err := os.WriteFile(regGo, wired, 0o644); err != nil {
 		return err
 	}
 	fmt.Fprintln(stdout, "wired", regGo)
 	return nil
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // newSpec parses the -field values: name:type[:options], type one of string,
@@ -243,7 +240,6 @@ func newSpec(name, entity string, fields []string, dialect string) (moduleSpec, 
 				return moduleSpec{}, errors.New("two key fields")
 			}
 			m.Key = f
-			spec.Sample = f.Go + ": " + map[string]string{"string": `"a"`, "int": "1"}[f.Base]
 		}
 		if f.Sort && m.Sort != nil {
 			return moduleSpec{}, errors.New("two sort fields")

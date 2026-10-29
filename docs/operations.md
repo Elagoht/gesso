@@ -13,7 +13,7 @@ duration, request id.
 ## Metrics and traces
 
 ```go
-gesso.New(gesso.Config{Metrics: &gesso.Metrics{Token: os.Getenv("METRICS_TOKEN")}}, …)
+gesso.New(gesso.Config{Metrics: &gesso.Metrics{Token: os.Getenv("METRICS_TOKEN")}})
 ```
 
 `/metrics` serves Prometheus: requests by method, route pattern and status,
@@ -36,15 +36,14 @@ func (o otelTracer) Start(r *http.Request, route string) (context.Context, func(
 ## Health
 
 ```go
-gesso.New(gesso.Config{Health: &gesso.Health{
-	Checks: map[string]func(context.Context) error{"database": pool.PingContext},
-}}, …)
+gesso.New(gesso.Config{Database: sqlite.Open("notes.db"), Health: &gesso.Health{}})
 ```
 
 `/healthz` answers 200 while the process runs; `/readyz` runs the checks at once,
 each bounded by `Timeout` (2s), and answers 503 when one fails — naming it,
 never its error — or when the app is stopping. Both are under `BasePath`.
-`gesso new` sets them up with a database check.
+With a `Config.Database`, the app adds a `database` check of its own;
+`Health.Checks` adds others, by name.
 
 ## Timeouts
 

@@ -11,7 +11,10 @@ import (
 // application loads by Subject.
 type Identity struct {
 	Subject string
-	Roles   []string
+	// Name is how the subject is called, a username, when the authenticator
+	// knows it.
+	Name  string
+	Roles []string
 }
 
 // HasRole reports whether the identity holds role.
@@ -118,14 +121,26 @@ func (g guarded) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // authenticating finds the request's identity and puts it in the context.
+// authenticating finds the identity with auth, a router's own, or else with the
+// app's as it is when the request comes: the sign-in module may be registered
+// after the module whose routes these are.
 type authenticating struct {
 	auth Authenticator
+	app  *App
 	next http.Handler
 	errs *errorWriter
 }
 
 func (a authenticating) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id, ok, err := a.auth.Authenticate(r)
+	auth := a.auth
+	if auth == nil {
+		auth = a.app.authenticator
+	}
+	if auth == nil {
+		a.next.ServeHTTP(w, r)
+		return
+	}
+	id, ok, err := auth.Authenticate(r)
 	if err != nil {
 		a.errs.write(w, r, err)
 		return

@@ -15,6 +15,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"golang.org/x/tools/imports"
 )
 
 func main() {
@@ -27,10 +29,10 @@ var commands []command
 
 func init() {
 	commands = []command{
-		{name: "new", args: "<module path>", summary: "make a project: main.go, internal/api, a test",
+		{name: "new", args: "<module path>", summary: "make a project: main.go, register.go, a test",
 			help: "A module path such as example.com/<name>; the folder is its last element unless -dir names one.",
 			run:  func(c cli, a []string) (int, error) { return 0, newProject(a, c.dir, c.stdout, c.now) }},
-		{name: "init", summary: "add internal/api to the Go module here, a collage site say",
+		{name: "init", summary: "add internal/api — api.go, register.go — to the Go module here, a collage site say",
 			run: func(c cli, a []string) (int, error) { return 0, initProject(a, c.dir, c.stdout) }},
 		{name: "dev", args: "[-- program args]", summary: "run the project, rebuilt and restarted as files change",
 			help: "Reads .env.development, or .env. A failed build leaves the running program up.",
@@ -56,7 +58,7 @@ func init() {
 		{name: "add module", args: "<name>", summary: "a CRUD module from its fields, wired into register.go",
 			help: addModuleHelp,
 			run:  func(c cli, a []string) (int, error) { return 0, addModule(a, c.dir, c.stdout, c.now) }},
-		{name: "add endpoint", args: "<module>/<name>", summary: "one endpoint in a module: its Endpoint, handler, Req and Res",
+		{name: "add endpoint", args: "<module>/<name>", summary: "one endpoint in a module: its route, handler, Req and Res",
 			run: func(c cli, a []string) (int, error) { return 0, addEndpoint(a, c.dir, c.stdout) }},
 		{name: "add auth", summary: "sign-in: a users table, a users command, a signedIn guard",
 			run: func(c cli, a []string) (int, error) { return 0, addAuth(a, c.dir, c.stdout) }},
@@ -119,6 +121,8 @@ func run(args []string, dir string, stdout, stderr io.Writer, now func() time.Ti
 		fmt.Fprintf(stderr, "gesso: %v\n", err)
 		return 2
 	}
+	// Code gesso writes groups the project's imports apart, as goimports does.
+	imports.LocalPrefix, _ = readModule(dir)
 	findings, err := cmd.run(cli{dir: dir, stdout: stdout, stderr: stderr, now: now}, rest)
 	var ue usageError
 	switch {

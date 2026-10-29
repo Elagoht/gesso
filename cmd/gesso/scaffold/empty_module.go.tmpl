@@ -2,19 +2,17 @@ package {{.Pkg}}
 
 import (
 	"github.com/Elagoht/gesso"
-	"github.com/Elagoht/gesso/db"
 )
 
-type Deps struct {
-	DB db.DB
-}
-
 type Module struct {
-	d Deps
+	app *gesso.App
 }
 
-func New(d Deps) *Module {
-	return &Module{d: d}
+func New() *Module { return &Module{} }
+
+func (m *Module) Init(app *gesso.App) error {
+	m.app = app
+	return nil
 }
 
 func (m *Module) Routes(r *gesso.Router) {}

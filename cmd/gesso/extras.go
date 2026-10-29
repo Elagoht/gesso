@@ -11,7 +11,7 @@ import (
 var lowerCamelName = regexp.MustCompile(`^[a-z][A-Za-z0-9]*$`)
 
 // addCommand is gesso add command <name>: internal/commands/<name>.go, run as
-// "app <name>", in register.go's commands.
+// "app <name>", added in register.go.
 func addCommand(args []string, dir string, stdout io.Writer) error {
 	fs := newFlags("add command")
 	parent := fs.String("dir", "internal", "the folder commands/ goes in")
@@ -27,24 +27,27 @@ func addCommand(args []string, dir string, stdout io.Writer) error {
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
+
+	"github.com/Elagoht/gesso"
 )
 
 // %[1]s runs as: app %[2]s [args]
-func %[1]s(db *sql.DB) func(ctx context.Context, args []string, out io.Writer) error {
+func %[1]s(app *gesso.App) func(ctx context.Context, args []string, out io.Writer) error {
 	return func(ctx context.Context, args []string, out io.Writer) error {
 		fmt.Fprintln(out, "%[2]s: nothing yet")
 		return nil
 	}
 }
 `, exported(name), name)
-	return addWired(dir, *parent, "commands", name, src, "appCommands", fmt.Sprintf("%q: commands.%s(d.DB)", name, exported(name)), stdout)
+	return addWired(dir, *parent, "commands", name, src, func(app string) string {
+		return fmt.Sprintf("%s.Command(%q, commands.%s(%s))", app, name, exported(name), app)
+	}, stdout)
 }
 
 // addMiddleware is gesso add middleware <name>: internal/middleware/<name>.go,
-// around every route, in register.go's middleware.
+// around every route, added in register.go.
 func addMiddleware(args []string, dir string, stdout io.Writer) error {
 	fs := newFlags("add middleware")
 	parent := fs.String("dir", "internal", "the folder middleware/ goes in")
@@ -67,26 +70,27 @@ func %[1]s(next http.Handler) http.Handler {
 	})
 }
 `, exported(name))
-	return addWired(dir, *parent, "middleware", name, src, "appMiddleware", "middleware."+exported(name), stdout)
+	return addWired(dir, *parent, "middleware", name, src, func(app string) string {
+		return app + ".Use(middleware." + exported(name) + ")"
+	}, stdout)
 }
 
-// addWired writes <parent>/<folder>/<name>.go and adds entry to the list fn
-// returns in register.go, importing the folder.
-func addWired(dir, parent, folder, name, src, fn, entry string, stdout io.Writer) error {
+// addWired writes <parent>/<folder>/<name>.go and adds stmt to register.go,
+// before it registers the modules, importing the folder.
+func addWired(dir, parent, folder, name, src string, stmt func(app string) string, stdout io.Writer) error {
 	p := filepath.Join(dir, parent, folder, name+".go")
 	if _, err := os.Stat(p); err == nil {
 		return fmt.Errorf("%s already exists", p)
 	}
-	regGo := filepath.Join(dir, parent, "api", "register.go")
-	reg, err := os.ReadFile(regGo)
+	regGo, reg, err := registerFile(dir)
 	if err != nil {
-		return fmt.Errorf("no %s: this adds to an app gesso new made", regGo)
+		return err
 	}
 	mod, err := readModule(dir)
 	if err != nil {
 		return err
 	}
-	wired, err := wireList(reg, fn, entry, mod+"/"+filepath.ToSlash(filepath.Join(parent, folder)))
+	wired, err := wireStatement(reg, stmt, mod+"/"+filepath.ToSlash(filepath.Join(parent, folder)))
 	if err != nil {
 		return fmt.Errorf("%s: %w", regGo, err)
 	}

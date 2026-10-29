@@ -104,7 +104,7 @@ func gen(args []string, dir string, stdout io.Writer, now func() time.Time) (sta
 	var errs []error
 	models := 0
 	for _, md := range modelDirs {
-		paths, err := genModel(md, genModelOptions{root: dir, check: *checkOnly, drop: *drop, noMigration: *noMigration, now: now})
+		paths, err := genModel(md, genModelOptions{root: dir, dialect: projectDialect(dir), check: *checkOnly, drop: *drop, noMigration: *noMigration, now: now})
 		if errors.Is(err, errNoModel) {
 			continue
 		}

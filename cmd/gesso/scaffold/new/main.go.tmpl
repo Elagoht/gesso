@@ -1,11 +1,26 @@
 package main
 
 import (
-	"github.com/Elagoht/gesso"
+	"cmp"
+	"os"
 
-	"{{.Module}}/internal/api"
+	"github.com/Elagoht/gesso"
+	"github.com/Elagoht/gesso/{{.Dialect}}"
 )
 
 func main() {
-	gesso.Main(api.New)
+	gesso.Main(newApp)
+}
+
+func newApp(env gesso.Env) (*gesso.App, error) {
+	app, err := gesso.New(gesso.Config{
+		Env:       env,
+		Database:  {{.Dialect}}.Open(cmp.Or(os.Getenv("DATABASE_URL"), "{{.DefaultDSN}}")),
+		OpenAPI:   &gesso.OpenAPIConfig{Title: "{{.Name}}", Version: "0.1.0", Path: "/openapi.json", UI: "/swagger"},
+		AccessLog: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return app, register(app)
 }

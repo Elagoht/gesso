@@ -1,0 +1,141 @@
+package gesso
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"maps"
+
+	"github.com/Elagoht/gesso/migrate"
+)
+
+// Database is the app's SQL database: gesso/sqlite, gesso/postgres and
+// gesso/mysql make one from a file or a URL. Set as Config.Database, the app
+// opens it, migrates it as it starts, closes it at shutdown, answers its
+// constraint violations as field errors, and adds the "migrate" command.
+type Database interface {
+	// Open opens the pool the app's handlers use.
+	Open() (*sql.DB, error)
+	// OpenMigrator opens the connection migrations run on: one that takes
+	// several statements per Exec, as a migration file needs.
+	OpenMigrator() (*sql.DB, error)
+	Dialect() migrate.Dialect
+	// Errors answers the database's constraint violations; fields names the
+	// field of each unique constraint.
+	Errors(fields map[string]string) ErrorMapper
+}
+
+// Initializer is a module that sets itself up from the app when it is
+// registered, before its routes: it takes the database, adds its migrations,
+// its constraints, its commands.
+type Initializer interface {
+	Init(app *App) error
+}
+
+// ModuleOf is the module of type T registered on app: the sign-in module, for
+// another module that looks up users.
+func ModuleOf[T Module](app *App) (T, bool) {
+	for _, m := range app.modules {
+		if t, ok := m.(T); ok {
+			return t, true
+		}
+	}
+	var zero T
+	return zero, false
+}
+
+// DB is the app's database pool, nil without Config.Database.
+func (a *App) DB() *sql.DB { return a.db }
+
+// Dialect is the app's database dialect, nil without Config.Database.
+func (a *App) Dialect() migrate.Dialect {
+	if a.cfg.Database == nil {
+		return nil
+	}
+	return a.cfg.Database.Dialect()
+}
+
+// Migrations adds migration files the app applies as it starts, with the other
+// modules' in one history.
+func (a *App) Migrations(fsys fs.FS) {
+	if fsys != nil {
+		a.migrations = append(a.migrations, fsys)
+	}
+}
+
+// Schema adds a module's own migration step, run after the migration files on
+// the same connection: a library's tables, kept in a history of their own.
+func (a *App) Schema(fn func(ctx context.Context, d *sql.DB, dialect migrate.Dialect) error) {
+	if fn != nil {
+		a.schemas = append(a.schemas, fn)
+	}
+}
+
+// Constraints names the field each unique constraint is about, so a duplicate
+// is answered 409 on that field: {"docs.slug": "slug"}.
+func (a *App) Constraints(fields map[string]string) {
+	maps.Copy(a.constraints, fields)
+}
+
+func (a *App) openDatabase() error {
+	d, err := a.cfg.Database.Open()
+	if err != nil {
+		return fmt.Errorf("gesso: database: %w", err)
+	}
+	a.db = d
+	a.errs.mappers = append(a.errs.mappers, func(err error) (*Error, bool) {
+		return a.cfg.Database.Errors(a.constraints)(err)
+	})
+	if a.cfg.Health != nil {
+		checks := maps.Clone(a.cfg.Health.Checks)
+		if checks == nil {
+			checks = map[string]func(context.Context) error{}
+		}
+		if _, ok := checks["database"]; !ok {
+			checks["database"] = d.PingContext
+		}
+		a.cfg.Health.Checks = checks
+	}
+	a.OnShutdown(func(context.Context) error { return d.Close() })
+	a.Command("migrate", func(ctx context.Context, args []string, out io.Writer) error {
+		m, conn, err := a.migrator()
+		if err != nil {
+			return err
+		}
+		return errors.Join(migrate.Command(ctx, m, args, out), conn.Close())
+	})
+	return nil
+}
+
+func (a *App) migrator() (*migrate.Migrator, *sql.DB, error) {
+	conn, err := a.cfg.Database.OpenMigrator()
+	if err != nil {
+		return nil, nil, err
+	}
+	m, err := migrate.New(conn, a.cfg.Database.Dialect(), a.migrations...)
+	if err != nil {
+		return nil, nil, errors.Join(err, conn.Close())
+	}
+	return m, conn, nil
+}
+
+// migrateUp brings the database up to date as the app starts: the migration
+// files, then the modules' own steps.
+func (a *App) migrateUp(ctx context.Context) error {
+	m, conn, err := a.migrator()
+	if err != nil {
+		return fmt.Errorf("gesso: migrate: %w", err)
+	}
+	if _, err := m.Up(ctx); err != nil {
+		return errors.Join(fmt.Errorf("gesso: migrate: %w", err), conn.Close())
+	}
+	for _, fn := range a.schemas {
+		if err := fn(ctx, conn, a.cfg.Database.Dialect()); err != nil {
+			return errors.Join(fmt.Errorf("gesso: migrate: %w", err), conn.Close())
+		}
+	}
+	return conn.Close()
+}

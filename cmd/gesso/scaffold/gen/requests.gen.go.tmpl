@@ -12,7 +12,7 @@ import (
 
 type ReqCreate{{.Entity}} struct {
 {{- range .Fields}}
-	{{.Go}} {{.Type}} `json:"{{.JSON}}"{{if .Rule}} validate:"{{.Rule}}"{{end}}`
+	{{.Go}} {{.ReqType}} `{{.ReqTag}}`
 {{- end}}
 }
 
@@ -35,11 +35,55 @@ type Req{{.Entity}}Key struct {
 type ReqList{{.Plural}} struct {
 	After string `query:"after"`
 	Take  int    `query:"take" default:"20" validate:"min=1,max=100"`
+{{- if gt (len .SQL.Lists) 1}}
+	Order string `query:"order" validate:"omitempty,oneof={{.OrderNames}}"`
+{{- end}}
+{{- range .Filters}}
+	{{.Go}} *{{.Type}} `query:"{{.JSON}}"`
+{{- end}}
 }
+{{- if .Sortable}}
+
+type ReqReorder{{.Plural}} struct {
+	Keys []{{.KeyGo}} `json:"keys" validate:"required"`
+}
+{{- end}}
+{{- if .Guarded}}
+
+// {{.Entity}}Access is which guarded fields the caller may see and write.
+type {{.Entity}}Access struct {
+{{- range .Guarded}}
+	{{.}} bool
+{{- end}}
+}
+
+// Forbidden reports whether in sets a field a sees nothing of.
+func (in ReqCreate{{.Entity}}) Forbidden(a {{.Entity}}Access) bool {
+	return {{range $i, $f := .Fields}}{{if $f.Guard}}(in.{{$f.Go}}.Set && !a.{{$f.Guard}}) || {{end}}{{end}}false
+}
+
+// Forbidden reports whether in sets a field a sees nothing of.
+func (in ReqPatch{{.Entity}}) Forbidden(a {{.Entity}}Access) bool {
+	return {{range $i, $f := .Fields}}{{if $f.Guard}}(in.{{$f.Go}}.Set && !a.{{$f.Guard}}) || {{end}}{{end}}false
+}
+{{- end}}
 
 // Record is the {{.Entity}} in describes, without its id.
 func (in ReqCreate{{.Entity}}) Record() {{.Entity}} {
-	return {{.Entity}}{ {{- range .Fields}}{{.Go}}: in.{{.Go}}, {{end -}} }
+	return {{.Entity}}{ {{- range .Fields}}{{.Go}}: in.{{.Go}}{{if .Guard}}.Value{{end}}, {{end -}} }
+}
+
+// Patch is in as a patch that sets every field{{if .Guarded}} but those a hides, which keep what they hold{{end}}.
+func (in ReqUpdate{{.Entity}}) Patch({{if .Guarded}}a {{.Entity}}Access{{end}}) ReqPatch{{.Entity}} {
+	return ReqPatch{{.Entity}}{Key: in.Key,
+{{- range .Fields}}
+{{- if .Guard}}
+		{{.Go}}: gesso.Optional[{{.Type}}]{Set: a.{{.Guard}}, Value: in.{{.Go}}.Value},
+{{- else}}
+		{{.Go}}: gesso.Optional[{{.Type}}]{Set: true, Value: in.{{.Go}}},
+{{- end}}
+{{- end}}
+	}
 }
 
 // Apply sets on e the fields in has.
