@@ -353,7 +353,13 @@ func (g *schemaGen) operation(rt docRoute, path string, ids map[string]int) *oaO
 			}}
 		}
 		if len(o.plan.form) > 0 {
-			op.RequestBody = g.formBody(o.in, o.plan.form)
+			fb := g.formBody(o.in, o.plan.form)
+			if op.RequestBody != nil {
+				// A JSON body, or the same fields as a form, files with them.
+				op.RequestBody.Content["multipart/form-data"] = fb.Content["multipart/form-data"]
+			} else {
+				op.RequestBody = fb
+			}
 		}
 		if len(o.plan.params) > 0 || o.plan.hasBody || len(o.plan.form) > 0 {
 			op.Responses["400"] = problemResponse("The input failed decoding or validation")

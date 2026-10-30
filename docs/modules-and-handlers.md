@@ -130,12 +130,25 @@ again, so what is stored still keeps the rules.
 	Flyer  string `gesso:"file,accept=application/pdf,maxsize=2MiB"`
 ```
 
-A `file` or an `image` is a string column that holds where the file is stored;
-a create, a PUT or a PATCH never touches it. Each has routes of its own:
+A `file` or an `image` is a string column that holds where the file is stored.
+It comes with the record — a create, a PUT or a PATCH sent as
+`multipart/form-data`, the fields as form fields and the file under the field's
+name — or on routes of its own:
+
+```sh
+curl -X POST $B/docs -H "$A" -F title=Kurulum -F slug=kurulum -F content=… -F cover=@kapak.png
+curl -X PATCH $B/docs/kurulum -H "$A" -F title='Kurulum 2' -F cover=@yeni.png
+```
+
+The files are checked and stored first, then the record and their columns are
+written in one transaction; when anything fails nothing is written and the new
+files go, and only then does a file replaced go. In a form, a field sent empty
+is null: a PATCH clears a date or a number with it. A JSON body never carries
+a file.
 
 | | |
 | --- | --- |
-| `PUT /<module>/{key}/<field>` | a multipart form whose `file` is the file, under `//gesso:write`; answers the record |
+| `PUT /<module>/{key}/<field>` | the file alone, a multipart form whose `file` is it, under `//gesso:write`; answers the record |
 | `GET /<module>/{key}/<field>` | the file, under `//gesso:read` unless `public` |
 | `DELETE /<module>/{key}/<field>` | removes it |
 

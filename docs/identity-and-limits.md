@@ -37,7 +37,7 @@ the app's authenticator.
 | `POST /auth/logout` | revokes the token it is called with |
 | `PUT /auth/password` | `{"currentPassword", "newPassword"}`: signs every device out, answers a new token |
 | `GET /auth/me` | the signed-in user, every field, and `roles` |
-| `PATCH /auth/me` | the fields marked `self`, on oneself |
+| `PATCH /auth/me` | the fields marked `self`, on oneself: JSON, or a form with the files marked `self` too |
 | `PUT`, `DELETE /auth/me/<field>` | a file marked `self`, on oneself |
 | `GET`, `POST /users`, `GET`, `PUT`, `PATCH`, `DELETE /users/{username}` | the users, under `//gesso:write` and `//gesso:read` (`admin`) |
 | `PUT /users/{username}/password` | `{"password"}`: an administrator sets one |

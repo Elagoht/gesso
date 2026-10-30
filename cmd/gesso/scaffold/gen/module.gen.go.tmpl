@@ -23,7 +23,7 @@ import (
 {{- if .Files}}
 	"path"
 {{- end}}
-{{- if or .Files .Auth}}
+{{- if .Auth}}
 	"strconv"
 {{- end}}
 {{- if .TransformUses "strings"}}
@@ -40,7 +40,7 @@ import (
 {{- if .DefaultUses "@today"}}
 	"github.com/Elagoht/gesso/date"
 {{- end}}
-{{- if or .Hooks.BeforeUpdate .Sortable}}
+{{- if or .Hooks.BeforeUpdate .Sortable .Files}}
 	"github.com/Elagoht/gesso/db"
 {{- end}}
 {{- if .FilesOfKind "image"}}
@@ -160,7 +160,7 @@ func (m *Module) Routes(r *gesso.Router) {
 	m.auth.SignInRoutes(r)
 	Me.Handle(r, m.me, signedIn)
 {{- if .SelfFields}}
-	UpdateMe.Handle(r, m.updateMe, signedIn)
+	UpdateMe.Handle(r, m.updateMe, signedIn{{if .SelfFiles}}, gesso.MaxBodyBytes({{.SelfFilesBodyLimit}}){{end}})
 {{- end}}
 {{- range .SelfFiles}}
 	UploadMy{{.Go}}.Handle(r, m.uploadMy{{.Go}}, signedIn, gesso.MaxBodyBytes({{.BodyLimit}}))
@@ -168,11 +168,11 @@ func (m *Module) Routes(r *gesso.Router) {
 {{- end}}
 	Set{{.Entity}}Password.Handle(r, m.setPassword{{if .Write}}, write{{end}})
 {{- end}}
-	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201){{if .Write}}, write{{end}})
+	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201){{if .Write}}, write{{end}}{{if .Files}}, gesso.MaxBodyBytes({{.FilesBodyLimit}}){{end}})
 	Get{{.Entity}}.Handle(r, m.get{{if .Read}}, read{{end}})
 	List{{.Plural}}.Handle(r, m.list{{if .Read}}, read{{end}})
-	Update{{.Entity}}.Handle(r, m.update{{if .Write}}, write{{end}})
-	Patch{{.Entity}}.Handle(r, m.patch{{if .Write}}, write{{end}})
+	Update{{.Entity}}.Handle(r, m.update{{if .Write}}, write{{end}}{{if .Files}}, gesso.MaxBodyBytes({{.FilesBodyLimit}}){{end}})
+	Patch{{.Entity}}.Handle(r, m.patch{{if .Write}}, write{{end}}{{if .Files}}, gesso.MaxBodyBytes({{.FilesBodyLimit}}){{end}})
 	Delete{{.Entity}}.Handle(r, m.delete{{if .Write}}, write{{end}})
 {{- if .Sortable}}
 	Reorder{{.Plural}}.Handle(r, m.reorder{{if .Write}}, write{{end}})
@@ -229,15 +229,39 @@ func (m *Module) create(ctx context.Context, in models.{{.CreateIn}}) (models.Re
 	if err != nil {
 		return models.Res{{.Entity}}{}, err
 	}
+{{- end}}
+{{- if .Files}}
+	keys, err := m.newFiles(ctx{{range .Files}}, data.{{.Go}}{{end}})
+	if err != nil {
+		return models.Res{{.Entity}}{}, err
+	}
+	err = db.InTx(ctx, m.app.DB(), func(tx db.DB) error {
+		repo := newRepository(tx)
+		var err error
+		if e, err = repo.insert(ctx, e{{if .Auth}}, hash, time.Now().UnixMilli(){{end}}); err != nil {
+			return err
+		}
+		return repo.setFiles(ctx, &e, keys)
+	})
+	if err != nil {
+		m.discard(ctx, keys)
+		return models.Res{{.Entity}}{}, err
+	}
+{{- end}}
+{{- if .Auth}}
+{{- if not .Files}}
 	e, err = m.repo.insert(ctx, e, hash, time.Now().UnixMilli())
 	if err != nil {
 		return models.Res{{.Entity}}{}, err
 	}
+{{- end}}
 	if len(in.Roles) > 0 {
 		if err := m.users.SetRoles(ctx, e.{{.Key.Go}}, in.Roles...); err != nil {
 			return models.Res{{.Entity}}{}, err
 		}
 	}
+	return e.Response({{.RespArgs}}), nil
+{{- else if .Files}}
 	return e.Response({{.RespArgs}}), nil
 {{- else}}
 	e, err := m.repo.insert(ctx, e)
@@ -355,21 +379,54 @@ func (m *Module) patch(ctx context.Context, in models.ReqPatch{{.Entity}}) (mode
 }
 
 func (m *Module) write(ctx context.Context, in models.ReqPatch{{.Entity}}{{if .Guarded}}, a models.{{.Entity}}Access{{end}}) (models.Res{{.Entity}}, error) {
-{{- if .Hooks.BeforeUpdate}}
+{{- if or .Hooks.BeforeUpdate .Files}}
+	old, err := m.repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
+	if err != nil {
+		return models.Res{{.Entity}}{}, err
+	}
+{{- if .Files}}
+	keys, err := m.newFiles(ctx{{range .Files}}, in.{{.Go}}{{end}})
+	if err != nil {
+		return models.Res{{.Entity}}{}, err
+	}
+{{- end}}
 	var e models.{{.Entity}}
-	err := db.InTx(ctx, m.app.DB(), func(tx db.DB) error {
+	err = db.InTx(ctx, m.app.DB(), func(tx db.DB) error {
 		repo := newRepository(tx)
-		var err error
-		if e, err = repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}}); err != nil {
-			return err
-		}
+{{- if .Hooks.BeforeUpdate}}
+		e = old
 		in.Apply(&e)
 		if err := m.BeforeUpdate(ctx, &e); err != nil {
 			return err
 		}
-		return repo.save(ctx, e)
+		if err := repo.save(ctx, e); err != nil {
+			return err
+		}
+{{- else}}
+		if err := repo.patch(ctx, old.ID, in); err != nil {
+			return err
+		}
+		var err error
+		if e, err = repo.byID(ctx, old.ID); err != nil {
+			return err
+		}
+{{- end}}
+{{- if .Files}}
+		return repo.setFiles(ctx, &e, keys)
+{{- else}}
+		return nil
+{{- end}}
 	})
+{{- if .Files}}
+	if err != nil {
+		m.discard(ctx, keys)
+		return models.Res{{.Entity}}{}, err
+	}
+	m.replaced(ctx, old, keys)
+	return e.Response({{.RespArgs}}), nil
+{{- else}}
 	return e.Response({{.RespArgs}}), err
+{{- end}}
 {{- else}}
 	id, err := m.repo.idOf(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
 	if err != nil {
@@ -445,49 +502,10 @@ func (m *Module) store{{.Go}}(ctx context.Context, id int64, f *gesso.File) (mod
 	if err != nil {
 		return old, err
 	}
-	src, err := f.Open()
+	key, err := m.keep{{.Go}}(ctx, f)
 	if err != nil {
 		return old, err
 	}
-	defer src.Close()
-{{- if eq .File "image"}}
-	img, err := imaging.Process(src, imaging.Options{Width: {{.Width}}, Height: {{.Height}}, Fill: {{.Fill}}, Format: "{{.Format}}", Quality: {{.Quality}}})
-	if errors.Is(err, imaging.ErrNotImage) || errors.Is(err, imaging.ErrTooLarge) {
-		return old, gesso.ErrInvalidInput.WithFields(validate.FieldError{Field: "file", Code: "file_type", Message: err.Error()})
-	}
-	if err != nil {
-		return old, err
-	}
-	data, ext := img.Data, img.Ext
-{{- if $m.Hooks.ProcessOf .Go}}
-	if data, ext, err = m.Process{{.Go}}(ctx, data, ext); err != nil {
-		return old, err
-	}
-{{- end}}
-	key := "{{$m.Table}}/" + strconv.FormatInt(id, 10) + "/{{.JSON}}-" + rand.Text() + ext
-	if _, err := m.files.Put(ctx, key, bytes.NewReader(data)); err != nil {
-		return old, err
-	}
-{{- else}}
-	ext := ".bin"
-	if exts, _ := mime.ExtensionsByType(f.ContentType); len(exts) > 0 {
-		ext = exts[0]
-	}
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(src); err != nil {
-		return old, err
-	}
-	data := buf.Bytes()
-{{- if $m.Hooks.ProcessOf .Go}}
-	if data, ext, err = m.Process{{.Go}}(ctx, data, ext); err != nil {
-		return old, err
-	}
-{{- end}}
-	key := "{{$m.Table}}/" + strconv.FormatInt(id, 10) + "/{{.JSON}}-" + rand.Text() + ext
-	if _, err := m.files.Put(ctx, key, bytes.NewReader(data)); err != nil {
-		return old, err
-	}
-{{- end}}
 	if err := m.repo.set{{.Go}}(ctx, id, key); err != nil {
 		_ = m.files.Delete(ctx, key)
 		return old, err
@@ -497,6 +515,45 @@ func (m *Module) store{{.Go}}(ctx context.Context, id int64, f *gesso.File) (mod
 	}
 	old.{{.Go}} = key
 	return old, nil
+}
+
+// keep{{.Go}} checks f, {{if eq .File "image"}}writes the image again, {{end}}and stores it, answering its key.
+func (m *Module) keep{{.Go}}(ctx context.Context, f *gesso.File) (string, error) {
+	src, err := f.Open()
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+{{- if eq .File "image"}}
+	img, err := imaging.Process(src, imaging.Options{Width: {{.Width}}, Height: {{.Height}}, Fill: {{.Fill}}, Format: "{{.Format}}", Quality: {{.Quality}}})
+	if errors.Is(err, imaging.ErrNotImage) || errors.Is(err, imaging.ErrTooLarge) {
+		return "", gesso.ErrInvalidInput.WithFields(validate.FieldError{Field: "{{.JSON}}", Code: "file_type", Message: err.Error()})
+	}
+	if err != nil {
+		return "", err
+	}
+	data, ext := img.Data, img.Ext
+{{- else}}
+	ext := ".bin"
+	if exts, _ := mime.ExtensionsByType(f.ContentType); len(exts) > 0 {
+		ext = exts[0]
+	}
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(src); err != nil {
+		return "", err
+	}
+	data := buf.Bytes()
+{{- end}}
+{{- if $m.Hooks.ProcessOf .Go}}
+	if data, ext, err = m.Process{{.Go}}(ctx, data, ext); err != nil {
+		return "", err
+	}
+{{- end}}
+	key := "{{$m.Table}}/{{.JSON}}-" + rand.Text() + ext
+	if _, err := m.files.Put(ctx, key, bytes.NewReader(data)); err != nil {
+		return "", err
+	}
+	return key, nil
 }
 
 func (m *Module) get{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}Key) (*gesso.Download, error) {
@@ -536,6 +593,61 @@ func (m *Module) drop{{.Go}}(ctx context.Context, e models.{{$m.Entity}}) error 
 }
 {{- end}}
 {{- if .Files}}
+
+// fileKeys are where the files a create or a write sent are kept, "" for one
+// not sent.
+type fileKeys struct {
+{{- range .Files}}
+	{{.Go}} string
+{{- end}}
+}
+
+// newFiles stores the files a create or a write sent, before the record is
+// written: one the checks refuse stops it with nothing written.
+func (m *Module) newFiles(ctx context.Context{{range .Files}}, {{.JSON}} *gesso.File{{end}}) (fileKeys, error) {
+	var k fileKeys
+	var err error
+{{- range .Files}}
+	if {{.JSON}} != nil {
+		if k.{{.Go}}, err = m.keep{{.Go}}(ctx, {{.JSON}}); err != nil {
+			m.discard(ctx, k)
+			return fileKeys{}, err
+		}
+	}
+{{- end}}
+	return k, nil
+}
+
+// discard removes files stored for a record that was not written.
+func (m *Module) discard(ctx context.Context, k fileKeys) {
+{{- range .Files}}
+	if k.{{.Go}} != "" {
+		_ = m.files.Delete(ctx, k.{{.Go}})
+	}
+{{- end}}
+}
+
+// replaced removes the files of old that k's took the place of.
+func (m *Module) replaced(ctx context.Context, old models.{{.Entity}}, k fileKeys) {
+{{- range .Files}}
+	if k.{{.Go}} != "" && old.{{.Go}} != "" {
+		_ = m.files.Delete(ctx, old.{{.Go}})
+	}
+{{- end}}
+}
+
+// setFiles keeps k's files on e, in its row too.
+func (r *repository) setFiles(ctx context.Context, e *models.{{.Entity}}, k fileKeys) error {
+{{- range .Files}}
+	if k.{{.Go}} != "" {
+		if err := r.set{{.Go}}(ctx, e.ID, k.{{.Go}}); err != nil {
+			return err
+		}
+		e.{{.Go}} = k.{{.Go}}
+	}
+{{- end}}
+	return nil
+}
 
 // serve answers the file stored under key: an image shown, any other file
 // downloaded, never run as a page.

@@ -32,9 +32,10 @@ import (
 // one (nil when absent), or a slice of one (repeated values).
 
 type inputPlan struct {
-	params  []paramPlan
-	form    []formPlan
-	hasBody bool
+	params   []paramPlan
+	form     []formPlan
+	hasBody  bool
+	jsonOnly bool // a body field with no form tag: the input takes no form
 }
 
 type source int
@@ -72,7 +73,7 @@ func planInput(t reflect.Type) (*inputPlan, error) {
 	if err := planFields(t, nil, p); err != nil {
 		return nil, err
 	}
-	if p.hasBody && len(p.form) > 0 {
+	if p.jsonOnly && len(p.form) > 0 {
 		return nil, fmt.Errorf("input %s reads a form and a JSON body: give every body field a form tag, or none", t)
 	}
 	return p, nil
@@ -110,6 +111,7 @@ func planFields(t reflect.Type, prefix []int, p *inputPlan) error {
 				return fmt.Errorf("input %s.%s: %w", t, f.Name, err)
 			}
 			p.form = append(p.form, fp)
+			p.hasBody = p.hasBody || fp.dual
 			continue
 		}
 		pp, ok, err := planParam(f, index)
@@ -124,7 +126,7 @@ func planFields(t reflect.Type, prefix []int, p *inputPlan) error {
 				// headers and forms only at the input's top level.
 				return fmt.Errorf("input %s.%s: %s is read from the body, but has path, query, header or form fields: move them to the input itself", t, f.Name, st)
 			}
-			p.hasBody = true
+			p.hasBody, p.jsonOnly = true, true
 		}
 	}
 	return nil
@@ -288,12 +290,19 @@ func parserFor(t reflect.Type) (func(string) (reflect.Value, error), error) {
 // decode fills dst from r. Its error is an *Error ready to answer.
 func (p *inputPlan) decode(r *http.Request, dst reflect.Value, maxBody, formMem int64) error {
 	var fields []validate.FieldError
-	if len(p.form) > 0 {
+	form, body := len(p.form) > 0, p.hasBody
+	if form && body {
+		// Every body field reads a form too: the content type says which came.
+		mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		form = mt == "multipart/form-data" || mt == "application/x-www-form-urlencoded"
+		body = !form
+	}
+	if form {
 		if err := p.decodeForm(r, dst, maxBody, formMem); err != nil {
 			return err
 		}
 	}
-	if p.hasBody {
+	if body {
 		if err := decodeBody(r, dst, maxBody); err != nil {
 			return err
 		}

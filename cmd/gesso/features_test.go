@@ -139,6 +139,29 @@ func (c caller) upload(path, name string, data []byte) (int, string) {
 	return rec.Code, rec.Body.String()
 }
 
+// form sends fields and files as one multipart form.
+func (c caller) form(method, path string, fields map[string]string, files map[string][]byte) (int, string) {
+	c.t.Helper()
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	for k, v := range fields {
+		_ = w.WriteField(k, v)
+	}
+	for k, data := range files {
+		part, _ := w.CreateFormFile(k, k+".bin")
+		_, _ = part.Write(data)
+	}
+	_ = w.Close()
+	req := httptest.NewRequest(method, path, &body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	rec := httptest.NewRecorder()
+	c.app.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.String()
+}
+
 // fetch answers path's status, type and body.
 func (c caller) fetch(path string) (int, string, []byte) {
 	req := httptest.NewRequest("GET", path, nil)
@@ -354,6 +377,31 @@ func TestEvents(t *testing.T) {
 		t.Fatalf("files kept: %d", n)
 	}
 
+	// A record and its files in one form: all written, or nothing.
+	code, body = bob.form("POST", "/events", map[string]string{"title": "Fair", "slug": "fair", "day": "2026-11-05", "public": "true", "order": "2"},
+		map[string][]byte{"cover": pngOf(400, 300)})
+	if code != 201 || !strings.Contains(body, ` + "`" + `"cover":"/events/fair/cover?v=` + "`" + `) || !strings.Contains(body, ` + "`" + `"host":"bob"` + "`" + `) {
+		t.Fatalf("a form with a cover: %d %s", code, body)
+	}
+	firstCover := urlIn(t, body, "cover")
+	if code, body := bob.form("POST", "/events", map[string]string{"title": "Bad", "slug": "bad"}, map[string][]byte{"cover": []byte("<svg/>")}); code != 400 {
+		t.Fatalf("a form with an svg: %d %s", code, body)
+	}
+	anyone.want("GET", "/events/bad", "", 404)
+	if n := files(t, uploads); n != 2 {
+		t.Fatalf("files after the forms: %d", n)
+	}
+	code, body = bob.form("PATCH", "/events/fair", map[string]string{"title": "  Fair   2 "}, map[string][]byte{"cover": pngOf(50, 50)})
+	if code != 200 || !strings.Contains(body, ` + "`" + `"title":"Fair 2"` + "`" + `) || urlIn(t, body, "cover") == firstCover || !strings.Contains(body, ` + "`" + `"order":2` + "`" + `) {
+		t.Fatalf("a patch with a cover: %d %s", code, body)
+	}
+	if n := files(t, uploads); n != 2 {
+		t.Fatalf("the old cover stays: %d files", n)
+	}
+	if code, body := bob.form("PATCH", "/events/fair", map[string]string{"price": ""}, nil); code != 400 {
+		t.Fatalf("an empty number clears it, and price may not be null: %d %s", code, body)
+	}
+
 	// Users: the model's own, an avatar of one's own, admins over the rest.
 	bob.want("GET", "/auth/me", "", 200, ` + "`" + `"username":"bob"` + "`" + `, ` + "`" + `"roles":[]` + "`" + `)
 	bob.want("PATCH", "/auth/me", ` + "`" + `{"name":"  Bob   Builder "}` + "`" + `, 200, ` + "`" + `"name":"Bob Builder"` + "`" + `)
@@ -375,11 +423,20 @@ func TestEvents(t *testing.T) {
 	}
 	caller{t, app, s.Token}.want("GET", "/auth/me", "", 200, ` + "`" + `"roles":["editor"]` + "`" + `)
 	bob.want("DELETE", "/auth/me/avatar", "", 204)
+	code, body = bob.form("PATCH", "/auth/me", map[string]string{"name": "Bob"}, map[string][]byte{"avatar": pngOf(80, 80)})
+	if code != 200 || !strings.Contains(body, ` + "`" + `"name":"Bob"` + "`" + `) || !strings.Contains(body, ` + "`" + `"avatar":"/users/bob/avatar` + "`" + `) {
+		t.Fatalf("name and avatar in one form: %d %s", code, body)
+	}
+	if code, body := bob.form("PATCH", "/auth/me", map[string]string{"roles": "admin"}, nil); code != 400 {
+		t.Fatalf("roles in a form: %d %s", code, body)
+	}
+	bob.want("DELETE", "/auth/me/avatar", "", 204)
 
 	bob.want("DELETE", "/events/jam", "", 204)
 	anyone.want("GET", "/events/jam", "", 404)
 	bob.want("DELETE", "/events/jam", "", 404)
 	bob.want("DELETE", "/events/walk", "", 204)
+	bob.want("DELETE", "/events/fair", "", 204)
 	if n := files(t, uploads); n != 0 {
 		t.Fatalf("a record's files go with it: %d left", n)
 	}

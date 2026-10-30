@@ -73,14 +73,16 @@ var (
 )
 
 type formPlan struct {
-	index   []int
-	name    string
-	file    bool
-	multi   bool
-	ptr     bool
-	parse   func(string) (reflect.Value, error)
-	accept  []string
-	maxSize int64
+	index    []int
+	name     string
+	file     bool
+	multi    bool
+	ptr      bool
+	dual     bool // read from a JSON body too, by its json tag
+	optional bool // a gesso.Optional: set when the form has the key
+	parse    func(string) (reflect.Value, error)
+	accept   []string
+	maxSize  int64
 }
 
 func planForm(f reflect.StructField, index []int) (formPlan, error) {
@@ -88,9 +90,10 @@ func planForm(f reflect.StructField, index []int) (formPlan, error) {
 	if fp.name == "" {
 		return fp, errors.New("the form tag names no field")
 	}
-	if hasTag(f, "path") || hasTag(f, "query") || hasTag(f, "header") || hasTag(f, "json") {
-		return fp, errors.New("a field takes one of form, path, query, header or json")
+	if hasTag(f, "path") || hasTag(f, "query") || hasTag(f, "header") {
+		return fp, errors.New("a field takes one of form, path, query or header")
 	}
+	fp.dual = hasTag(f, "json") && f.Tag.Get("json") != "-"
 	switch f.Type {
 	case fileType:
 		fp.file = true
@@ -116,6 +119,9 @@ func planForm(f reflect.StructField, index []int) (formPlan, error) {
 		return fp, errors.New("accept and maxsize are for files")
 	}
 	t := f.Type
+	if elem, ok := optionalType(t); ok {
+		fp.optional, t = true, elem
+	}
 	if t.Kind() == reflect.Slice && t.Elem().Kind() != reflect.Uint8 {
 		fp.multi, t = true, t.Elem()
 	} else if t.Kind() == reflect.Pointer {
@@ -219,7 +225,21 @@ func (p *inputPlan) decodeForm(r *http.Request, dst reflect.Value, maxBody, form
 			}
 			continue
 		}
-		vs := values[fp.name]
+		vs, sent := values[fp.name]
+		if !sent {
+			continue
+		}
+		if fp.optional {
+			// Sent, it is set; sent empty, a pointer, number, bool or time is
+			// null — a form has no other way to clear one.
+			field.FieldByName("Set").SetBool(true)
+			elem := field.FieldByName("Value")
+			if len(vs) == 0 || (vs[0] == "" && !fp.multi && (fp.ptr || elem.Kind() != reflect.String)) {
+				field.FieldByName("Null").SetBool(true)
+				continue
+			}
+			field = elem
+		}
 		if len(vs) == 0 {
 			continue
 		}

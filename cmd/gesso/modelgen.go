@@ -183,13 +183,13 @@ func (f mfield) ReqType() string {
 // ReqTag is the field's json and validate tags in a create or update.
 func (f mfield) ReqTag() string {
 	if f.Guard != "" || f.Default != "" {
-		t := `json:"` + f.JSON + `,omitzero"`
+		t := `json:"` + f.JSON + `,omitzero" form:"` + f.JSON + `"`
 		if f.Patch != "" {
 			t += ` validate:"` + f.Patch + `"`
 		}
 		return t
 	}
-	t := `json:"` + f.JSON + `"`
+	t := `json:"` + f.JSON + `" form:"` + f.JSON + `"`
 	if f.Rule != "" {
 		t += ` validate:"` + f.Rule + `"`
 	}

@@ -3,6 +3,19 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## Unreleased
+
+- **A record and its files in one request**: a create, a PUT or a PATCH — and
+  `PATCH /auth/me` — takes `multipart/form-data` as well as JSON, the fields as
+  form fields and each file under its field's name. The files are checked and
+  stored first, the record and their columns written in one transaction;
+  anything failing writes nothing. `PUT /<module>/{key}/<field>` stays, for a
+  file alone.
+- **An input reads JSON or a form**: a field with both a `json` and a `form`
+  tag comes from whichever the request's content type says; a form field may
+  be a `gesso.Optional`, set when sent, null when sent empty (but a string).
+  OpenAPI lists both bodies.
+
 ## v0.15.0 — 2026-10-30
 
 - **The reorder is `PATCH /<table>` with `{"order": [keys]}`**, a change to the

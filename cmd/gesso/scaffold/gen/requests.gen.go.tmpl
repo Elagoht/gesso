@@ -1,4 +1,5 @@
 {{- $m := . -}}
+{{- define "file"}}{{.Go}} *gesso.File `json:"-" form:"{{.JSON}}"{{if .Accept}} accept:"{{.AcceptTag}}"{{end}} maxsize:"{{.MaxSize}}"`{{end -}}
 package models
 
 import (
@@ -15,6 +16,9 @@ type ReqCreate{{.Entity}} struct {
 {{- range .DataFields}}
 	{{.Go}} {{.ReqType}} `{{.ReqTag}}`
 {{- end}}
+{{- range .Files}}
+	{{template "file" .}}
+{{- end}}
 }
 
 type ReqUpdate{{.Entity}} struct {
@@ -25,7 +29,10 @@ type ReqUpdate{{.Entity}} struct {
 type ReqPatch{{.Entity}} struct {
 	Key {{.KeyGo}} `path:"{{.KeyPath}}"`
 {{- range .DataFields}}
-	{{.Go}} gesso.Optional[{{.Type}}] `json:"{{.JSON}},omitzero"{{if .Patch}} validate:"{{.Patch}}"{{end}}`
+	{{.Go}} gesso.Optional[{{.Type}}] `json:"{{.JSON}},omitzero" form:"{{.JSON}}"{{if .Patch}} validate:"{{.Patch}}"{{end}}`
+{{- end}}
+{{- range .Files}}
+	{{template "file" .}}
 {{- end}}
 }
 
@@ -62,8 +69,8 @@ type Req{{$m.Entity}}{{.Go}} struct {
 // password, their roles.
 type ReqNew{{.Entity}} struct {
 	ReqCreate{{.Entity}}
-	Password string   `json:"password" validate:"required,min=8,max=200"`
-	Roles    []string `json:"roles"`
+	Password string   `json:"password" form:"password" validate:"required,min=8,max=200"`
+	Roles    []string `json:"roles" form:"roles"`
 }
 
 type Req{{.Entity}}Password struct {
@@ -75,13 +82,16 @@ type Req{{.Entity}}Password struct {
 // ReqPatchMe is what users change on themselves.
 type ReqPatchMe struct {
 {{- range .SelfFields}}
-	{{.Go}} gesso.Optional[{{.Type}}] `json:"{{.JSON}},omitzero"{{if .Patch}} validate:"{{.Patch}}"{{end}}`
+	{{.Go}} gesso.Optional[{{.Type}}] `json:"{{.JSON}},omitzero" form:"{{.JSON}}"{{if .Patch}} validate:"{{.Patch}}"{{end}}`
+{{- end}}
+{{- range .SelfFiles}}
+	{{template "file" .}}
 {{- end}}
 }
 
 // Patch is in as a patch of the user whose key is key.
 func (in ReqPatchMe) Patch(key {{.KeyGo}}) ReqPatch{{.Entity}} {
-	return ReqPatch{{.Entity}}{Key: key, {{range .SelfFields}}{{.Go}}: in.{{.Go}}, {{end}}}
+	return ReqPatch{{.Entity}}{Key: key, {{range .SelfFields}}{{.Go}}: in.{{.Go}}, {{end}}{{range .SelfFiles}}{{.Go}}: in.{{.Go}}, {{end}}}
 }
 {{- end}}
 {{- range .SelfFiles}}
@@ -103,12 +113,12 @@ type {{.Entity}}Access struct {
 
 // Forbidden reports whether in sets a field a sees nothing of.
 func (in ReqCreate{{.Entity}}) Forbidden(a {{.Entity}}Access) bool {
-	return {{range $i, $f := .DataFields}}{{if $f.Guard}}(in.{{$f.Go}}.Set && !a.{{$f.Guard}}) || {{end}}{{end}}false
+	return {{range $i, $f := .DataFields}}{{if $f.Guard}}(in.{{$f.Go}}.Set && !a.{{$f.Guard}}) || {{end}}{{end}}{{range .Files}}{{if .Guard}}(in.{{.Go}} != nil && !a.{{.Guard}}) || {{end}}{{end}}false
 }
 
 // Forbidden reports whether in sets a field a sees nothing of.
 func (in ReqPatch{{.Entity}}) Forbidden(a {{.Entity}}Access) bool {
-	return {{range $i, $f := .DataFields}}{{if $f.Guard}}(in.{{$f.Go}}.Set && !a.{{$f.Guard}}) || {{end}}{{end}}false
+	return {{range $i, $f := .DataFields}}{{if $f.Guard}}(in.{{$f.Go}}.Set && !a.{{$f.Guard}}) || {{end}}{{end}}{{range .Files}}{{if .Guard}}(in.{{.Go}} != nil && !a.{{.Guard}}) || {{end}}{{end}}false
 }
 {{- end}}
 
@@ -126,6 +136,9 @@ func (in ReqUpdate{{.Entity}}) Patch({{if .Guarded}}a {{.Entity}}Access{{end}}) 
 {{- else}}
 		{{.Go}}: gesso.Optional[{{.Type}}]{Set: true, Value: in.{{.Go}}{{if .Default}}.Value{{end}}},
 {{- end}}
+{{- end}}
+{{- range .Files}}
+		{{.Go}}: in.{{.Go}},
 {{- end}}
 	}
 }

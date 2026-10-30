@@ -418,3 +418,22 @@ func (f mfield) AcceptTag() string { return strings.Join(f.Accept, ",") }
 
 // BodyLimit bounds an upload's body: the file and a form's framing.
 func (f mfield) BodyLimit() int64 { return f.MaxBytes + 1<<20 }
+
+// FilesBodyLimit bounds a create's, an update's or a patch's body: every file
+// the model has at its largest, and the fields.
+func (m model) FilesBodyLimit() int64 {
+	n := int64(1 << 20)
+	for _, f := range m.Files() {
+		n += f.MaxBytes
+	}
+	return n
+}
+
+// SelfFilesBodyLimit is FilesBodyLimit for PATCH /auth/me.
+func (m model) SelfFilesBodyLimit() int64 {
+	n := int64(1 << 20)
+	for _, f := range m.SelfFiles() {
+		n += f.MaxBytes
+	}
+	return n
+}
