@@ -3,6 +3,16 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## Unreleased
+
+- **A file has no routes of its own unless it asks**: files come with the
+  record, in a multipart create, PUT or PATCH; sent empty (`-F cover=`), one
+  goes. One route per module serves them: `GET /<module>/{key}/files/{field}`,
+  and file URLs move there (`/docs/x/cover` is `/docs/x/files/cover`). The
+  option `routes` gives a field `PUT` and `DELETE /<module>/{key}/<field>` —
+  and, `self` on the users model, `/auth/me/<field>` — as before.
+  `gesso.File.Removed`.
+
 ## v0.16.0 — 2026-10-30
 
 - **A record and its files in one request**: a create, a PUT or a PATCH — and

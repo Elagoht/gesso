@@ -45,7 +45,12 @@ type File struct {
 	ContentType string
 	Size        int64
 	open        func() (io.ReadCloser, error)
+	removed     bool
 }
+
+// Removed reports whether the form sent the field empty, as a value and not a
+// file: it asks for the file there was to go. A JSON body cannot say it.
+func (f *File) Removed() bool { return f != nil && f.removed }
 
 // Open reads the file.
 func (f *File) Open() (io.ReadCloser, error) { return f.open() }
@@ -213,6 +218,14 @@ func (p *inputPlan) decodeForm(r *http.Request, dst reflect.Value, maxBody, form
 		known[fp.name] = true
 		field := dst.FieldByIndex(fp.index)
 		if fp.file {
+			if vs, ok := values[fp.name]; ok && len(files[fp.name]) == 0 && !fp.multi {
+				if len(vs) != 1 || vs[0] != "" {
+					fields = append(fields, validate.FieldError{Field: fp.name, Code: "type", Message: "is a file, or empty to remove one"})
+				} else {
+					field.Set(reflect.ValueOf(&File{removed: true}))
+				}
+				continue
+			}
 			got, errs := openFiles(fp, files[fp.name])
 			fields = append(fields, errs...)
 			if len(got) == 0 {

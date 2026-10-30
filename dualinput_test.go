@@ -47,7 +47,9 @@ func TestDualInput(t *testing.T) {
 			out.Count = describeOpt(in.Count, func(n int64) string { return "n" + string(rune('0'+n)) })
 			out.Day = describeOpt(in.Day, func(d *date.Date) string { return d.String() })
 			out.Note = describeOpt(in.Note, func(s string) string { return "'" + s + "'" })
-			if in.Cover != nil {
+			if in.Cover.Removed() {
+				out.CoverSize = -1
+			} else if in.Cover != nil {
 				out.CoverSize = in.Cover.Size
 			}
 			return out, nil
@@ -81,6 +83,23 @@ func TestDualInput(t *testing.T) {
 	out = got(do(a, "POST", "/things", w.FormDataContentType(), body.String()))
 	if out != (dualOut{Title: "b", Count: "null", Day: "2026-10-30", Note: "''", Tags: 1, CoverSize: 12}) {
 		t.Fatalf("form: %+v", out)
+	}
+	// Sent empty, as a value, a file field asks for the file to go.
+	body.Reset()
+	w = multipart.NewWriter(&body)
+	_ = w.WriteField("title", "d")
+	_ = w.WriteField("cover", "")
+	_ = w.Close()
+	if rec := do(a, "POST", "/things", w.FormDataContentType(), body.String()); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"coverSize":-1`) {
+		t.Fatalf("an empty cover: %d %s", rec.Code, rec.Body)
+	}
+	body.Reset()
+	w = multipart.NewWriter(&body)
+	_ = w.WriteField("title", "e")
+	_ = w.WriteField("cover", "not a file")
+	_ = w.Close()
+	if rec := do(a, "POST", "/things", w.FormDataContentType(), body.String()); rec.Code != 400 {
+		t.Fatalf("a cover that is text: %d %s", rec.Code, rec.Body)
 	}
 	// A JSON body cannot carry the file.
 	if rec := do(a, "POST", "/things", "application/json", `{"title":"c","cover":"x"}`); rec.Code != 400 {

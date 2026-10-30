@@ -26,7 +26,7 @@ type Event struct {
 	Host     string     ` + "`" + `gesso:"listable,filterable,default=@user,max=100"` + "`" + `
 	Notes    string     ` + "`" + `gesso:"guard=admin,max=500"` + "`" + `
 	Public   bool       ` + "`" + `gesso:"gate=admin"` + "`" + `
-	Cover    string     ` + "`" + `gesso:"image,listable,fit=200x100,format=jpeg,maxsize=2MiB"` + "`" + `
+	Cover    string     ` + "`" + `gesso:"image,listable,routes,fit=200x100,format=jpeg,maxsize=2MiB"` + "`" + `
 	Flyer    string     ` + "`" + `gesso:"file,accept=application/pdf,maxsize=1MiB"` + "`" + `
 }
 `
@@ -357,22 +357,35 @@ func TestEvents(t *testing.T) {
 	if code, typ, data := anyone.fetch(cover); code != 200 || !strings.HasPrefix(typ, "image/jpeg") || size(t, data) != "jpeg 133x100" {
 		t.Fatalf("the cover: %d %s %s", code, typ, size(t, data))
 	}
-	anyone.want("GET", "/events", "", 200, ` + "`" + `"cover":"/events/walk/cover?v=` + "`" + `)
-	if code, body := bob.upload("/events/walk/flyer", "f.pdf", []byte("%PDF-1.4\n%flyer\n")); code != 200 {
+	anyone.want("GET", "/events", "", 200, ` + "`" + `"cover":"/events/walk/files/cover?v=` + "`" + `)
+	// A file without routes comes only with the record, in a form.
+	if code, body := bob.upload("/events/walk/flyer", "f.pdf", []byte("%PDF-1.4\n%flyer\n")); code != 404 && code != 405 {
+		t.Fatalf("a flyer has no route of its own: %d %s", code, body)
+	}
+	if code, body := bob.form("PATCH", "/events/walk", nil, map[string][]byte{"flyer": []byte("%PDF-1.4\n%flyer\n")}); code != 200 || !strings.Contains(body, ` + "`" + `"flyer":"/events/walk/files/flyer?v=` + "`" + `) {
 		t.Fatalf("flyer: %d %s", code, body)
 	}
-	if code, body := bob.upload("/events/walk/flyer", "v.pdf", []byte("%PDF-1.4\nEICAR\n")); code != 422 {
+	if code, body := bob.form("PATCH", "/events/walk", nil, map[string][]byte{"flyer": []byte("%PDF-1.4\nEICAR\n")}); code != 422 {
 		t.Fatalf("an infected flyer: %d %s", code, body)
 	}
-	if code, body := bob.upload("/events/walk/flyer", "f.png", pngOf(10, 10)); code != 400 {
+	if code, body := bob.form("PATCH", "/events/walk", nil, map[string][]byte{"flyer": pngOf(10, 10)}); code != 400 {
 		t.Fatalf("a png as the flyer: %d %s", code, body)
 	}
-	if code, typ, _ := anyone.fetch("/events/walk/flyer"); code != 200 || !strings.Contains(typ, "application/pdf") || !strings.Contains(typ, "attachment") {
+	anyone.want("GET", "/events/walk/files/nothing", "", 400)
+	if code, typ, _ := anyone.fetch("/events/walk/files/flyer"); code != 200 || !strings.Contains(typ, "application/pdf") || !strings.Contains(typ, "attachment") {
 		t.Fatalf("the flyer: %d %s", code, typ)
 	}
-	bob.want("PUT", "/events/walk", ` + "`" + `{"title":"Walk 3","slug":"walk","day":"2026-11-03","public":true}` + "`" + `, 200, ` + "`" + `"cover":"/events/walk/cover` + "`" + `)
-	bob.want("DELETE", "/events/walk/flyer", "", 204)
-	anyone.want("GET", "/events/walk/flyer", "", 404)
+	bob.want("PUT", "/events/walk", ` + "`" + `{"title":"Walk 3","slug":"walk","day":"2026-11-03","public":true}` + "`" + `, 200, ` + "`" + `"cover":"/events/walk/files/cover` + "`" + `)
+	// Sent empty in a form, a file goes.
+	if code, body := bob.form("PATCH", "/events/walk", map[string]string{"flyer": ""}, nil); code != 200 || strings.Contains(body, ` + "`" + `"flyer"` + "`" + `) {
+		t.Fatalf("an empty flyer: %d %s", code, body)
+	}
+	anyone.want("GET", "/events/walk/files/flyer", "", 404)
+	bob.want("DELETE", "/events/walk/cover", "", 204)
+	anyone.want("GET", "/events/walk/files/cover", "", 404)
+	if code, body := bob.upload("/events/walk/cover", "c.png", pngOf(400, 300)); code != 200 {
+		t.Fatalf("the cover again: %d %s", code, body)
+	}
 	if n := files(t, uploads); n != 1 {
 		t.Fatalf("files kept: %d", n)
 	}
@@ -380,7 +393,7 @@ func TestEvents(t *testing.T) {
 	// A record and its files in one form: all written, or nothing.
 	code, body = bob.form("POST", "/events", map[string]string{"title": "Fair", "slug": "fair", "day": "2026-11-05", "public": "true", "order": "2"},
 		map[string][]byte{"cover": pngOf(400, 300)})
-	if code != 201 || !strings.Contains(body, ` + "`" + `"cover":"/events/fair/cover?v=` + "`" + `) || !strings.Contains(body, ` + "`" + `"host":"bob"` + "`" + `) {
+	if code != 201 || !strings.Contains(body, ` + "`" + `"cover":"/events/fair/files/cover?v=` + "`" + `) || !strings.Contains(body, ` + "`" + `"host":"bob"` + "`" + `) {
 		t.Fatalf("a form with a cover: %d %s", code, body)
 	}
 	firstCover := urlIn(t, body, "cover")
@@ -406,7 +419,10 @@ func TestEvents(t *testing.T) {
 	bob.want("GET", "/auth/me", "", 200, ` + "`" + `"username":"bob"` + "`" + `, ` + "`" + `"roles":[]` + "`" + `)
 	bob.want("PATCH", "/auth/me", ` + "`" + `{"name":"  Bob   Builder "}` + "`" + `, 200, ` + "`" + `"name":"Bob Builder"` + "`" + `)
 	bob.want("PATCH", "/auth/me", ` + "`" + `{"roles":["admin"]}` + "`" + `, 400)
-	code, body = bob.upload("/auth/me/avatar", "a.png", pngOf(300, 200))
+	if code, _ := bob.upload("/auth/me/avatar", "a.png", pngOf(300, 200)); code != 404 && code != 405 {
+		t.Fatalf("an avatar without routes has none of its own: %d", code)
+	}
+	code, body = bob.form("PATCH", "/auth/me", nil, map[string][]byte{"avatar": pngOf(300, 200)})
 	if code != 200 {
 		t.Fatalf("avatar: %d %s", code, body)
 	}
@@ -414,7 +430,7 @@ func TestEvents(t *testing.T) {
 		t.Fatalf("the avatar: %d", code)
 	}
 	bob.want("GET", "/users", "", 403)
-	ada.want("GET", "/users", "", 200, ` + "`" + `"username":"bob"` + "`" + `, ` + "`" + `"avatar":"/users/bob/avatar` + "`" + `, "!password")
+	ada.want("GET", "/users", "", 200, ` + "`" + `"username":"bob"` + "`" + `, ` + "`" + `"avatar":"/users/bob/files/avatar` + "`" + `, "!password")
 	ada.want("POST", "/users", ` + "`" + `{"username":"Carol","password":"carol password","roles":["editor"]}` + "`" + `, 201, ` + "`" + `"username":"carol"` + "`" + `, "!password")
 	ada.want("PUT", "/users/carol/password", ` + "`" + `{"password":"another password"}` + "`" + `, 204)
 	s, err := auth.Login.Call(ctx, gesso.NewLocal(app), auth.ReqLogin{Username: "carol", Password: "another password"})
@@ -422,15 +438,19 @@ func TestEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	caller{t, app, s.Token}.want("GET", "/auth/me", "", 200, ` + "`" + `"roles":["editor"]` + "`" + `)
-	bob.want("DELETE", "/auth/me/avatar", "", 204)
+	if code, body := bob.form("PATCH", "/auth/me", map[string]string{"avatar": ""}, nil); code != 200 || strings.Contains(body, ` + "`" + `"avatar"` + "`" + `) {
+		t.Fatalf("an empty avatar: %d %s", code, body)
+	}
 	code, body = bob.form("PATCH", "/auth/me", map[string]string{"name": "Bob"}, map[string][]byte{"avatar": pngOf(80, 80)})
-	if code != 200 || !strings.Contains(body, ` + "`" + `"name":"Bob"` + "`" + `) || !strings.Contains(body, ` + "`" + `"avatar":"/users/bob/avatar` + "`" + `) {
+	if code != 200 || !strings.Contains(body, ` + "`" + `"name":"Bob"` + "`" + `) || !strings.Contains(body, ` + "`" + `"avatar":"/users/bob/files/avatar` + "`" + `) {
 		t.Fatalf("name and avatar in one form: %d %s", code, body)
 	}
 	if code, body := bob.form("PATCH", "/auth/me", map[string]string{"roles": "admin"}, nil); code != 400 {
 		t.Fatalf("roles in a form: %d %s", code, body)
 	}
-	bob.want("DELETE", "/auth/me/avatar", "", 204)
+	if code, _ := bob.form("PATCH", "/auth/me", map[string]string{"avatar": ""}, nil); code != 200 {
+		t.Fatal("the avatar goes")
+	}
 
 	bob.want("DELETE", "/events/jam", "", 204)
 	anyone.want("GET", "/events/jam", "", 404)

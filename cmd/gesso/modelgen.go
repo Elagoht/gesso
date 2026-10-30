@@ -100,6 +100,7 @@ type mfield struct {
 	Transforms              []string // trim, lower, upper, collapse, slugify, in order
 	Self                    bool     // a signed-in user may change it on themselves: PATCH /auth/me
 	Public                  bool     // a file anyone may fetch, past the model's read guard
+	Routes                  bool     // a file with PUT and DELETE routes of its own, beside the record's
 	Guard                   string   // the Go name of the guard that may see and write it
 	GateGuard               string   // a gate: records with it false are the guard's only
 	Rules                   []string // validation rules beyond what the options imply
@@ -238,7 +239,7 @@ var baseOf = map[string]string{"string": "string", "int64": "int", "bool": "bool
 var options = map[string]bool{"key": true, "unique": true, "index": true, "optional": true, "sort": true, "text": true,
 	"listable": true, "filterable": true, "orderable": true, "guard": true, "gate": true, "default": true,
 	"file": true, "image": true, "accept": true, "maxsize": true, "fit": true, "fill": true, "format": true, "quality": true,
-	"trim": true, "lower": true, "upper": true, "collapse": true, "slugify": true, "self": true, "public": true}
+	"trim": true, "lower": true, "upper": true, "collapse": true, "slugify": true, "self": true, "public": true, "routes": true}
 
 var ruleNames = map[string]bool{
 	"min": true, "max": true, "len": true, "gt": true, "gte": true, "lt": true, "lte": true,
@@ -323,7 +324,7 @@ var imageTypes = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
 // checkFile is what holds for a file or an image field.
 func (f *mfield) checkFile() error {
 	if f.Key || f.Unique || f.Index || f.Sort || f.Filterable || f.Orderable || f.Default != "" || f.GateGuard != "" || len(f.Transforms) > 0 || len(f.Rules) > 0 || f.Base == "text" {
-		return fmt.Errorf("a %s is uploaded on its own route: it takes accept, maxsize, public, listable, guard, self, optional and, an image, fit, fill, format, quality", f.File)
+		return fmt.Errorf("a %s is uploaded on its own route: it takes accept, maxsize, public, routes, listable, guard, self, optional and, an image, fit, fill, format, quality", f.File)
 	}
 	if f.File == "file" && (f.Width != 0 || f.Format != "" || f.Quality != 0) {
 		return errors.New("fit, fill, format and quality are for an image")
@@ -557,6 +558,8 @@ func newMField(name, typ, tag string) (mfield, error) {
 			f.Self = true
 		case opt == "public":
 			f.Public = true
+		case opt == "routes":
+			f.Routes = true
 		case opt == "listable":
 			f.Listable = true
 		case opt == "filterable":
@@ -607,8 +610,8 @@ func newMField(name, typ, tag string) (mfield, error) {
 		}
 		return f, nil
 	}
-	if f.Accept != nil || f.MaxSize != "" || f.Width != 0 || f.Format != "" || f.Quality != 0 || f.Public {
-		return f, errors.New("accept, maxsize, public, fit, fill, format and quality are for a file or an image")
+	if f.Accept != nil || f.MaxSize != "" || f.Width != 0 || f.Format != "" || f.Quality != 0 || f.Public || f.Routes {
+		return f, errors.New("accept, maxsize, public, routes, fit, fill, format and quality are for a file or an image")
 	}
 	if len(f.Transforms) > 0 && base != "string" {
 		return f, fmt.Errorf("%s is for a string", f.Transforms[0])

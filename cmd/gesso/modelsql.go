@@ -437,3 +437,14 @@ func (m model) SelfFilesBodyLimit() int64 {
 	}
 	return n
 }
+
+// FilesGuarded reports whether fetching some file asks a guard: the model's
+// read guard for a file that is not public, or the field's own.
+func (m model) FilesGuarded() bool {
+	for _, f := range m.Files() {
+		if f.Guard != "" || (m.Read != "" && !f.Public) {
+			return true
+		}
+	}
+	return false
+}

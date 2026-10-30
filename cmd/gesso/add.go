@@ -61,11 +61,13 @@ Options:
   gate=<guard>   on a bool: a record with it false is the guard's callers' only
   trim, lower, upper, collapse, slugify
                  format a string once it is checked, then it is checked again
-A file or an image is uploaded on its own route, PUT /<module>/{key}/<field>:
+A file or an image comes with the record in a multipart create, PUT or PATCH
+(sent empty, it goes), and is served on GET /<module>/{key}/files/<field>:
   accept=<types> the types it takes, space-separated (an image: PNG, JPEG,
                  GIF, WebP, never SVG)
   maxsize=<n>    its largest: 5MiB (default 10MiB)
   public         anyone may fetch it, past //gesso:read
+  routes         PUT and DELETE /<module>/{key}/<field> for the file alone
   fit=<WxH>      an image shrinks to fit inside; fill=<WxH> is cropped to it
   format=<f>     an image is kept as jpeg or png; quality=<1-100>
 On a //gesso:auth model, self lets users change the field on themselves:

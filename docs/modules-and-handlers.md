@@ -131,29 +131,32 @@ again, so what is stored still keeps the rules.
 ```
 
 A `file` or an `image` is a string column that holds where the file is stored.
-It comes with the record — a create, a PUT or a PATCH sent as
+It comes with the record: a create, a PUT or a PATCH sent as
 `multipart/form-data`, the fields as form fields and the file under the field's
-name — or on routes of its own:
+name. A field sent empty — `-F cover=` — removes the file; a JSON body carries
+no file and cannot remove one.
 
 ```sh
-curl -X POST $B/docs -H "$A" -F title=Kurulum -F slug=kurulum -F content=… -F cover=@kapak.png
+curl -X POST  $B/docs -H "$A" -F title=Kurulum -F slug=kurulum -F content=… -F cover=@kapak.png
 curl -X PATCH $B/docs/kurulum -H "$A" -F title='Kurulum 2' -F cover=@yeni.png
+curl -X PATCH $B/docs/kurulum -H "$A" -F cover=
 ```
 
 The files are checked and stored first, then the record and their columns are
 written in one transaction; when anything fails nothing is written and the new
 files go, and only then does a file replaced go. In a form, a field sent empty
-is null: a PATCH clears a date or a number with it. A JSON body never carries
-a file.
+is null: a PATCH clears a date or a number with it.
+
+A record answers each file as its URL — `/docs/kurulum/files/cover?v=…`, the
+base path in front, the `v` changing with the file — or leaves it out. One
+route serves a module's files, `GET /<module>/{key}/files/{field}`, under
+`//gesso:read` unless the field is `public`, its field guard and the gate. A
+field marked `routes` has two more of its own, for the file alone:
 
 | | |
 | --- | --- |
-| `PUT /<module>/{key}/<field>` | the file alone, a multipart form whose `file` is it, under `//gesso:write`; answers the record |
-| `GET /<module>/{key}/<field>` | the file, under `//gesso:read` unless `public` |
+| `PUT /<module>/{key}/<field>` | a multipart form whose `file` is the file, under `//gesso:write`; answers the record |
 | `DELETE /<module>/{key}/<field>` | removes it |
-
-The record answers the field as the file's URL — `/docs/kurulum/cover?v=…`,
-the base path in front, the `v` changing with the file — or leaves it out.
 
 A file's type is read from its first bytes, never from its name or what the
 client says: `accept` lists the types taken, space-separated, and `maxsize`

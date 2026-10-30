@@ -52,7 +52,7 @@ import (
 {{- if .TransformUses "text"}}
 	"github.com/Elagoht/gesso/text"
 {{- end}}
-{{- if or .Transformed (.FilesOfKind "image")}}
+{{- if or .Transformed .Files}}
 	"github.com/Elagoht/gesso/validate"
 {{- end}}
 {{- if .Guards}}
@@ -75,10 +75,14 @@ var (
 {{- if .Sortable}}
 	Reorder{{.Plural}} = gesso.Endpoint[models.ReqReorder{{.Plural}}, gesso.Empty]{Method: "PATCH", Pattern: "/{{.Table}}"}
 {{- end}}
+{{- if .Files}}
+	Get{{.Entity}}File = gesso.Endpoint[models.Req{{.Entity}}File, *gesso.Download]{Method: "GET", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }/files/{field}"}
+{{- end}}
 {{- range .Files}}
+{{- if .Routes}}
 	Upload{{$m.Entity}}{{.Go}} = gesso.Endpoint[models.Req{{$m.Entity}}{{.Go}}, models.Res{{$m.Entity}}]{Method: "PUT", Pattern: "/{{$m.Table}}/{ {{- $m.KeyPath -}} }/{{.JSON}}"}
-	Get{{$m.Entity}}{{.Go}} = gesso.Endpoint[models.Req{{$m.Entity}}Key, *gesso.Download]{Method: "GET", Pattern: "/{{$m.Table}}/{ {{- $m.KeyPath -}} }/{{.JSON}}"}
 	Delete{{$m.Entity}}{{.Go}} = gesso.Endpoint[models.Req{{$m.Entity}}Key, gesso.Empty]{Method: "DELETE", Pattern: "/{{$m.Table}}/{ {{- $m.KeyPath -}} }/{{.JSON}}"}
+{{- end}}
 {{- end}}
 {{- if .Auth}}
 	Set{{.Entity}}Password = gesso.Endpoint[models.Req{{.Entity}}Password, gesso.Empty]{Method: "PUT", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }/password"}
@@ -87,8 +91,10 @@ var (
 	UpdateMe = gesso.Endpoint[models.ReqPatchMe, models.ResMe]{Method: "PATCH", Pattern: "/auth/me"}
 {{- end}}
 {{- range .SelfFiles}}
+{{- if .Routes}}
 	UploadMy{{.Go}} = gesso.Endpoint[models.ReqMy{{.Go}}, models.ResMe]{Method: "PUT", Pattern: "/auth/me/{{.JSON}}"}
 	DeleteMy{{.Go}} = gesso.Endpoint[gesso.Empty, gesso.Empty]{Method: "DELETE", Pattern: "/auth/me/{{.JSON}}"}
+{{- end}}
 {{- end}}
 {{- end}}
 )
@@ -169,8 +175,10 @@ func (m *Module) Routes(r *gesso.Router) {
 	UpdateMe.Handle(r, m.updateMe, signedIn{{if .SelfFiles}}, gesso.MaxBodyBytes({{.SelfFilesBodyLimit}}){{end}})
 {{- end}}
 {{- range .SelfFiles}}
+{{- if .Routes}}
 	UploadMy{{.Go}}.Handle(r, m.uploadMy{{.Go}}, signedIn, gesso.MaxBodyBytes({{.BodyLimit}}))
 	DeleteMy{{.Go}}.Handle(r, m.deleteMy{{.Go}}, signedIn)
+{{- end}}
 {{- end}}
 	Set{{.Entity}}Password.Handle(r, m.setPassword{{if .Write}}, write{{end}})
 {{- end}}
@@ -183,10 +191,15 @@ func (m *Module) Routes(r *gesso.Router) {
 {{- if .Sortable}}
 	Reorder{{.Plural}}.Handle(r, m.reorder{{if .Write}}, write{{end}})
 {{- end}}
+{{- if .Files}}
+	// Each file's read guard is the handler's: one may be public.
+	Get{{.Entity}}File.Handle(r, m.getFile)
+{{- end}}
 {{- range .Files}}
+{{- if .Routes}}
 	Upload{{$m.Entity}}{{.Go}}.Handle(r, m.upload{{.Go}}{{if $m.Write}}, write{{end}}, gesso.MaxBodyBytes({{.BodyLimit}}))
-	Get{{$m.Entity}}{{.Go}}.Handle(r, m.get{{.Go}}{{if and $m.Read (not .Public)}}, read{{end}})
 	Delete{{$m.Entity}}{{.Go}}.Handle(r, m.delete{{.Go}}{{if $m.Write}}, write{{end}})
+{{- end}}
 {{- end}}
 {{- if .Hooks.Routes}}
 	m.routes(r)
@@ -483,6 +496,7 @@ func (m *Module) reorder(ctx context.Context, in models.ReqReorder{{.Plural}}) (
 }
 {{- end}}
 {{- range .Files}}
+{{- if .Routes}}
 
 func (m *Module) upload{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}{{.Go}}) (models.Res{{$m.Entity}}, error) {
 {{- if $m.Guarded}}
@@ -523,8 +537,13 @@ func (m *Module) store{{.Go}}(ctx context.Context, id int64, f *gesso.File) (mod
 	return old, nil
 }
 
+{{- end}}
+
 // keep{{.Go}} checks f, {{if eq .File "image"}}writes the image again, {{end}}and stores it, answering its key.
 func (m *Module) keep{{.Go}}(ctx context.Context, f *gesso.File) (string, error) {
+	if f.Removed() {
+		return "", gesso.ErrInvalidInput.WithFields(validate.FieldError{Field: "file", Code: "required", Message: "is required"})
+	}
 	src, err := f.Open()
 	if err != nil {
 		return "", err
@@ -562,18 +581,7 @@ func (m *Module) keep{{.Go}}(ctx context.Context, f *gesso.File) (string, error)
 	return key, nil
 }
 
-func (m *Module) get{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}Key) (*gesso.Download, error) {
-{{- if .Guard}}
-	if !gesso.Allowed(ctx, guards.{{.Guard}}) {
-		return nil, gesso.ErrForbidden
-	}
-{{- end}}
-	e, err := m.repo.byKey(ctx, in.Key{{if $m.Gate}}, m.open(ctx){{end}})
-	if err != nil {
-		return nil, err
-	}
-	return m.serve(ctx, e.{{.Go}}, {{if eq .File "image"}}true{{else}}false{{end}})
-}
+{{- if .Routes}}
 
 func (m *Module) delete{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}Key) (gesso.Empty, error) {
 {{- if .Guard}}
@@ -598,13 +606,15 @@ func (m *Module) drop{{.Go}}(ctx context.Context, e models.{{$m.Entity}}) error 
 	return m.files.Delete(ctx, e.{{.Go}})
 }
 {{- end}}
+{{- end}}
 {{- if .Files}}
 
 // fileKeys are where the files a create or a write sent are kept, "" for one
 // not sent.
 type fileKeys struct {
 {{- range .Files}}
-	{{.Go}} string
+	{{.Go}}        string
+	{{.Go}}Removed bool // the form sent it empty: the file there was goes
 {{- end}}
 }
 
@@ -614,7 +624,9 @@ func (m *Module) newFiles(ctx context.Context{{range .Files}}, {{.JSON}} *gesso.
 	var k fileKeys
 	var err error
 {{- range .Files}}
-	if {{.JSON}} != nil {
+	if {{.JSON}}.Removed() {
+		k.{{.Go}}Removed = true
+	} else if {{.JSON}} != nil {
 		if k.{{.Go}}, err = m.keep{{.Go}}(ctx, {{.JSON}}); err != nil {
 			m.discard(ctx, k)
 			return fileKeys{}, err
@@ -636,7 +648,7 @@ func (m *Module) discard(ctx context.Context, k fileKeys) {
 // replaced removes the files of old that k's took the place of.
 func (m *Module) replaced(ctx context.Context, old models.{{.Entity}}, k fileKeys) {
 {{- range .Files}}
-	if k.{{.Go}} != "" && old.{{.Go}} != "" {
+	if (k.{{.Go}} != "" || k.{{.Go}}Removed) && old.{{.Go}} != "" {
 		_ = m.files.Delete(ctx, old.{{.Go}})
 	}
 {{- end}}
@@ -645,7 +657,7 @@ func (m *Module) replaced(ctx context.Context, old models.{{.Entity}}, k fileKey
 // setFiles keeps k's files on e, in its row too.
 func (r *repository) setFiles(ctx context.Context, e *models.{{.Entity}}, k fileKeys) error {
 {{- range .Files}}
-	if k.{{.Go}} != "" {
+	if k.{{.Go}} != "" || k.{{.Go}}Removed {
 		if err := r.set{{.Go}}(ctx, e.ID, k.{{.Go}}); err != nil {
 			return err
 		}
@@ -653,6 +665,35 @@ func (r *repository) setFiles(ctx context.Context, e *models.{{.Entity}}, k file
 	}
 {{- end}}
 	return nil
+}
+
+// getFile answers one of the record's files, as the record's read guard, the
+// field's guard and the gate allow — or, for a public file, the gate alone.
+func (m *Module) getFile(ctx context.Context, in models.Req{{.Entity}}File) (*gesso.Download, error) {
+{{- if .FilesGuarded}}
+	r := gesso.Request(ctx)
+{{- end}}
+	switch in.Field {
+{{- range .Files}}
+	case "{{.JSON}}":
+{{- if and $m.Read (not .Public)}}
+		if err := guards.{{$m.Read}}(r); err != nil {
+			return nil, err
+		}
+{{- end}}
+{{- if .Guard}}
+		if err := guards.{{.Guard}}(r); err != nil {
+			return nil, err
+		}
+{{- end}}
+		e, err := m.repo.byKey(ctx, in.Key{{if $m.Gate}}, m.open(ctx){{end}})
+		if err != nil {
+			return nil, err
+		}
+		return m.serve(ctx, e.{{.Go}}, {{if eq .File "image"}}true{{else}}false{{end}})
+{{- end}}
+	}
+	return nil, gesso.ErrNotFound
 }
 
 // serve answers the file stored under key: an image shown, any other file
@@ -730,6 +771,7 @@ func (m *Module) updateMe(ctx context.Context, in models.ReqPatchMe) (models.Res
 }
 {{- end}}
 {{- range .SelfFiles}}
+{{- if .Routes}}
 
 func (m *Module) uploadMy{{.Go}}(ctx context.Context, in models.ReqMy{{.Go}}) (models.ResMe, error) {
 	e, err := m.self(ctx)
@@ -749,6 +791,7 @@ func (m *Module) deleteMy{{.Go}}(ctx context.Context, _ gesso.Empty) (gesso.Empt
 	}
 	return gesso.Empty{}, m.drop{{.Go}}(ctx, e)
 }
+{{- end}}
 {{- end}}
 
 // setPassword sets a user's password, as an administrator does.
