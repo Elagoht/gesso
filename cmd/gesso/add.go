@@ -27,6 +27,7 @@ type moduleSpec struct {
 	Fields      []specField
 	Write, Read string // the guards' names, for //gesso:write and //gesso:read
 	Sortable    bool   // //gesso:sortable
+	Auth        bool   // //gesso:auth
 }
 
 type specField struct {
@@ -44,7 +45,7 @@ var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 const addModuleHelp = `Each -field is name:type[:options and rules].
 
-Types: string, text, int, bool, float, time, date.
+Types: string, text, int, bool, float, time, date, file, image.
 Options:
   key            the URL names a record by it, /<module>/{<field>}, instead of the id; unique
   unique         a unique index; a duplicate is a 409 on the field
@@ -58,6 +59,17 @@ Options:
                  @today (a date), @now (a time), @user (who signs in)
   guard=<guard>  only the guard's callers see and write it
   gate=<guard>   on a bool: a record with it false is the guard's callers' only
+  trim, lower, upper, collapse, slugify
+                 format a string once it is checked, then it is checked again
+A file or an image is uploaded on its own route, PUT /<module>/{key}/<field>:
+  accept=<types> the types it takes, space-separated (an image: PNG, JPEG,
+                 GIF, WebP, never SVG)
+  maxsize=<n>    its largest: 5MiB (default 10MiB)
+  public         anyone may fetch it, past //gesso:read
+  fit=<WxH>      an image shrinks to fit inside; fill=<WxH> is cropped to it
+  format=<f>     an image is kept as jpeg or png; quality=<1-100>
+On a //gesso:auth model, self lets users change the field on themselves:
+PATCH /auth/me, and PUT /auth/me/<field> for a file.
 Rules: validate's — max=200, email, slug, oneof=draft published …
 
   gesso add module <name> -guard <guard> -field <field>:<type>[:options,rules]
@@ -75,6 +87,7 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	entity := fs.String("entity", "", "the entity's Go name (default: the module name, singular, capitalised)")
 	guard := fs.String("guard", "", "a guard from internal/guards on create, update, patch, delete and reorder: //gesso:write")
 	read := fs.String("read", "", "a guard from internal/guards on get and list: //gesso:read")
+	authModel := fs.Bool("auth", false, "the users who sign in: //gesso:auth (gesso add auth makes it)")
 	sortable := fs.Bool("sortable", false, "kept in the client's order, with PATCH /<name> {\"order\": [...]}: //gesso:sortable")
 	empty := fs.Bool("empty", false, "a module with no table, for endpoints of your own")
 	pos, err := parseFlags(fs, args)
@@ -112,7 +125,7 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 			}
 		}
 	}
-	spec.Write, spec.Read, spec.Sortable = *guard, *read, *sortable
+	spec.Write, spec.Read, spec.Sortable, spec.Auth = *guard, *read, *sortable, *authModel
 	target := filepath.Join(dir, *parent, spec.Pkg)
 	if _, err := os.Stat(target); err == nil {
 		return fmt.Errorf("%s already exists", target)
@@ -216,13 +229,13 @@ func newSpec(name, entity string, fields []string, dialect string) (moduleSpec, 
 			return moduleSpec{}, fmt.Errorf("field %q given twice (id is always there)", col)
 		}
 		seen[col] = true
-		goType, ok := map[string]string{"string": "string", "text": "string", "int": "int64", "bool": "bool", "float": "float64", "time": "time.Time", "date": "date.Date"}[typ]
+		goType, ok := map[string]string{"string": "string", "text": "string", "int": "int64", "bool": "bool", "float": "float64", "time": "time.Time", "date": "date.Date", "file": "string", "image": "string"}[typ]
 		if !ok {
-			return moduleSpec{}, fmt.Errorf("field %q: unknown type %q (string, text, int, bool, float, time, date)", col, typ)
+			return moduleSpec{}, fmt.Errorf("field %q: unknown type %q (string, text, int, bool, float, time, date, file, image)", col, typ)
 		}
 		tag := opts
-		if typ == "text" {
-			tag = strings.TrimSuffix("text,"+opts, ",")
+		if typ == "text" || typ == "file" || typ == "image" {
+			tag = strings.TrimSuffix(typ+","+opts, ",")
 		}
 		if (typ == "time" || typ == "date") && strings.Contains(","+opts+",", ",optional,") {
 			goType = "*" + goType

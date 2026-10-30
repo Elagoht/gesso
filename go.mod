@@ -6,6 +6,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.11.0
 	golang.org/x/crypto v0.58.0
+	golang.org/x/image v0.47.0
 	golang.org/x/term v0.47.0
 	modernc.org/sqlite v1.61.0
 )

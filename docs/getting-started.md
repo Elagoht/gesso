@@ -5,7 +5,7 @@ go install github.com/Elagoht/gesso/cmd/gesso@latest
 gesso new example.com/notes -dialect sqlite      # or postgres, mysql
 cd notes
 go mod tidy
-gesso add auth                                   # sign-in, a users table
+gesso add auth                                   # sign-in: the users module
 gesso add module notes -guard signedIn -field title:string:max=200 -field body:text
 go run . users add ada                           # the password is asked for
 gesso dev
@@ -93,6 +93,8 @@ gesso add module docs -guard signedIn \
 | `listable` | the list answers only the listable fields, the id and the key; get answers everything |
 | `filterable` | `?<field>=value` keeps the list to the records that match it exactly |
 | `orderable` | `?order=<field>` or `?order=-<field>` orders the list |
+| `trim`, `lower`, `upper`, `collapse`, `slugify` | format a string once it is checked; it is checked again |
+| `file`, `image` | a file uploaded on `PUT /<module>/{key}/<field>`: `accept=`, `maxsize=`, `public`; an image `fit=WxH`, `fill=WxH`, `format=`, `quality=` — see [Files and images](modules-and-handlers.md#files-and-images) |
 | `default=<value>` | what a create or a PUT that leaves the field out gets: `draft`, `5`, `true`, `@today` (a date), `@now` (a time), `@user` (the signed-in user's name) |
 | `guard=<guard>` | only callers who pass the guard see or write the field |
 | `gate=<guard>` | on a `bool`: a record with it false is there only for callers who pass the guard |

@@ -98,7 +98,7 @@ func newProject(args []string, dir string, stdout io.Writer, now func() time.Tim
 		return err
 	}
 	if *tmpl == "demo" {
-		if err := addAuth(nil, target, stdout); err != nil {
+		if err := addAuth(nil, target, stdout, now); err != nil {
 			return err
 		}
 		if err := addModule([]string{"notes", "-guard", "signedIn", "-field", "title:string:listable,orderable,max=200", "-field", "body:text", "-field", "published:date:listable,optional"}, target, stdout, now); err != nil {

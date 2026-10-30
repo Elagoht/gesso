@@ -15,7 +15,7 @@ import (
 //gesso:write signedIn
 type Event struct {
 	ID       int64
-	Title    string     ` + "`" + `gesso:"listable,orderable,max=200"` + "`" + `
+	Title    string     ` + "`" + `gesso:"listable,orderable,collapse,max=200"` + "`" + `
 	Slug     string     ` + "`" + `gesso:"key,slug,max=100"` + "`" + `
 	Body     string     ` + "`" + `gesso:"text,optional"` + "`" + `
 	Order    int64      ` + "`" + `gesso:"listable,orderable"` + "`" + `
@@ -26,6 +26,8 @@ type Event struct {
 	Host     string     ` + "`" + `gesso:"listable,filterable,default=@user,max=100"` + "`" + `
 	Notes    string     ` + "`" + `gesso:"guard=admin,max=500"` + "`" + `
 	Public   bool       ` + "`" + `gesso:"gate=admin"` + "`" + `
+	Cover    string     ` + "`" + `gesso:"image,listable,fit=200x100,format=jpeg,maxsize=2MiB"` + "`" + `
+	Flyer    string     ` + "`" + `gesso:"file,accept=application/pdf,maxsize=1MiB"` + "`" + `
 }
 `
 
@@ -53,6 +55,14 @@ func (m *Module) BeforeUpdate(ctx context.Context, e *models.Event) error {
 	return nil
 }
 
+// ProcessFlyer is a scanner's turn: a file it refuses is never kept.
+func (m *Module) ProcessFlyer(ctx context.Context, data []byte, ext string) ([]byte, string, error) {
+	if strings.Contains(string(data), "EICAR") {
+		return nil, "", gesso.Unprocessable("infected", "the file carries a virus")
+	}
+	return data, ext, nil
+}
+
 func (m *Module) BeforeDelete(ctx context.Context, e models.Event) error {
 	if e.Order == 99 {
 		return gesso.Unprocessable("in_use", "the event is in use")
@@ -66,13 +76,19 @@ func (m *Module) BeforeDelete(ctx context.Context, e models.Event) error {
 const featuresTest = `package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
+	"io/fs"
 	"log/slog"
+	"mime/multipart"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +97,7 @@ import (
 	"github.com/Elagoht/gesso/auth"
 
 	"example.com/app/internal/events/models"
+	"example.com/app/internal/users"
 )
 
 type caller struct {
@@ -101,6 +118,76 @@ func (c caller) do(method, path, body string) (int, string) {
 	rec := httptest.NewRecorder()
 	c.app.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.String()
+}
+
+// upload sends data as the form's file, and answers the status, the body and
+// the content type.
+func (c caller) upload(path, name string, data []byte) (int, string) {
+	c.t.Helper()
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	part, _ := w.CreateFormFile("file", name)
+	_, _ = part.Write(data)
+	_ = w.Close()
+	req := httptest.NewRequest("PUT", path, &body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	rec := httptest.NewRecorder()
+	c.app.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.String()
+}
+
+// fetch answers path's status, type and body.
+func (c caller) fetch(path string) (int, string, []byte) {
+	req := httptest.NewRequest("GET", path, nil)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	rec := httptest.NewRecorder()
+	c.app.ServeHTTP(rec, req)
+	return rec.Code, rec.Header().Get("Content-Type") + " " + rec.Header().Get("Content-Disposition"), rec.Body.Bytes()
+}
+
+func pngOf(w, h int) []byte {
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h)))
+	return buf.Bytes()
+}
+
+func size(t *testing.T, data []byte) string {
+	t.Helper()
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return format + " " + strconv.Itoa(cfg.Width) + "x" + strconv.Itoa(cfg.Height)
+}
+
+func urlIn(t *testing.T, body, field string) string {
+	t.Helper()
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatal(err)
+	}
+	var u string
+	if err := json.Unmarshal(m[field], &u); err != nil || u == "" {
+		t.Fatalf("no %s in %s", field, body)
+	}
+	return u
+}
+
+func files(t *testing.T, dir string) int {
+	t.Helper()
+	n := 0
+	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, _ error) error {
+		if d != nil && !d.IsDir() {
+			n++
+		}
+		return nil
+	})
+	return n
 }
 
 func (c caller) list(query string) ([]string, string) {
@@ -142,6 +229,8 @@ func TestEvents(t *testing.T) {
 	if os.Getenv("DATABASE_URL") == "" {
 		t.Setenv("DATABASE_URL", filepath.Join(t.TempDir(), "events.db"))
 	}
+	uploads := t.TempDir()
+	t.Setenv("UPLOADS_DIR", uploads)
 	ctx := context.Background()
 	app, err := newApp(gesso.Env{Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
@@ -151,10 +240,9 @@ func TestEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = app.Shutdown(ctx) })
-	authn, _ := gesso.ModuleOf[*auth.Module](app)
-	users := authn.Users().(*auth.SQL)
+	u, _ := gesso.ModuleOf[*users.Module](app)
 	login := func(name string, roles ...string) caller {
-		if _, err := users.Create(ctx, name, "a long password", roles...); err != nil {
+		if _, err := u.Users().Create(ctx, name, "a long password", roles...); err != nil {
 			t.Fatal(err)
 		}
 		s, err := auth.Login.Call(ctx, gesso.NewLocal(app), auth.ReqLogin{Username: name, Password: "a long password"})
@@ -231,8 +319,69 @@ func TestEvents(t *testing.T) {
 	ada.want("PATCH", "/events/talk", ` + "`" + `{"order":99}` + "`" + `, 200, ` + "`" + `"host":"ada"` + "`" + `)
 	ada.want("DELETE", "/events/talk", "", 422, "in_use")
 
+	// Files: an image shrunk and kept as JPEG, a PDF downloaded, never an SVG.
+	if code, body := anyone.upload("/events/walk/cover", "c.png", pngOf(400, 300)); code != 401 {
+		t.Fatalf("anyone uploads: %d %s", code, body)
+	}
+	if code, body := bob.upload("/events/walk/cover", "x.svg", []byte("<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>")); code != 400 {
+		t.Fatalf("an svg cover: %d %s", code, body)
+	}
+	code, body := bob.upload("/events/walk/cover", "c.png", pngOf(400, 300))
+	if code != 200 {
+		t.Fatalf("cover: %d %s", code, body)
+	}
+	cover := urlIn(t, body, "cover")
+	if code, typ, data := anyone.fetch(cover); code != 200 || !strings.HasPrefix(typ, "image/jpeg") || size(t, data) != "jpeg 133x100" {
+		t.Fatalf("the cover: %d %s %s", code, typ, size(t, data))
+	}
+	anyone.want("GET", "/events", "", 200, ` + "`" + `"cover":"/events/walk/cover?v=` + "`" + `)
+	if code, body := bob.upload("/events/walk/flyer", "f.pdf", []byte("%PDF-1.4\n%flyer\n")); code != 200 {
+		t.Fatalf("flyer: %d %s", code, body)
+	}
+	if code, body := bob.upload("/events/walk/flyer", "v.pdf", []byte("%PDF-1.4\nEICAR\n")); code != 422 {
+		t.Fatalf("an infected flyer: %d %s", code, body)
+	}
+	if code, body := bob.upload("/events/walk/flyer", "f.png", pngOf(10, 10)); code != 400 {
+		t.Fatalf("a png as the flyer: %d %s", code, body)
+	}
+	if code, typ, _ := anyone.fetch("/events/walk/flyer"); code != 200 || !strings.Contains(typ, "application/pdf") || !strings.Contains(typ, "attachment") {
+		t.Fatalf("the flyer: %d %s", code, typ)
+	}
+	bob.want("PUT", "/events/walk", ` + "`" + `{"title":"Walk 3","slug":"walk","day":"2026-11-03","public":true}` + "`" + `, 200, ` + "`" + `"cover":"/events/walk/cover` + "`" + `)
+	bob.want("DELETE", "/events/walk/flyer", "", 204)
+	anyone.want("GET", "/events/walk/flyer", "", 404)
+	if n := files(t, uploads); n != 1 {
+		t.Fatalf("files kept: %d", n)
+	}
+
+	// Users: the model's own, an avatar of one's own, admins over the rest.
+	bob.want("GET", "/auth/me", "", 200, ` + "`" + `"username":"bob"` + "`" + `, ` + "`" + `"roles":[]` + "`" + `)
+	bob.want("PATCH", "/auth/me", ` + "`" + `{"name":"  Bob   Builder "}` + "`" + `, 200, ` + "`" + `"name":"Bob Builder"` + "`" + `)
+	bob.want("PATCH", "/auth/me", ` + "`" + `{"roles":["admin"]}` + "`" + `, 400)
+	code, body = bob.upload("/auth/me/avatar", "a.png", pngOf(300, 200))
+	if code != 200 {
+		t.Fatalf("avatar: %d %s", code, body)
+	}
+	if code, _, data := anyone.fetch(urlIn(t, body, "avatar")); code != 200 || size(t, data) != "png 64x64" {
+		t.Fatalf("the avatar: %d", code)
+	}
+	bob.want("GET", "/users", "", 403)
+	ada.want("GET", "/users", "", 200, ` + "`" + `"username":"bob"` + "`" + `, ` + "`" + `"avatar":"/users/bob/avatar` + "`" + `, "!password")
+	ada.want("POST", "/users", ` + "`" + `{"username":"Carol","password":"carol password","roles":["editor"]}` + "`" + `, 201, ` + "`" + `"username":"carol"` + "`" + `, "!password")
+	ada.want("PUT", "/users/carol/password", ` + "`" + `{"password":"another password"}` + "`" + `, 204)
+	s, err := auth.Login.Call(ctx, gesso.NewLocal(app), auth.ReqLogin{Username: "carol", Password: "another password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller{t, app, s.Token}.want("GET", "/auth/me", "", 200, ` + "`" + `"roles":["editor"]` + "`" + `)
+	bob.want("DELETE", "/auth/me/avatar", "", 204)
+
 	bob.want("DELETE", "/events/jam", "", 204)
 	anyone.want("GET", "/events/jam", "", 404)
 	bob.want("DELETE", "/events/jam", "", 404)
+	bob.want("DELETE", "/events/walk", "", 204)
+	if n := files(t, uploads); n != 0 {
+		t.Fatalf("a record's files go with it: %d left", n)
+	}
 }
 `

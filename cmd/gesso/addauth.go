@@ -11,45 +11,49 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/imports"
 )
 
-// addAuth is gesso add auth: sign-in from gesso/auth — a table of users, its
-// users command — registered in register.go, and a signedIn guard. None of
-// auth's code is copied in, so a fix to it arrives with go get.
-func addAuth(args []string, dir string, stdout io.Writer) error {
+// addAuth is gesso add auth: the users who sign in, as a module of the app's —
+// internal/users, its model //gesso:auth with the fields given, managed by
+// admins, each user changing the fields marked self on themselves — and the
+// signedIn and admin guards. Sign-in itself is gesso/auth's: login, logout,
+// the tokens, the users command.
+func addAuth(args []string, dir string, stdout io.Writer, now func() time.Time) error {
 	fs := newFlags("add auth")
-	parent := fs.String("dir", "internal", "the folder guards/ goes in")
+	parent := fs.String("dir", "internal", "the folder users/ and guards/ go in")
+	var fieldList fieldFlags
+	fs.Var(&fieldList, "field", "a user's field beside username, name:type[:options]: avatar:image:self,public,fill=256x256; again for each")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 0 {
-		return usage("add auth takes no arguments")
+		return usage("add auth takes no arguments, only -field")
 	}
-	regGo, src, err := registerFile(dir)
-	if err != nil {
-		return err
-	}
-	wired, err := wireRegister(src, "auth.New()", "github.com/Elagoht/gesso/auth")
-	if err != nil {
-		return fmt.Errorf("%s: %w", regGo, err)
-	}
-	if err := os.WriteFile(regGo, wired, 0o644); err != nil {
-		return err
-	}
-	fmt.Fprintln(stdout, "wired", regGo)
-	guard := filepath.Join(dir, *parent, "guards", "signedIn.go")
-	if _, err := os.Stat(guard); err != nil {
+	for name, src := range map[string]string{"signedIn": signedInGuard, "admin": adminGuard} {
+		guard := filepath.Join(dir, *parent, "guards", name+".go")
+		if _, err := os.Stat(guard); err == nil {
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(guard), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(guard, []byte(signedInGuard), 0o644); err != nil {
+		if err := os.WriteFile(guard, []byte(src), 0o644); err != nil {
 			return err
 		}
 		fmt.Fprintln(stdout, "created", guard)
+	}
+	moduleArgs := []string{"users", "-auth", "-entity", "User", "-guard", "admin", "-read", "admin", "-dir", *parent,
+		"-field", "username:string:key,lower,max=100"}
+	for _, f := range fieldList {
+		moduleArgs = append(moduleArgs, "-field", f)
+	}
+	if err := addModule(moduleArgs, dir, stdout, now); err != nil {
+		return err
 	}
 	fmt.Fprint(stdout, `
 next:
@@ -69,6 +73,19 @@ import (
 
 func SignedIn(r *http.Request) error {
 	return gesso.RequireIdentity(r)
+}
+`
+
+const adminGuard = `package guards
+
+import (
+	"net/http"
+
+	"github.com/Elagoht/gesso"
+)
+
+func Admin(r *http.Request) error {
+	return gesso.RequireRole("admin")(r)
 }
 `
 

@@ -42,7 +42,7 @@ var genTemplates = template.Must(template.New("").Funcs(template.FuncMap{
 
 var (
 	tableDirective = regexp.MustCompile(`^//gesso:table\s+([a-z][a-z0-9_]*)\s*$`)
-	modelDirective = regexp.MustCompile(`^//gesso:(sortable|write|read)(?:\s+([a-z][A-Za-z0-9]*))?\s*$`)
+	modelDirective = regexp.MustCompile(`^//gesso:(sortable|auth|write|read)(?:\s+([a-z][A-Za-z0-9]*))?\s*$`)
 )
 
 type model struct {
@@ -59,6 +59,7 @@ type model struct {
 	UsesDate bool
 
 	Sortable    bool   // //gesso:sortable: kept in an order of the client's, a position column
+	Auth        bool   // //gesso:auth: the users who sign in
 	Write, Read string // the guards' Go names, from //gesso:write and //gesso:read
 	Gate        *mfield
 	Guarded     []string // the field guards' Go names, each once
@@ -72,7 +73,11 @@ type model struct {
 // hooks are the user's methods on *Module that gen calls.
 type hooks struct {
 	BeforeCreate, BeforeUpdate, BeforeDelete, Routes bool
+	Process                                          map[string]bool // Process<Field>, by the field's Go name
 }
+
+// ProcessOf reports whether the user's code processes the file field named go.
+func (h hooks) ProcessOf(goName string) bool { return h.Process[goName] }
 
 type mfield struct {
 	Go, JSON, Column, Ident string
@@ -84,6 +89,17 @@ type mfield struct {
 	Listable, Filterable    bool
 	Orderable               bool
 	Default                 string   // default=: a literal, @today, @now or @user
+	File                    string   // file or image: a column that holds a stored file's key
+	Accept                  []string // the file's types: image/png …
+	MaxSize                 string   // the file's largest, as written: 5MiB
+	MaxBytes                int64
+	Width, Height           int    // an image's fit=WxH or fill=WxH
+	Fill                    bool   // fill: cropped to exactly Width × Height
+	Format                  string // an image's jpeg or png; "" keeps PNG and GIF as PNG
+	Quality                 int
+	Transforms              []string // trim, lower, upper, collapse, slugify, in order
+	Self                    bool     // a signed-in user may change it on themselves: PATCH /auth/me
+	Public                  bool     // a file anyone may fetch, past the model's read guard
 	Guard                   string   // the Go name of the guard that may see and write it
 	GateGuard               string   // a gate: records with it false are the guard's only
 	Rules                   []string // validation rules beyond what the options imply
@@ -94,6 +110,9 @@ type mfield struct {
 // ResType is the field's type in a response: a pointer, left out, when a
 // guard hides it.
 func (f mfield) ResType() string {
+	if f.File != "" {
+		return "*string" // its URL
+	}
 	if f.Guard != "" && !f.Nullable {
 		return "*" + f.Type
 	}
@@ -217,7 +236,9 @@ func (m model) SortType() string {
 var baseOf = map[string]string{"string": "string", "int64": "int", "bool": "bool", "float64": "float", "time.Time": "time", "date.Date": "date"}
 
 var options = map[string]bool{"key": true, "unique": true, "index": true, "optional": true, "sort": true, "text": true,
-	"listable": true, "filterable": true, "orderable": true, "guard": true, "gate": true, "default": true}
+	"listable": true, "filterable": true, "orderable": true, "guard": true, "gate": true, "default": true,
+	"file": true, "image": true, "accept": true, "maxsize": true, "fit": true, "fill": true, "format": true, "quality": true,
+	"trim": true, "lower": true, "upper": true, "collapse": true, "slugify": true, "self": true, "public": true}
 
 var ruleNames = map[string]bool{
 	"min": true, "max": true, "len": true, "gt": true, "gte": true, "lt": true, "lte": true,
@@ -256,7 +277,7 @@ func parseModel(dir string) (*model, error) {
 				} else if m := modelDirective.FindStringSubmatch(c.Text); m != nil {
 					directives = append(directives, m)
 				} else if strings.HasPrefix(c.Text, "//gesso:") {
-					return nil, fmt.Errorf("%s: unknown %s: //gesso:table <name>, //gesso:sortable, //gesso:write <guard>, //gesso:read <guard>", dir, c.Text)
+					return nil, fmt.Errorf("%s: unknown %s: //gesso:table <name>, //gesso:sortable, //gesso:auth, //gesso:write <guard>, //gesso:read <guard>", dir, c.Text)
 				}
 			}
 			if table == "" {
@@ -292,15 +313,66 @@ func parseModel(dir string) (*model, error) {
 
 var errNoModel = errors.New("no //gesso:table struct")
 
+// transforms are the options that change a string after it is checked.
+var transforms = map[string]bool{"trim": true, "lower": true, "upper": true, "collapse": true, "slugify": true}
+
+// imageTypes are the images an image field takes: rasters, never SVG, whose
+// scripts would run where it is shown.
+var imageTypes = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+// checkFile is what holds for a file or an image field.
+func (f *mfield) checkFile() error {
+	if f.Key || f.Unique || f.Index || f.Sort || f.Filterable || f.Orderable || f.Default != "" || f.GateGuard != "" || len(f.Transforms) > 0 || len(f.Rules) > 0 || f.Base == "text" {
+		return fmt.Errorf("a %s is uploaded on its own route: it takes accept, maxsize, public, listable, guard, self, optional and, an image, fit, fill, format, quality", f.File)
+	}
+	if f.File == "file" && (f.Width != 0 || f.Format != "" || f.Quality != 0) {
+		return errors.New("fit, fill, format and quality are for an image")
+	}
+	if f.File == "image" {
+		if len(f.Accept) == 0 {
+			f.Accept = imageTypes
+		}
+		for _, a := range f.Accept {
+			if !slices.Contains(imageTypes, a) {
+				return fmt.Errorf("an image takes %s, not %s", strings.Join(imageTypes, ", "), a)
+			}
+		}
+	}
+	if f.MaxBytes == 0 {
+		f.MaxSize, f.MaxBytes = "10MiB", 10<<20
+	}
+	f.Base, f.Optional = "file", true
+	return nil
+}
+
+// parseSize reads 512KB, 5MiB, 1GB.
+func parseSize(s string) (int64, error) {
+	units := []struct {
+		suffix string
+		n      int64
+	}{{"KiB", 1 << 10}, {"MiB", 1 << 20}, {"GiB", 1 << 30}, {"KB", 1e3}, {"MB", 1e6}, {"GB", 1e9}, {"B", 1}}
+	for _, u := range units {
+		if num, ok := strings.CutSuffix(s, u.suffix); ok {
+			v, err := strconv.ParseInt(num, 10, 64)
+			if err != nil || v <= 0 {
+				break
+			}
+			return v * u.n, nil
+		}
+	}
+	return 0, fmt.Errorf("maxsize %q: a number and B, KB, KiB, MB, MiB, GB or GiB", s)
+}
+
 // direct applies a directive: //gesso:sortable, //gesso:write <guard>,
 // //gesso:read <guard>.
 func (m *model) direct(name, arg string) error {
 	switch name {
-	case "sortable":
+	case "sortable", "auth":
 		if arg != "" {
-			return errors.New("//gesso:sortable takes nothing")
+			return fmt.Errorf("//gesso:%s takes nothing", name)
 		}
-		m.Sortable = true
+		m.Sortable = m.Sortable || name == "sortable"
+		m.Auth = m.Auth || name == "auth"
 	case "write", "read":
 		if arg == "" {
 			return fmt.Errorf("//gesso:%s takes a guard: //gesso:%s signedIn", name, name)
@@ -341,6 +413,40 @@ func (m *model) check() error {
 			}
 		}
 		m.Listable = m.Listable || f.Listable
+	}
+	if err := m.checkAuth(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkAuth is what holds for the users of //gesso:auth, and for self.
+func (m *model) checkAuth() error {
+	for _, f := range m.Fields {
+		if f.Self && !m.Auth {
+			return fmt.Errorf("%s.%s: self is for the users of a //gesso:auth model", m.Entity, f.Go)
+		}
+		if f.Self && f.Guard != "" {
+			return fmt.Errorf("%s.%s: a field users change on themselves has no guard", m.Entity, f.Go)
+		}
+	}
+	if !m.Auth {
+		return nil
+	}
+	if m.Key == nil || m.Key.Column != "username" || m.Key.Base != "string" {
+		return fmt.Errorf("%s is //gesso:auth: its key is Username string `gesso:\"key,…\"`, what users sign in with", m.Entity)
+	}
+	if m.Gate != nil || m.Sortable {
+		return fmt.Errorf("%s is //gesso:auth: it takes no gate and is not sortable", m.Entity)
+	}
+	for _, f := range m.Fields {
+		switch f.Column {
+		case "password_hash", "roles", "created_at":
+			return fmt.Errorf("%s.%s: %s is a column //gesso:auth keeps itself", m.Entity, f.Go, f.Column)
+		}
+		if f.Unique && !f.Key {
+			return fmt.Errorf("%s.%s: a user made from the command line leaves it empty, so it cannot be unique", m.Entity, f.Go)
+		}
 	}
 	return nil
 }
@@ -418,6 +524,39 @@ func newMField(name, typ, tag string) (mfield, error) {
 		}
 		rule, value, _ := strings.Cut(opt, "=")
 		switch {
+		case opt == "file" || opt == "image":
+			if typ != "string" {
+				return f, fmt.Errorf("%s is a string: the stored file's key", opt)
+			}
+			f.File = opt
+		case rule == "accept":
+			f.Accept = strings.Fields(value)
+		case rule == "maxsize":
+			n, err := parseSize(value)
+			if err != nil {
+				return f, err
+			}
+			f.MaxSize, f.MaxBytes = value, n
+		case rule == "fit" || rule == "fill":
+			if _, err := fmt.Sscanf(value, "%dx%d", &f.Width, &f.Height); err != nil || f.Width <= 0 || f.Height <= 0 {
+				return f, fmt.Errorf("%s is WIDTHxHEIGHT: %s=1600x900", rule, rule)
+			}
+			f.Fill = rule == "fill"
+		case rule == "format":
+			if value != "jpeg" && value != "png" {
+				return f, errors.New("format is jpeg or png")
+			}
+			f.Format = value
+		case rule == "quality":
+			if _, err := fmt.Sscanf(value, "%d", &f.Quality); err != nil || f.Quality < 1 || f.Quality > 100 {
+				return f, errors.New("quality is 1 to 100")
+			}
+		case transforms[opt]:
+			f.Transforms = append(f.Transforms, opt)
+		case opt == "self":
+			f.Self = true
+		case opt == "public":
+			f.Public = true
 		case opt == "listable":
 			f.Listable = true
 		case opt == "filterable":
@@ -459,8 +598,20 @@ func newMField(name, typ, tag string) (mfield, error) {
 		case options[rule]:
 			return f, fmt.Errorf("%q takes no value", rule)
 		default:
-			return f, fmt.Errorf("unknown option or rule %q: options are key, unique, index, optional, sort, text, listable, filterable, orderable, default=<value>, guard=<guard>, gate=<guard>; rules are validate's (max=200, email, slug, oneof=a b …)", opt)
+			return f, fmt.Errorf("unknown option or rule %q: options are key, unique, index, optional, sort, text, listable, filterable, orderable, default=<value>, guard=<guard>, gate=<guard>, file, image, accept=, maxsize=, fit=, fill=, format=, quality=, trim, lower, upper, collapse, slugify, self; rules are validate's (max=200, email, slug, oneof=a b …)", opt)
 		}
+	}
+	if f.File != "" {
+		if err := f.checkFile(); err != nil {
+			return f, err
+		}
+		return f, nil
+	}
+	if f.Accept != nil || f.MaxSize != "" || f.Width != 0 || f.Format != "" || f.Quality != 0 || f.Public {
+		return f, errors.New("accept, maxsize, public, fit, fill, format and quality are for a file or an image")
+	}
+	if len(f.Transforms) > 0 && base != "string" {
+		return f, fmt.Errorf("%s is for a string", f.Transforms[0])
 	}
 	if f.GateGuard != "" && (base != "bool" || f.Nullable) {
 		return f, errors.New("a gate is a bool: true opens the record to everyone")
@@ -540,11 +691,17 @@ type column struct {
 type schemaSnapshot struct {
 	Table   string   `json:"table"`
 	Dialect string   `json:"dialect"`
+	Auth    bool     `json:"auth,omitempty"` // every column but the key has a default: users add fills only its own
 	Columns []column `json:"columns"`
 }
 
 func sqlType(f mfield, dialect string) string {
 	switch f.Base {
+	case "file":
+		if dialect == "mysql" {
+			return "VARCHAR(255)"
+		}
+		return "TEXT"
 	case "string":
 		if dialect == "mysql" {
 			return "VARCHAR(" + strconv.Itoa(f.varcharLen()) + ")"
@@ -575,6 +732,17 @@ func (m model) snapshot() schemaSnapshot {
 	if m.Sortable {
 		s.Columns = append(s.Columns, column{Name: "position", SQL: sqlType(mfield{Base: "int"}, m.Dialect), Base: "int", Index: true})
 	}
+	if m.Auth {
+		s.Auth = true
+		secret := "TEXT"
+		if m.Dialect == "mysql" {
+			secret = "VARCHAR(1000)"
+		}
+		s.Columns = append(s.Columns,
+			column{Name: "password_hash", SQL: secret, Base: "file"},
+			column{Name: "roles", SQL: secret, Base: "file"},
+			column{Name: "created_at", SQL: sqlType(mfield{Base: "int"}, m.Dialect), Base: "int"})
+	}
 	return s
 }
 
@@ -586,7 +754,7 @@ func (c column) def(dialect string, withDefault bool) string {
 		return s
 	}
 	s += " NOT NULL"
-	if withDefault {
+	if withDefault || c.Base == "file" {
 		s += " DEFAULT " + zeroDefault(c, dialect)
 	}
 	return s
@@ -595,7 +763,7 @@ func (c column) def(dialect string, withDefault bool) string {
 // zeroDefault fills a NOT NULL column added to a table with rows.
 func zeroDefault(c column, dialect string) string {
 	switch c.Base {
-	case "string":
+	case "string", "file":
 		return "''"
 	case "text":
 		if dialect == "mysql" {
@@ -651,7 +819,7 @@ func migration(old *schemaSnapshot, s schemaSnapshot, drop bool) (name, up, down
 		var b strings.Builder
 		b.WriteString("CREATE TABLE " + t + " (\n    " + idSQL(d))
 		for _, c := range s.Columns {
-			b.WriteString(",\n    " + c.def(d, false))
+			b.WriteString(",\n    " + c.def(d, s.Auth && !c.Unique && !c.Nullable))
 		}
 		b.WriteString("\n);\n")
 		for _, c := range s.Columns {
@@ -807,6 +975,13 @@ func findHooks(moduleDir string) (hooks, error) {
 				h.BeforeDelete = true
 			case "routes":
 				h.Routes = true
+			default:
+				if field, ok := strings.CutPrefix(fn.Name.Name, "Process"); ok && field != "" {
+					if h.Process == nil {
+						h.Process = map[string]bool{}
+					}
+					h.Process[field] = true
+				}
 			}
 		}
 	}

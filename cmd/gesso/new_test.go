@@ -61,13 +61,9 @@ func TestNew(t *testing.T) {
 			if code := run([]string{"add", "module", "x", "-guard", "admin"}, dir, &out, &errOut, fixedNow); code == 0 {
 				t.Fatal("a guard that does not exist")
 			}
-			do("add", "auth")
+			do("add", "auth", "-field", "name:string:optional,self,collapse,max=100", "-field", "avatar:image:self,public,listable,fill=64x64")
 			if code := run([]string{"add", "auth"}, dir, &out, &errOut, fixedNow); code == 0 {
-				t.Fatal("auth is registered twice")
-			}
-			do("add", "guard", "admin")
-			if err := os.WriteFile(filepath.Join(dir, "internal/guards/admin.go"), []byte(adminGuard), 0o644); err != nil {
-				t.Fatal(err)
+				t.Fatal("auth is added twice")
 			}
 			do("add", "module", "events", "-sortable", "-guard", "signedIn", "-field", "title:string:listable,max=200")
 			if code := run([]string{"add", "module", "events"}, dir, &out, &errOut, fixedNow); code == 0 {
@@ -100,7 +96,7 @@ func TestNew(t *testing.T) {
 			do("add", "command", "seed")
 			do("add", "middleware", "timing")
 			reg, _ := os.ReadFile(filepath.Join(dir, "register.go"))
-			for _, want := range []string{"auth.New(),", "events.New(),", "pages.New(),", `app.Command("seed", commands.Seed(app))`, "app.Use(middleware.Timing)"} {
+			for _, want := range []string{"users.New(),", "events.New(),", "pages.New(),", `app.Command("seed", commands.Seed(app))`, "app.Use(middleware.Timing)"} {
 				if !strings.Contains(string(reg), want) {
 					t.Fatalf("register.go lacks %s:\n%s", want, reg)
 				}
@@ -166,14 +162,14 @@ func migrateRoundTrip(t *testing.T, bin, dbPath string) {
 		}
 		return string(out)
 	}
-	if out := run("up"); strings.Count(out, "applied") != 2 {
+	if out := run("up"); strings.Count(out, "applied") != 3 {
 		t.Fatalf("up: %s", out)
 	}
 	if out := run("down"); strings.Count(out, "reverted") != 1 {
 		t.Fatalf("down: %s", out)
 	}
 	out := run("status")
-	if strings.Count(out, "applied") != 1 || strings.Count(out, "pending") != 1 {
+	if strings.Count(out, "applied") != 2 || strings.Count(out, "pending") != 1 {
 		t.Fatalf("status: %s", out)
 	}
 	cmd := exec.Command(bin, "migrate", "sideways")
@@ -390,16 +386,3 @@ func changeModel(t *testing.T, dir, bin, dialect, dsn string) {
 		t.Fatal(err)
 	}
 }
-
-const adminGuard = `package guards
-
-import (
-	"net/http"
-
-	"github.com/Elagoht/gesso"
-)
-
-func Admin(r *http.Request) error {
-	return gesso.RequireRole("admin")(r)
-}
-`

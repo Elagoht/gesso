@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Elagoht/gesso/migrate"
+	"github.com/Elagoht/gesso/storage"
 )
 
 const defaultMaxBody = 1 << 20
@@ -34,6 +35,9 @@ type Config struct {
 	// Database, when set, is the app's database: gesso/sqlite, gesso/postgres or
 	// gesso/mysql. Modules take it in Init with App.DB.
 	Database Database
+	// Storage keeps uploaded files. Nil: a folder, UPLOADS_DIR or ./uploads,
+	// opened when a module first asks App.Storage for it.
+	Storage storage.Storage
 	// BasePath is the prefix every route is under: "/api" when collage mounts the
 	// app with app.Handle("/api/", …), which passes the full path on; "" when the
 	// app runs as its own process at the root.
@@ -146,6 +150,8 @@ type App struct {
 	authenticator Authenticator // Config.Authenticator, or the module that is one
 	docServed     bool          // the OpenAPI routes are registered
 	middleware    []Middleware  // Config.Middleware and App.Use
+	storageOnce   sync.Once
+	storageErr    error
 }
 
 // New builds an app, with its modules or with Register after. Every route

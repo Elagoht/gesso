@@ -144,6 +144,13 @@ func (a *App) runCommand(ctx context.Context, name string, args []string, out io
 		}
 		return fmt.Errorf("no command %q: the app has %s", name, strings.Join(names, ", "))
 	}
+	if a.db != nil && name != "migrate" {
+		// A command works on the app's tables as they are now: users add on a
+		// new database makes them first.
+		if err := a.migrateUp(ctx); err != nil {
+			return err
+		}
+	}
 	return run(ctx, args, out)
 }
 

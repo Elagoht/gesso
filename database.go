@@ -1,6 +1,7 @@
 package gesso
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -8,8 +9,10 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"os"
 
 	"github.com/Elagoht/gesso/migrate"
+	"github.com/Elagoht/gesso/storage"
 )
 
 // Database is the app's SQL database: gesso/sqlite, gesso/postgres and
@@ -139,3 +142,24 @@ func (a *App) migrateUp(ctx context.Context) error {
 	}
 	return conn.Close()
 }
+
+// Storage is where the app keeps uploaded files: Config.Storage, or the folder
+// UPLOADS_DIR names (./uploads), made when first asked for.
+func (a *App) Storage() (storage.Storage, error) {
+	a.storageOnce.Do(func() {
+		if a.cfg.Storage != nil {
+			return
+		}
+		d, err := storage.NewDisk(cmp.Or(os.Getenv("UPLOADS_DIR"), "uploads"))
+		if err != nil {
+			a.storageErr = fmt.Errorf("gesso: uploads: %w", err)
+			return
+		}
+		a.cfg.Storage = d
+		a.OnShutdown(func(context.Context) error { return d.Close() })
+	})
+	return a.cfg.Storage, a.storageErr
+}
+
+// BasePath is the prefix every route is under: "" or "/api".
+func (a *App) BasePath() string { return a.basePath }

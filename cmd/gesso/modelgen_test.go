@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -82,6 +84,16 @@ func TestModelRefuses(t *testing.T) {
 		{"string", "oneof=draft live,default=gone"},
 		{"string", "default="},
 		{"time.Time", "optional"},
+		{"int64", "image"},
+		{"string", "image,accept=image/svg+xml"},
+		{"string", "image,key"},
+		{"string", "file,fit=10x10"},
+		{"string", "image,fit=wide"},
+		{"string", "image,format=webp"},
+		{"string", "image,maxsize=lots"},
+		{"string", "public"},
+		{"int64", "trim"},
+		{"string", "file,trim"},
 	} {
 		if _, err := newMField("Field", c.typ, c.tag); err == nil {
 			t.Errorf("%s `gesso:%q` is accepted", c.typ, c.tag)
@@ -97,6 +109,36 @@ func TestModelRefuses(t *testing.T) {
 		f, err := newMField("Field", c.typ, c.tag)
 		if err != nil || !f.Optional || f.DefaultValue() != c.value || f.ReqType() != "gesso.Optional["+c.typ+"]" {
 			t.Errorf("%s `gesso:%q`: %+v %v", c.typ, c.tag, f, err)
+		}
+	}
+}
+
+func TestFileField(t *testing.T) {
+	f, err := newMField("Cover", "string", "image,fill=256x256,maxsize=5MiB,public")
+	if err != nil || f.File != "image" || !f.Fill || f.Width != 256 || f.MaxBytes != 5<<20 || !f.Public || f.ResType() != "*string" ||
+		f.AcceptTag() != "image/png,image/jpeg,image/gif,image/webp" || f.Base != "file" {
+		t.Fatalf("%+v %v", f, err)
+	}
+	f, _ = newMField("Name", "string", "trim,collapse,slugify")
+	if got := f.TransformExpr("v"); got != "text.Slugify(text.Collapse(strings.TrimSpace(v)))" {
+		t.Fatalf("transforms: %s", got)
+	}
+}
+
+func TestAuthModelRefuses(t *testing.T) {
+	for name, src := range map[string]string{
+		"no username": "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tEmail string `gesso:\"key\"`\n}\n",
+		"self alone":  "//gesso:table notes\ntype Note struct {\n\tID int64\n\tTitle string `gesso:\"self\"`\n}\n",
+		"own column":  "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tRoles string\n}\n",
+		"unique":      "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tEmail string `gesso:\"unique\"`\n}\n",
+		"gate":        "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tActive bool `gesso:\"gate=admin\"`\n}\n",
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "models.go"), []byte("package models\n\n"+src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parseModel(dir); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 }

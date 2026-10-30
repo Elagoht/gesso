@@ -1,25 +1,44 @@
+{{- $m := . -}}
 package models
-{{if or .UsesTime .UsesDate}}
+
 import (
+{{- if .Files}}
+	"net/url"
+	"path"
+{{- if not .Key}}
+	"strconv"
+{{- else if eq .Key.Base "int"}}
+	"strconv"
+{{- end}}
+{{- end}}
 {{- if .UsesTime}}
 	"time"
-{{end}}
+{{- end}}
 {{- if .UsesDate}}
+
 	"github.com/Elagoht/gesso/date"
 {{- end}}
 )
-{{end}}
+
 type Res{{.Entity}} struct {
 	ID int64 `json:"id"`
 {{- range .Fields}}
-	{{.Go}} {{.ResType}} `json:"{{.JSON}}{{if .Guard}},omitempty{{end}}"`
+	{{.Go}} {{.ResType}} `json:"{{.JSON}}{{if or .Guard .File}},omitempty{{end}}"`
 {{- end}}
 }
 
-func (e {{.Entity}}) Response({{if .Guarded}}a {{.Entity}}Access{{end}}) Res{{.Entity}} {
-	r := Res{{.Entity}}{ID: e.ID, {{range .Fields}}{{if not .Guard}}{{.Go}}: e.{{.Go}}, {{end}}{{end}}}
+func (e {{.Entity}}) Response({{.RespParams}}) Res{{.Entity}} {
+	r := Res{{.Entity}}{ID: e.ID, {{range .Fields}}{{if not (or .Guard .File)}}{{.Go}}: e.{{.Go}}, {{end}}{{end}}}
 {{- range .Fields}}
+{{- if .File}}
 {{- if .Guard}}
+	if a.{{.Guard}} {
+		r.{{.Go}} = e.fileURL(base, "{{.JSON}}", e.{{.Go}})
+	}
+{{- else}}
+	r.{{.Go}} = e.fileURL(base, "{{.JSON}}", e.{{.Go}})
+{{- end}}
+{{- else if .Guard}}
 	if a.{{.Guard}} {
 		r.{{.Go}} = {{if not .Nullable}}&{{end}}e.{{.Go}}
 	}
@@ -34,20 +53,50 @@ type Res{{.Entity}}Item struct {
 	ID int64 `json:"id"`
 {{- range .Fields}}
 {{- if or .Listable .Key}}
-	{{.Go}} {{.ResType}} `json:"{{.JSON}}{{if .Guard}},omitempty{{end}}"`
+	{{.Go}} {{.ResType}} `json:"{{.JSON}}{{if or .Guard .File}},omitempty{{end}}"`
 {{- end}}
 {{- end}}
 }
 
-func (e {{.Entity}}) Item({{if .Guarded}}a {{.Entity}}Access{{end}}) Res{{.Entity}}Item {
-	r := Res{{.Entity}}Item{ID: e.ID, {{range .Fields}}{{if and (or .Listable .Key) (not .Guard)}}{{.Go}}: e.{{.Go}}, {{end}}{{end}}}
+func (e {{.Entity}}) Item({{.RespParams}}) Res{{.Entity}}Item {
+	r := Res{{.Entity}}Item{ID: e.ID, {{range .Fields}}{{if and (or .Listable .Key) (not (or .Guard .File))}}{{.Go}}: e.{{.Go}}, {{end}}{{end}}}
 {{- range .Fields}}
-{{- if and .Listable .Guard}}
+{{- if .Listable}}
+{{- if .File}}
+{{- if .Guard}}
+	if a.{{.Guard}} {
+		r.{{.Go}} = e.fileURL(base, "{{.JSON}}", e.{{.Go}})
+	}
+{{- else}}
+	r.{{.Go}} = e.fileURL(base, "{{.JSON}}", e.{{.Go}})
+{{- end}}
+{{- else if .Guard}}
 	if a.{{.Guard}} {
 		r.{{.Go}} = {{if not .Nullable}}&{{end}}e.{{.Go}}
 	}
 {{- end}}
 {{- end}}
+{{- end}}
 	return r
+}
+{{- end}}
+{{- if .Files}}
+
+// fileURL is where the file stored under key is served, nil when there is
+// none; the key's name in it changes with the file, for caches.
+func (e {{.Entity}}) fileURL(base, name, key string) *string {
+	if key == "" {
+		return nil
+	}
+	u := base + "/{{.Table}}/" + {{.KeyText "e"}} + "/" + name + "?v=" + url.QueryEscape(path.Base(key))
+	return &u
+}
+{{- end}}
+{{- if .Auth}}
+
+// ResMe is who signs in, with their roles.
+type ResMe struct {
+	Res{{.Entity}}
+	Roles []string `json:"roles"`
 }
 {{- end}}

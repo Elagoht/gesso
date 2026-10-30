@@ -110,6 +110,67 @@ Guards are named as `gesso add guard` made them: `signedIn` is
 `internal/guards/signedIn.go`. In a handler of your own,
 `gesso.Allowed(ctx, guards.Admin)` asks the same.
 
+### Transforms
+
+```go
+	Title string `gesso:"listable,collapse,max=200"`
+	Code  string `gesso:"key,trim,upper,max=20"`
+```
+
+`trim`, `lower`, `upper`, `collapse` (one space for every run of white space)
+and `slugify` (`"Çay Saati!"` is `cay-saati`) format a string once it is
+checked, in the order written, on create, PUT and PATCH; then it is checked
+again, so what is stored still keeps the rules.
+
+### Files and images
+
+```go
+	Cover  string `gesso:"image,listable,fit=1600x900,format=jpeg,maxsize=8MiB"`
+	Avatar string `gesso:"image,public,fill=256x256"`
+	Flyer  string `gesso:"file,accept=application/pdf,maxsize=2MiB"`
+```
+
+A `file` or an `image` is a string column that holds where the file is stored;
+a create, a PUT or a PATCH never touches it. Each has routes of its own:
+
+| | |
+| --- | --- |
+| `PUT /<module>/{key}/<field>` | a multipart form whose `file` is the file, under `//gesso:write`; answers the record |
+| `GET /<module>/{key}/<field>` | the file, under `//gesso:read` unless `public` |
+| `DELETE /<module>/{key}/<field>` | removes it |
+
+The record answers the field as the file's URL — `/docs/kurulum/cover?v=…`,
+the base path in front, the `v` changing with the file — or leaves it out.
+
+A file's type is read from its first bytes, never from its name or what the
+client says: `accept` lists the types taken, space-separated, and `maxsize`
+the largest (default 10MiB; the route's body limit follows it). An `image`
+takes PNG, JPEG, GIF and WebP — never SVG, whose scripts would run where it is
+shown — and is always written again: `fit=WxH` shrinks it to fit inside,
+`fill=WxH` crops it to exactly that, `format` keeps it as `jpeg` or `png`
+(default: PNG and GIF as PNG, the rest as JPEG), `quality` is JPEG's. Writing
+it again drops what the file carried besides the picture: EXIF, a phone's
+position. An image of more than 40 million pixels is refused before it is
+decoded. Any other file is served as a download, never shown.
+
+The new file is stored first, then the record, then the old file goes; a
+record deleted takes its files with it. Files are kept in `Config.Storage`,
+by default the folder `UPLOADS_DIR` names (`./uploads`); `storage/s3` keeps
+them in a bucket.
+
+A method of your own, `Process<Field>`, gets the file after gesso's checks and
+before it is stored — to optimize it with a tool of your choice, or to scan it;
+its error is the answer and nothing is stored:
+
+```go
+func (m *Module) ProcessFlyer(ctx context.Context, data []byte, ext string) ([]byte, string, error) {
+	if scanner.Infected(data) {
+		return nil, "", gesso.Unprocessable("infected", "the file carries a virus")
+	}
+	return data, ext, nil
+}
+```
+
 ### Hooks and routes of your own
 
 The generated code is never edited. A file of your own in the module's
@@ -120,6 +181,7 @@ func (m *Module) BeforeCreate(ctx context.Context, d *models.Doc) error
 func (m *Module) BeforeUpdate(ctx context.Context, d *models.Doc) error
 func (m *Module) BeforeDelete(ctx context.Context, d models.Doc) error
 func (m *Module) routes(r *gesso.Router)
+func (m *Module) Process<Field>(ctx context.Context, data []byte, ext string) ([]byte, string, error)
 ```
 
 `BeforeCreate` sees the record before it is inserted; `BeforeUpdate` the

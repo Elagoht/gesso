@@ -8,6 +8,26 @@ change.
 - **The reorder is `PATCH /<table>` with `{"order": [keys]}`**, a change to the
   collection, not `PUT /<table>/order`, which a record whose key is `order`
   would have been shadowed by. A key may be `order` again.
+- **The users are a model of the app's**: `gesso add auth [-field …]` makes
+  `internal/users`, a `//gesso:auth` model whose key is `Username` — your
+  fields beside it — managed by admins under `/users` (`//gesso:write admin`,
+  `//gesso:read admin`), with `PUT /users/{username}/password`. A user changes
+  the fields marked `self` on themselves with `PATCH /auth/me`, and a file so
+  marked with `PUT /auth/me/<field>`; `GET /auth/me` answers every field and
+  the roles. Nobody sets their own roles. `add auth` writes the `admin` guard
+  too. `auth.SQL.Table`, `auth.SQL.Hash`, `auth.Module.SignInRoutes`.
+- **Files and images on a model**: `file` and `image` fields are uploaded on
+  `PUT /<module>/{key}/<field>`, fetched on GET (`public`: past the read
+  guard), removed on DELETE, and answered as their URL. The type is read from
+  the first bytes (`accept=`), `maxsize=` bounds it; an image — PNG, JPEG, GIF,
+  WebP, never SVG — is written again, which drops EXIF and GPS, `fit=` or
+  `fill=` sizes it, `format=` and `quality=` choose how. A `Process<Field>`
+  hook of your own may optimize or scan it. `Config.Storage`, `App.Storage`
+  (default `./uploads`, `UPLOADS_DIR`), the `imaging` package.
+- **Transforms**: `trim`, `lower`, `upper`, `collapse`, `slugify` format a
+  string once it is checked, which is checked again; the `text` package.
+- **A command migrates first**: `app users add` on a new database makes the
+  tables.
 - **`gesso check` warns of a shadowed route** (`shadow`): a fixed segment where
   another route of the method has a `{parameter}`.
 

@@ -18,7 +18,7 @@ gesso help                # every command; gesso help <command> for one
 | `gesso migrate new <name>` | an empty migration pair |
 | `gesso add module <name>` | a CRUD module from its model, registered in `register.go`: `-field`, `-fields`, `-guard`, `-read`, `-sortable`, `-empty`, `-entity`, `-dialect`; see [Getting started](getting-started.md) |
 | `gesso add endpoint <module>/<name>` | one endpoint in a module: its handler in `<name>.go`, its `Req`/`Res` in `models/requests.go` and `models/responses.go`, its route in `routes.go` (or `Routes`, in an empty module) |
-| `gesso add auth` | `auth.New()` in `register.go`, and the `signedIn` guard; see [Identity and limits](identity-and-limits.md) |
+| `gesso add auth` | the users module, `internal/users` (`//gesso:auth`), with `-field` for your fields; the `signedIn` and `admin` guards; see [Identity and limits](identity-and-limits.md) |
 | `gesso add guard <name>` | `internal/guards/<name>.go`, for `-guard` and `-read` |
 | `gesso add command <name>` | `internal/commands/<name>.go`, run as `app <name>`; `app.Command` in `register.go` |
 | `gesso add middleware <name>` | `internal/middleware/<name>.go`, around every route; `app.Use` in `register.go` |

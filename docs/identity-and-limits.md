@@ -1,37 +1,62 @@
 # Identity and limits
 
-## Sign-in: the auth module
+## Sign-in: the users module
 
 ```sh
-gesso add auth                          # sign-in, and a users table
+gesso add auth -field name:string:optional,self,collapse,max=100 \
+               -field avatar:image:self,public,fill=256x256
 go run . users add ada -role admin      # the first user; the password is asked for
 gesso add module notes -guard signedIn  # writes need a signed-in user
 ```
 
-`add auth` adds `auth.New()` to `app.Register` in `register.go` — none of its
-code is copied in, so a fix reaches the app with `go get` — and writes the
-`signedIn` guard. On an app with a `Config.Database`, `auth.New()` keeps the
-users in a table, makes its tables as the app starts, adds the `users`
-command, and is the app's authenticator.
+`add auth` makes the users a module of the app — `internal/users`, its model
+yours to change — and writes the `signedIn` and `admin` guards:
+
+```go
+//gesso:table users
+//gesso:auth
+//gesso:write admin
+//gesso:read admin
+type User struct {
+	ID       int64
+	Username string `gesso:"key,lower,max=100"`
+	Name     string `gesso:"optional,self,collapse,max=100"`
+	Avatar   string `gesso:"image,self,public,fill=256x256"`
+}
+```
+
+`//gesso:auth` makes the model the users who sign in: its key is `Username`,
+and the table keeps a password hash, the roles and when the user was made in
+columns of its own, never answered. Sign-in itself is gesso/auth's — its code
+is not copied in, so a fix reaches the app with `go get` — and the module is
+the app's authenticator.
 
 | Endpoint | |
 | --- | --- |
 | `POST /auth/login` | `{"username", "password"}` → `{"token", "expiresAt"}` |
 | `POST /auth/logout` | revokes the token it is called with |
-| `GET /auth/me` | `{"id", "username", "roles"}` |
 | `PUT /auth/password` | `{"currentPassword", "newPassword"}`: signs every device out, answers a new token |
+| `GET /auth/me` | the signed-in user, every field, and `roles` |
+| `PATCH /auth/me` | the fields marked `self`, on oneself |
+| `PUT`, `DELETE /auth/me/<field>` | a file marked `self`, on oneself |
+| `GET`, `POST /users`, `GET`, `PUT`, `PATCH`, `DELETE /users/{username}` | the users, under `//gesso:write` and `//gesso:read` (`admin`) |
+| `PUT /users/{username}/password` | `{"password"}`: an administrator sets one |
 
-They are `auth.Login`, `auth.Logout`, `auth.Me`, `auth.ChangePassword`, for
-`gesso.NewLocal` callers. A sign-in lasts 30 days. Attempts: 5 a minute per
-address and username, 20 per address — never per username alone. Behind a
-proxy, set `auth.Options.TrustedProxies`.
+`POST /users` takes the fields, a `password` and `roles`. Nobody changes their
+own roles: `self` is for the fields a user may change, and `roles` is never
+one. A field marked `self` has no guard; a user's other fields, and every field
+of a user without `self`, are the administrators'. The fields beside the key
+take a default, so `users add` from the command line makes a user; for that
+reason no field but the key is `unique`.
 
-The users are in `gesso_users`: usernames matched exactly, argon2id hashes,
-roles. No sign-up endpoint; `SQL.Create` is there for one of your own:
+A sign-in lasts 30 days. Attempts: 5 a minute per address and username, 20 per
+address — never per username alone. Behind a proxy, set
+`auth.Options.TrustedProxies`. In code, the module's `Users()` is the
+`*auth.SQL` on the table — `Create` for a seed or a test:
 
 ```go
-authn, _ := gesso.ModuleOf[*auth.Module](app)
-u, err := authn.Users().(*auth.SQL).Create(ctx, "ada", password)
+u, _ := gesso.ModuleOf[*users.Module](app)
+_, err := u.Users().Create(ctx, "ada", password, "admin")
 ```
 
 The `users` command: `add <name> [-role r]...`, `password <name>`, `roles
@@ -40,6 +65,8 @@ a role taken away or a user deleted counts from the next request.
 `gesso.IdentityFrom(ctx)` gives the user's id as `Subject`, the username as
 `Name`, and the roles.
 
+Without a model of your own, `auth.New()` in `register.go` keeps the users in
+`gesso_users` and serves `GET /auth/me` as `{"id", "username", "roles"}`.
 Another source of users — one from your own settings (`auth.NewSingle`), a
 directory — is an `auth.Users`: `auth.New(auth.Options{Users: users})` in
 `register.go`. `auth/authtest` is its contract.

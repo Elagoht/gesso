@@ -28,9 +28,9 @@ type repository struct {
 func newRepository(d db.DB) *repository { return &repository{db: d} }
 
 {{define "dest"}}&e.ID{{range .Fields}}, &e.{{.Go}}{{end}}{{if .Sortable}}, &position{{end}}{{end}}
-func (r *repository) insert(ctx context.Context, e models.{{.Entity}}) (models.{{.Entity}}, error) {
+func (r *repository) insert(ctx context.Context, e models.{{.Entity}}{{if .Auth}}, hash string, created int64{{end}}) (models.{{.Entity}}, error) {
 {{- if eq $d "mysql"}}
-	res, err := r.db.ExecContext(ctx, {{printf "%q" .SQL.Insert}}{{range .Fields}}, e.{{.Go}}{{end}})
+	res, err := r.db.ExecContext(ctx, {{printf "%q" .SQL.Insert}}{{range .DataFields}}, e.{{.Go}}{{end}}{{if .Auth}}, hash, created{{end}})
 	if err != nil {
 		return e, err
 	}
@@ -41,7 +41,7 @@ func (r *repository) insert(ctx context.Context, e models.{{.Entity}}) (models.{
 	return r.byID(ctx, id)
 {{- else}}
 	var id int64
-	if err := r.db.QueryRowContext(ctx, {{printf "%q" .SQL.Insert}}{{range .Fields}}, e.{{.Go}}{{end}}).Scan(&id); err != nil {
+	if err := r.db.QueryRowContext(ctx, {{printf "%q" .SQL.Insert}}{{range .DataFields}}, e.{{.Go}}{{end}}{{if .Auth}}, hash, created{{end}}).Scan(&id); err != nil {
 		return e, err
 	}
 	return r.byID(ctx, id)
@@ -136,16 +136,25 @@ func (r *repository) list(ctx context.Context, in models.ReqList{{.Plural}}{{if 
 // patch writes each field that is set and keeps the rest, in one statement.
 func (r *repository) patch(ctx context.Context, id int64, in models.ReqPatch{{.Entity}}) error {
 	_, err := r.db.ExecContext(ctx, {{printf "%q" .SQL.Patch}},
-		{{range .Fields}}in.{{.Go}}.Set, in.{{.Go}}.Value, {{end}}id)
+		{{range .DataFields}}in.{{.Go}}.Set, in.{{.Go}}.Value, {{end}}id)
 	return err
 }
 
 // save writes every field of e.
 func (r *repository) save(ctx context.Context, e models.{{.Entity}}) error {
 	_, err := r.db.ExecContext(ctx, {{printf "%q" .SQL.Save}},
-		{{range .Fields}}e.{{.Go}}, {{end}}e.ID)
+		{{range .DataFields}}e.{{.Go}}, {{end}}e.ID)
 	return err
 }
+
+{{- range $i, $f := .Files}}
+
+// set{{$f.Go}} keeps key as the record's {{$f.JSON}}.
+func (r *repository) set{{$f.Go}}(ctx context.Context, id int64, key string) error {
+	_, err := r.db.ExecContext(ctx, {{printf "%q" (index $m.SQL.SetFile $i)}}, key, id)
+	return err
+}
+{{- end}}
 
 func (r *repository) delete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, {{printf "%q" .SQL.Delete}}, id)

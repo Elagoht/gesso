@@ -2,19 +2,58 @@
 package {{.Pkg}}
 
 import (
+{{- if .Files}}
+	"bytes"
+{{- end}}
 	"context"
+{{- if .Files}}
+	"crypto/rand"
+{{- end}}
 	"embed"
 	"errors"
-{{- if or (.DefaultUses "@today") (.DefaultUses "@now")}}
+{{- if .Files}}
+	"mime"
+{{- end}}
+{{- if .Auth}}
+	"net/http"
+{{- end}}
+{{- if .Auth}}
+	"os"
+{{- end}}
+{{- if .Files}}
+	"path"
+{{- end}}
+{{- if or .Files .Auth}}
+	"strconv"
+{{- end}}
+{{- if .TransformUses "strings"}}
+	"strings"
+{{- end}}
+{{- if or (.DefaultUses "@today") (.DefaultUses "@now") .Auth}}
 	"time"
 {{- end}}
 
 	"github.com/Elagoht/gesso"
+{{- if .Auth}}
+	"github.com/Elagoht/gesso/auth"
+{{- end}}
 {{- if .DefaultUses "@today"}}
 	"github.com/Elagoht/gesso/date"
 {{- end}}
 {{- if or .Hooks.BeforeUpdate .Sortable}}
 	"github.com/Elagoht/gesso/db"
+{{- end}}
+{{- if .FilesOfKind "image"}}
+	"github.com/Elagoht/gesso/imaging"
+{{- end}}
+{{- if .Files}}
+	"github.com/Elagoht/gesso/storage"
+{{- end}}
+{{- if .TransformUses "text"}}
+	"github.com/Elagoht/gesso/text"
+{{- end}}
+{{- if or .Transformed (.FilesOfKind "image")}}
+	"github.com/Elagoht/gesso/validate"
 {{- end}}
 {{- if .Guards}}
 
@@ -27,7 +66,7 @@ import (
 var migrations embed.FS
 
 var (
-	Create{{.Entity}} = gesso.Endpoint[models.ReqCreate{{.Entity}}, models.Res{{.Entity}}]{Method: "POST", Pattern: "/{{.Table}}"}
+	Create{{.Entity}} = gesso.Endpoint[models.{{.CreateIn}}, models.Res{{.Entity}}]{Method: "POST", Pattern: "/{{.Table}}"}
 	Get{{.Entity}} = gesso.Endpoint[models.Req{{.Entity}}Key, models.Res{{.Entity}}]{Method: "GET", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }"}
 	List{{.Plural}} = gesso.Endpoint[models.ReqList{{.Plural}}, gesso.Page[models.{{.ListItem}}]]{Method: "GET", Pattern: "/{{.Table}}"}
 	Update{{.Entity}} = gesso.Endpoint[models.ReqUpdate{{.Entity}}, models.Res{{.Entity}}]{Method: "PUT", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }"}
@@ -35,6 +74,22 @@ var (
 	Delete{{.Entity}} = gesso.Endpoint[models.Req{{.Entity}}Key, gesso.Empty]{Method: "DELETE", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }"}
 {{- if .Sortable}}
 	Reorder{{.Plural}} = gesso.Endpoint[models.ReqReorder{{.Plural}}, gesso.Empty]{Method: "PATCH", Pattern: "/{{.Table}}"}
+{{- end}}
+{{- range .Files}}
+	Upload{{$m.Entity}}{{.Go}} = gesso.Endpoint[models.Req{{$m.Entity}}{{.Go}}, models.Res{{$m.Entity}}]{Method: "PUT", Pattern: "/{{$m.Table}}/{ {{- $m.KeyPath -}} }/{{.JSON}}"}
+	Get{{$m.Entity}}{{.Go}} = gesso.Endpoint[models.Req{{$m.Entity}}Key, *gesso.Download]{Method: "GET", Pattern: "/{{$m.Table}}/{ {{- $m.KeyPath -}} }/{{.JSON}}"}
+	Delete{{$m.Entity}}{{.Go}} = gesso.Endpoint[models.Req{{$m.Entity}}Key, gesso.Empty]{Method: "DELETE", Pattern: "/{{$m.Table}}/{ {{- $m.KeyPath -}} }/{{.JSON}}"}
+{{- end}}
+{{- if .Auth}}
+	Set{{.Entity}}Password = gesso.Endpoint[models.Req{{.Entity}}Password, gesso.Empty]{Method: "PUT", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }/password"}
+	Me = gesso.Endpoint[gesso.Empty, models.ResMe]{Method: "GET", Pattern: "/auth/me"}
+{{- if .SelfFields}}
+	UpdateMe = gesso.Endpoint[models.ReqPatchMe, models.ResMe]{Method: "PATCH", Pattern: "/auth/me"}
+{{- end}}
+{{- range .SelfFiles}}
+	UploadMy{{.Go}} = gesso.Endpoint[models.ReqMy{{.Go}}, models.ResMe]{Method: "PUT", Pattern: "/auth/me/{{.JSON}}"}
+	DeleteMy{{.Go}} = gesso.Endpoint[gesso.Empty, gesso.Empty]{Method: "DELETE", Pattern: "/auth/me/{{.JSON}}"}
+{{- end}}
 {{- end}}
 )
 {{- if .Sortable}}
@@ -46,6 +101,13 @@ var ErrReorderKeys = gesso.Unprocessable("reorder_keys", "order lists the key of
 type Module struct {
 	app  *gesso.App
 	repo *repository
+{{- if .Files}}
+	files storage.Storage
+{{- end}}
+{{- if .Auth}}
+	users *auth.SQL
+	auth  *auth.Module
+{{- end}}
 }
 
 func New() *Module { return &Module{} }
@@ -55,10 +117,36 @@ func (m *Module) Init(app *gesso.App) error {
 		return errors.New("{{.Pkg}} keeps its records in the app's Config.Database, and there is none")
 	}
 	m.app, m.repo = app, newRepository(app.DB())
+{{- if .Files}}
+	files, err := app.Storage()
+	if err != nil {
+		return err
+	}
+	m.files = files
+{{- end}}
 	app.Migrations(migrations)
 	app.Constraints(map[string]string{ {{- range .ConstraintEntries}}"{{index . 0}}": "{{index . 1}}", {{end -}} })
+{{- if .Auth}}
+	m.users = auth.NewSQL(app.DB(), app.Dialect())
+	m.users.Table = "{{.Table}}"
+	m.auth = auth.New(auth.Options{Users: m.users})
+	app.Command("users", m.users.Command(os.Stdin))
+	return m.auth.Init(app)
+{{- else}}
 	return nil
+{{- end}}
 }
+{{- if .Auth}}
+
+// Users are the users who sign in, to make one from code: a seed, a test.
+func (m *Module) Users() *auth.SQL { return m.users }
+
+// Authenticate finds who sends a request from its bearer token: the module is
+// the app's sign-in.
+func (m *Module) Authenticate(r *http.Request) (gesso.Identity, bool, error) {
+	return m.auth.Authenticate(r)
+}
+{{- end}}
 
 func (m *Module) Routes(r *gesso.Router) {
 {{- if .Write}}
@@ -66,6 +154,19 @@ func (m *Module) Routes(r *gesso.Router) {
 {{- end}}
 {{- if .Read}}
 	read := gesso.Guards(guards.{{.Read}})
+{{- end}}
+{{- if .Auth}}
+	signedIn := gesso.Guards(gesso.RequireIdentity)
+	m.auth.SignInRoutes(r)
+	Me.Handle(r, m.me, signedIn)
+{{- if .SelfFields}}
+	UpdateMe.Handle(r, m.updateMe, signedIn)
+{{- end}}
+{{- range .SelfFiles}}
+	UploadMy{{.Go}}.Handle(r, m.uploadMy{{.Go}}, signedIn, gesso.MaxBodyBytes({{.BodyLimit}}))
+	DeleteMy{{.Go}}.Handle(r, m.deleteMy{{.Go}}, signedIn)
+{{- end}}
+	Set{{.Entity}}Password.Handle(r, m.setPassword{{if .Write}}, write{{end}})
 {{- end}}
 	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201){{if .Write}}, write{{end}})
 	Get{{.Entity}}.Handle(r, m.get{{if .Read}}, read{{end}})
@@ -75,6 +176,11 @@ func (m *Module) Routes(r *gesso.Router) {
 	Delete{{.Entity}}.Handle(r, m.delete{{if .Write}}, write{{end}})
 {{- if .Sortable}}
 	Reorder{{.Plural}}.Handle(r, m.reorder{{if .Write}}, write{{end}})
+{{- end}}
+{{- range .Files}}
+	Upload{{$m.Entity}}{{.Go}}.Handle(r, m.upload{{.Go}}{{if $m.Write}}, write{{end}}, gesso.MaxBodyBytes({{.BodyLimit}}))
+	Get{{$m.Entity}}{{.Go}}.Handle(r, m.get{{.Go}}{{if and $m.Read (not .Public)}}, read{{end}})
+	Delete{{$m.Entity}}{{.Go}}.Handle(r, m.delete{{.Go}}{{if $m.Write}}, write{{end}})
 {{- end}}
 {{- if .Hooks.Routes}}
 	m.routes(r)
@@ -92,27 +198,86 @@ func (m *Module) access(ctx context.Context) models.{{.Entity}}Access {
 func (m *Module) open(ctx context.Context) bool { return gesso.Allowed(ctx, guards.{{.Gate.GateGuard}}) }
 {{- end}}
 
-func (m *Module) create(ctx context.Context, in models.ReqCreate{{.Entity}}) (models.Res{{.Entity}}, error) {
+func (m *Module) create(ctx context.Context, in models.{{.CreateIn}}) (models.Res{{.Entity}}, error) {
+{{- if .Auth}}
+	data := &in.ReqCreate{{.Entity}}
+{{- else}}
+	data := &in
+{{- end}}
 {{- if .Guarded}}
 	a := m.access(ctx)
-	if in.Forbidden(a) {
+	if data.Forbidden(a) {
 		return models.Res{{.Entity}}{}, gesso.ErrForbidden
 	}
 {{- end}}
-{{- if .Defaults}}
-	m.defaults(ctx, &in)
+{{- if .Transformed}}
+	if err := m.transform(ctx, data); err != nil {
+		return models.Res{{.Entity}}{}, err
+	}
 {{- end}}
-	e := in.Record()
+{{- if .Defaults}}
+	m.defaults(ctx, data)
+{{- end}}
+	e := data.Record()
 {{- if .Hooks.BeforeCreate}}
 	if err := m.BeforeCreate(ctx, &e); err != nil {
 		return models.Res{{.Entity}}{}, err
 	}
 {{- end}}
+{{- if .Auth}}
+	hash, err := m.users.Hash(in.Password)
+	if err != nil {
+		return models.Res{{.Entity}}{}, err
+	}
+	e, err = m.repo.insert(ctx, e, hash, time.Now().UnixMilli())
+	if err != nil {
+		return models.Res{{.Entity}}{}, err
+	}
+	if len(in.Roles) > 0 {
+		if err := m.users.SetRoles(ctx, e.{{.Key.Go}}, in.Roles...); err != nil {
+			return models.Res{{.Entity}}{}, err
+		}
+	}
+	return e.Response({{.RespArgs}}), nil
+{{- else}}
 	e, err := m.repo.insert(ctx, e)
-	return e.Response({{if .Guarded}}a{{end}}), err
+	return e.Response({{.RespArgs}}), err
+{{- end}}
+}
+{{- if .Transformed}}
+
+// transform formats what was checked — {{range $i, $f := .Transformed}}{{if $i}}, {{end}}{{$f.JSON}}{{end}} — and checks it again.
+func (m *Module) transform(ctx context.Context, in *models.ReqCreate{{.Entity}}) error {
+{{- range .Transformed}}
+{{- if or .Guard .Default}}
+	if in.{{.Go}}.Set && !in.{{.Go}}.Null {
+		in.{{.Go}}.Value = {{.TransformExpr (printf "in.%s.Value" .Go)}}
+	}
+{{- else}}
+	in.{{.Go}} = {{.TransformExpr (printf "in.%s" .Go)}}
+{{- end}}
+{{- end}}
+	if fields := validate.Struct(ctx, *in); fields != nil {
+		return gesso.ErrInvalidInput.WithFields(fields...)
+	}
+	return nil
 }
 
-{{if .Defaults -}}
+// transformPatch is transform for what a patch sets.
+func (m *Module) transformPatch(ctx context.Context, in *models.ReqPatch{{.Entity}}) error {
+{{- range .Transformed}}
+	if in.{{.Go}}.Set && !in.{{.Go}}.Null {
+		in.{{.Go}}.Value = {{.TransformExpr (printf "in.%s.Value" .Go)}}
+	}
+{{- end}}
+	if fields := validate.Struct(ctx, *in); fields != nil {
+		return gesso.ErrInvalidInput.WithFields(fields...)
+	}
+	return nil
+}
+{{- end}}
+{{- if .Defaults}}
+
 // defaults fills what a create or a PUT left out with the model's defaults.
 func (m *Module) defaults(ctx context.Context, in *models.ReqCreate{{.Entity}}) {
 {{- range .Defaults}}
@@ -130,11 +295,14 @@ func (m *Module) defaults(ctx context.Context, in *models.ReqCreate{{.Entity}}) 
 	}
 {{- end}}
 }
+{{- end}}
 
-{{end -}}
 func (m *Module) get(ctx context.Context, in models.Req{{.Entity}}Key) (models.Res{{.Entity}}, error) {
+{{- if .Guarded}}
+	a := m.access(ctx)
+{{- end}}
 	e, err := m.repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
-	return e.Response({{if .Guarded}}m.access(ctx){{end}}), err
+	return e.Response({{.RespArgs}}), err
 }
 
 func (m *Module) list(ctx context.Context, in models.ReqList{{.Plural}}) (gesso.Page[models.{{.ListItem}}], error) {
@@ -144,7 +312,7 @@ func (m *Module) list(ctx context.Context, in models.ReqList{{.Plural}}) (gesso.
 {{- end}}
 	out := gesso.Page[models.{{.ListItem}}]{Items: make([]models.{{.ListItem}}, 0, len(page.Items)), Next: page.Next}
 	for _, e := range page.Items {
-		out.Items = append(out.Items, e.{{if .Listable}}Item{{else}}Response{{end}}({{if .Guarded}}a{{end}}))
+		out.Items = append(out.Items, e.{{if .Listable}}Item{{else}}Response{{end}}({{.RespArgs}}))
 	}
 	return out, err
 }
@@ -154,6 +322,11 @@ func (m *Module) update(ctx context.Context, in models.ReqUpdate{{.Entity}}) (mo
 	a := m.access(ctx)
 	if in.Forbidden(a) {
 		return models.Res{{.Entity}}{}, gesso.ErrForbidden
+	}
+{{- end}}
+{{- if .Transformed}}
+	if err := m.transform(ctx, &in.ReqCreate{{.Entity}}); err != nil {
+		return models.Res{{.Entity}}{}, err
 	}
 {{- end}}
 {{- if .Defaults}}
@@ -172,10 +345,13 @@ func (m *Module) patch(ctx context.Context, in models.ReqPatch{{.Entity}}) (mode
 	if in.Forbidden(a) {
 		return models.Res{{.Entity}}{}, gesso.ErrForbidden
 	}
-	return m.write(ctx, in, a)
-{{- else}}
-	return m.write(ctx, in)
 {{- end}}
+{{- if .Transformed}}
+	if err := m.transformPatch(ctx, &in); err != nil {
+		return models.Res{{.Entity}}{}, err
+	}
+{{- end}}
+	return m.write(ctx, in{{if .Guarded}}, a{{end}})
 }
 
 func (m *Module) write(ctx context.Context, in models.ReqPatch{{.Entity}}{{if .Guarded}}, a models.{{.Entity}}Access{{end}}) (models.Res{{.Entity}}, error) {
@@ -193,7 +369,7 @@ func (m *Module) write(ctx context.Context, in models.ReqPatch{{.Entity}}{{if .G
 		}
 		return repo.save(ctx, e)
 	})
-	return e.Response({{if .Guarded}}a{{end}}), err
+	return e.Response({{.RespArgs}}), err
 {{- else}}
 	id, err := m.repo.idOf(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
 	if err != nil {
@@ -203,20 +379,30 @@ func (m *Module) write(ctx context.Context, in models.ReqPatch{{.Entity}}{{if .G
 		return models.Res{{.Entity}}{}, err
 	}
 	e, err := m.repo.byID(ctx, id)
-	return e.Response({{if .Guarded}}a{{end}}), err
+	return e.Response({{.RespArgs}}), err
 {{- end}}
 }
 
 func (m *Module) delete(ctx context.Context, in models.Req{{.Entity}}Key) (gesso.Empty, error) {
-{{- if .Hooks.BeforeDelete}}
+{{- if or .Hooks.BeforeDelete .Files}}
 	e, err := m.repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
 	if err != nil {
 		return gesso.Empty{}, err
 	}
+{{- if .Hooks.BeforeDelete}}
 	if err := m.BeforeDelete(ctx, e); err != nil {
 		return gesso.Empty{}, err
 	}
-	return gesso.Empty{}, m.repo.delete(ctx, e.ID)
+{{- end}}
+	if err := m.repo.delete(ctx, e.ID); err != nil {
+		return gesso.Empty{}, err
+	}
+{{- range .Files}}
+	if e.{{.Go}} != "" {
+		_ = m.files.Delete(ctx, e.{{.Go}})
+	}
+{{- end}}
+	return gesso.Empty{}, nil
 {{- else}}
 	id, err := m.repo.idOf(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
 	if err != nil {
@@ -231,5 +417,224 @@ func (m *Module) reorder(ctx context.Context, in models.ReqReorder{{.Plural}}) (
 	return gesso.Empty{}, db.InTx(ctx, m.app.DB(), func(tx db.DB) error {
 		return newRepository(tx).reorder(ctx, in.Order{{if .Gate}}, m.open(ctx){{end}})
 	})
+}
+{{- end}}
+{{- range .Files}}
+
+func (m *Module) upload{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}{{.Go}}) (models.Res{{$m.Entity}}, error) {
+{{- if $m.Guarded}}
+	a := m.access(ctx)
+{{- end}}
+{{- if .Guard}}
+	if !a.{{.Guard}} {
+		return models.Res{{$m.Entity}}{}, gesso.ErrForbidden
+	}
+{{- end}}
+	id, err := m.repo.idOf(ctx, in.Key{{if $m.Gate}}, m.open(ctx){{end}})
+	if err != nil {
+		return models.Res{{$m.Entity}}{}, err
+	}
+	e, err := m.store{{.Go}}(ctx, id, in.File)
+	return e.Response({{$m.RespArgs}}), err
+}
+
+// store{{.Go}} keeps f as the record's {{.JSON}}: the new file first, then the
+// record, then the old file goes.
+func (m *Module) store{{.Go}}(ctx context.Context, id int64, f *gesso.File) (models.{{$m.Entity}}, error) {
+	old, err := m.repo.byID(ctx, id)
+	if err != nil {
+		return old, err
+	}
+	src, err := f.Open()
+	if err != nil {
+		return old, err
+	}
+	defer src.Close()
+{{- if eq .File "image"}}
+	img, err := imaging.Process(src, imaging.Options{Width: {{.Width}}, Height: {{.Height}}, Fill: {{.Fill}}, Format: "{{.Format}}", Quality: {{.Quality}}})
+	if errors.Is(err, imaging.ErrNotImage) || errors.Is(err, imaging.ErrTooLarge) {
+		return old, gesso.ErrInvalidInput.WithFields(validate.FieldError{Field: "file", Code: "file_type", Message: err.Error()})
+	}
+	if err != nil {
+		return old, err
+	}
+	data, ext := img.Data, img.Ext
+{{- if $m.Hooks.ProcessOf .Go}}
+	if data, ext, err = m.Process{{.Go}}(ctx, data, ext); err != nil {
+		return old, err
+	}
+{{- end}}
+	key := "{{$m.Table}}/" + strconv.FormatInt(id, 10) + "/{{.JSON}}-" + rand.Text() + ext
+	if _, err := m.files.Put(ctx, key, bytes.NewReader(data)); err != nil {
+		return old, err
+	}
+{{- else}}
+	ext := ".bin"
+	if exts, _ := mime.ExtensionsByType(f.ContentType); len(exts) > 0 {
+		ext = exts[0]
+	}
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(src); err != nil {
+		return old, err
+	}
+	data := buf.Bytes()
+{{- if $m.Hooks.ProcessOf .Go}}
+	if data, ext, err = m.Process{{.Go}}(ctx, data, ext); err != nil {
+		return old, err
+	}
+{{- end}}
+	key := "{{$m.Table}}/" + strconv.FormatInt(id, 10) + "/{{.JSON}}-" + rand.Text() + ext
+	if _, err := m.files.Put(ctx, key, bytes.NewReader(data)); err != nil {
+		return old, err
+	}
+{{- end}}
+	if err := m.repo.set{{.Go}}(ctx, id, key); err != nil {
+		_ = m.files.Delete(ctx, key)
+		return old, err
+	}
+	if old.{{.Go}} != "" {
+		_ = m.files.Delete(ctx, old.{{.Go}})
+	}
+	old.{{.Go}} = key
+	return old, nil
+}
+
+func (m *Module) get{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}Key) (*gesso.Download, error) {
+{{- if .Guard}}
+	if !gesso.Allowed(ctx, guards.{{.Guard}}) {
+		return nil, gesso.ErrForbidden
+	}
+{{- end}}
+	e, err := m.repo.byKey(ctx, in.Key{{if $m.Gate}}, m.open(ctx){{end}})
+	if err != nil {
+		return nil, err
+	}
+	return m.serve(ctx, e.{{.Go}}, {{if eq .File "image"}}true{{else}}false{{end}})
+}
+
+func (m *Module) delete{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}Key) (gesso.Empty, error) {
+{{- if .Guard}}
+	if !gesso.Allowed(ctx, guards.{{.Guard}}) {
+		return gesso.Empty{}, gesso.ErrForbidden
+	}
+{{- end}}
+	e, err := m.repo.byKey(ctx, in.Key{{if $m.Gate}}, m.open(ctx){{end}})
+	if err != nil {
+		return gesso.Empty{}, err
+	}
+	return gesso.Empty{}, m.drop{{.Go}}(ctx, e)
+}
+
+func (m *Module) drop{{.Go}}(ctx context.Context, e models.{{$m.Entity}}) error {
+	if e.{{.Go}} == "" {
+		return gesso.ErrNotFound
+	}
+	if err := m.repo.set{{.Go}}(ctx, e.ID, ""); err != nil {
+		return err
+	}
+	return m.files.Delete(ctx, e.{{.Go}})
+}
+{{- end}}
+{{- if .Files}}
+
+// serve answers the file stored under key: an image shown, any other file
+// downloaded, never run as a page.
+func (m *Module) serve(ctx context.Context, key string, image bool) (*gesso.Download, error) {
+	if key == "" {
+		return nil, gesso.ErrNotFound
+	}
+	body, obj, err := m.files.Open(ctx, key)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, gesso.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	d := &gesso.Download{Body: body, Size: obj.Size, ModTime: obj.ModTime, Inline: image}
+	switch ext := path.Ext(key); {
+	case ext == ".jpg":
+		d.ContentType = "image/jpeg"
+	case ext == ".png":
+		d.ContentType = "image/png"
+	default:
+		d.ContentType = mime.TypeByExtension(path.Ext(key))
+		d.Filename = path.Base(key)
+	}
+	return d, nil
+}
+{{- end}}
+{{- if .Auth}}
+
+// me is who signs in, as the {{.Table}} module answers them, with their roles.
+func (m *Module) me(ctx context.Context, _ gesso.Empty) (models.ResMe, error) {
+{{- if .Guarded}}
+	a := m.access(ctx)
+{{- end}}
+	e, err := m.self(ctx)
+	if err != nil {
+		return models.ResMe{}, err
+	}
+	id, _ := gesso.IdentityFrom(ctx)
+	roles := id.Roles
+	if roles == nil {
+		roles = []string{}
+	}
+	return models.ResMe{Res{{.Entity}}: e.Response({{.RespArgs}}), Roles: roles}, nil
+}
+
+// self is the signed-in user's record.
+func (m *Module) self(ctx context.Context) (models.{{.Entity}}, error) {
+	id, _ := gesso.IdentityFrom(ctx)
+	n, err := strconv.ParseInt(id.Subject, 10, 64)
+	if err != nil {
+		return models.{{.Entity}}{}, gesso.ErrInvalidToken
+	}
+	return m.repo.byID(ctx, n)
+}
+{{- if .SelfFields}}
+
+// updateMe writes what a user may change on themselves: {{range $i, $f := .SelfFields}}{{if $i}}, {{end}}{{$f.JSON}}{{end}}.
+func (m *Module) updateMe(ctx context.Context, in models.ReqPatchMe) (models.ResMe, error) {
+	e, err := m.self(ctx)
+	if err != nil {
+		return models.ResMe{}, err
+	}
+	p := in.Patch(e.{{.Key.Go}})
+{{- if .Transformed}}
+	if err := m.transformPatch(ctx, &p); err != nil {
+		return models.ResMe{}, err
+	}
+{{- end}}
+	if _, err := m.write(ctx, p{{if .Guarded}}, m.access(ctx){{end}}); err != nil {
+		return models.ResMe{}, err
+	}
+	return m.me(ctx, gesso.Empty{})
+}
+{{- end}}
+{{- range .SelfFiles}}
+
+func (m *Module) uploadMy{{.Go}}(ctx context.Context, in models.ReqMy{{.Go}}) (models.ResMe, error) {
+	e, err := m.self(ctx)
+	if err != nil {
+		return models.ResMe{}, err
+	}
+	if _, err := m.store{{.Go}}(ctx, e.ID, in.File); err != nil {
+		return models.ResMe{}, err
+	}
+	return m.me(ctx, gesso.Empty{})
+}
+
+func (m *Module) deleteMy{{.Go}}(ctx context.Context, _ gesso.Empty) (gesso.Empty, error) {
+	e, err := m.self(ctx)
+	if err != nil {
+		return gesso.Empty{}, err
+	}
+	return gesso.Empty{}, m.drop{{.Go}}(ctx, e)
+}
+{{- end}}
+
+// setPassword sets a user's password, as an administrator does.
+func (m *Module) setPassword(ctx context.Context, in models.Req{{.Entity}}Password) (gesso.Empty, error) {
+	return gesso.Empty{}, m.users.SetPassword(ctx, in.Key, in.Password)
 }
 {{- end}}

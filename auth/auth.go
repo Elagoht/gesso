@@ -179,10 +179,17 @@ func (m *Module) Authenticate(r *http.Request) (gesso.Identity, bool, error) {
 // Routes registers the endpoints; ChangePassword only when the Users are a
 // PasswordChanger.
 func (m *Module) Routes(r *gesso.Router) {
+	m.SignInRoutes(r)
+	Me.Handle(r, m.me, gesso.Guards(gesso.RequireIdentity))
+}
+
+// SignInRoutes registers Login, Logout and ChangePassword but not Me: for a
+// module of the app's own — a //gesso:auth model's — that answers /auth/me
+// with its users' fields.
+func (m *Module) SignInRoutes(r *gesso.Router) {
 	signedIn := gesso.Guards(gesso.RequireIdentity)
 	Login.Handle(r, m.login)
 	Logout.Handle(r, m.logout, signedIn)
-	Me.Handle(r, m.me, signedIn)
 	if pc, ok := m.opts.Users.(PasswordChanger); ok {
 		ChangePassword.Handle(r, func(ctx context.Context, in ReqChangePassword) (ResSession, error) {
 			return m.changePassword(ctx, pc, in)

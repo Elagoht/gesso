@@ -52,6 +52,10 @@ type SQL struct {
 	Hasher password.Hasher
 	// Clock tells created_at. Nil: the system clock.
 	Clock clock.Clock
+	// Table is where the users are. Empty: gesso_users. Another is the app's
+	// own — a //gesso:auth model's, with columns of its own beside these —
+	// whose migrations make it.
+	Table string
 
 	dummyOnce sync.Once
 	dummy     string // a hash nobody's password matches, for a missing user
@@ -119,7 +123,7 @@ func (s *SQL) scan(r *sql.Row) (row, error) {
 }
 
 func (s *SQL) byUsername(ctx context.Context, q db.DB, username string) (row, error) {
-	return s.scan(q.QueryRowContext(ctx, "SELECT "+userColumns+" FROM gesso_users WHERE username = "+s.ph(1), username))
+	return s.scan(q.QueryRowContext(ctx, "SELECT "+userColumns+" FROM "+s.table()+" WHERE username = "+s.ph(1), username))
 }
 
 func (s *SQL) byID(ctx context.Context, id string) (row, error) {
@@ -127,7 +131,7 @@ func (s *SQL) byID(ctx context.Context, id string) (row, error) {
 	if err != nil {
 		return row{}, ErrNoUser
 	}
-	return s.scan(s.db.QueryRowContext(ctx, "SELECT "+userColumns+" FROM gesso_users WHERE id = "+s.ph(1), n))
+	return s.scan(s.db.QueryRowContext(ctx, "SELECT "+userColumns+" FROM "+s.table()+" WHERE id = "+s.ph(1), n))
 }
 
 // Authenticate verifies password against the user's hash; for a username
@@ -152,7 +156,7 @@ func (s *SQL) Authenticate(ctx context.Context, username, pass string) (User, er
 	if s.hasher().NeedsRehash(r.hash) {
 		// Best effort: the sign-in stands if the new hash is not written.
 		if h, err := s.hasher().Hash(pass); err == nil {
-			_, _ = s.db.ExecContext(ctx, "UPDATE gesso_users SET password_hash = "+s.ph(1)+" WHERE id = "+s.ph(2)+" AND password_hash = "+s.ph(3), h, r.n, r.hash)
+			_, _ = s.db.ExecContext(ctx, "UPDATE "+s.table()+" SET password_hash = "+s.ph(1)+" WHERE id = "+s.ph(2)+" AND password_hash = "+s.ph(3), h, r.n, r.hash)
 		}
 	}
 	return r.User, nil
@@ -179,7 +183,7 @@ func (s *SQL) Create(ctx context.Context, username, pass string, roles ...string
 	}
 	u := User{Username: username, Roles: slices.Clone(roles)}
 	joined, created := strings.Join(roles, ","), s.now().UnixMilli()
-	insert := "INSERT INTO gesso_users (username, password_hash, roles, created_at) VALUES (" + s.ph(1) + ", " + s.ph(2) + ", " + s.ph(3) + ", " + s.ph(4) + ")"
+	insert := "INSERT INTO " + s.table() + " (username, password_hash, roles, created_at) VALUES (" + s.ph(1) + ", " + s.ph(2) + ", " + s.ph(3) + ", " + s.ph(4) + ")"
 	var id int64
 	if s.dialect == migrate.MySQL {
 		var res sql.Result
@@ -235,7 +239,7 @@ func (s *SQL) setPassword(ctx context.Context, id int64, pass string) error {
 	if err != nil {
 		return err
 	}
-	return s.one(s.db.ExecContext(ctx, "UPDATE gesso_users SET password_hash = "+s.ph(1)+" WHERE id = "+s.ph(2), hash, id))
+	return s.one(s.db.ExecContext(ctx, "UPDATE "+s.table()+" SET password_hash = "+s.ph(1)+" WHERE id = "+s.ph(2), hash, id))
 }
 
 // SetRoles replaces the roles of username. Their tokens are revoked: a token
@@ -248,7 +252,7 @@ func (s *SQL) SetRoles(ctx context.Context, username string, roles ...string) er
 	if err != nil {
 		return err
 	}
-	if err := s.one(s.db.ExecContext(ctx, "UPDATE gesso_users SET roles = "+s.ph(1)+" WHERE id = "+s.ph(2), strings.Join(roles, ","), r.n)); err != nil {
+	if err := s.one(s.db.ExecContext(ctx, "UPDATE "+s.table()+" SET roles = "+s.ph(1)+" WHERE id = "+s.ph(2), strings.Join(roles, ","), r.n)); err != nil {
 		return err
 	}
 	return s.revoke(ctx, r.ID)
@@ -260,7 +264,7 @@ func (s *SQL) Delete(ctx context.Context, username string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.one(s.db.ExecContext(ctx, "DELETE FROM gesso_users WHERE id = "+s.ph(1), r.n)); err != nil {
+	if err := s.one(s.db.ExecContext(ctx, "DELETE FROM "+s.table()+" WHERE id = "+s.ph(1), r.n)); err != nil {
 		return err
 	}
 	return s.revoke(ctx, r.ID)
@@ -268,7 +272,7 @@ func (s *SQL) Delete(ctx context.Context, username string) error {
 
 // List returns every user, by username.
 func (s *SQL) List(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, username, roles FROM gesso_users ORDER BY username")
+	rows, err := s.db.QueryContext(ctx, "SELECT id, username, roles FROM "+s.table()+" ORDER BY username")
 	if err != nil {
 		return nil, err
 	}
@@ -301,6 +305,17 @@ func (s *SQL) tokensExist(ctx context.Context) bool {
 	var n int
 	return s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM gesso_tokens WHERE 1 = 0").Scan(&n) == nil
 }
+
+func (s *SQL) table() string {
+	if s.Table == "" {
+		return "gesso_users"
+	}
+	return s.Table
+}
+
+// Hash is pass as the users' table keeps it, refusing a password shorter than
+// MinPassword.
+func (s *SQL) Hash(pass string) (string, error) { return s.hash(pass) }
 
 func (s *SQL) hash(pass string) (string, error) {
 	if len([]rune(pass)) < MinPassword {

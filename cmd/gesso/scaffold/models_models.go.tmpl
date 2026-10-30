@@ -13,6 +13,9 @@ import (
 {{- if .Sortable}}
 //gesso:sortable
 {{- end}}
+{{- if .Auth}}
+//gesso:auth
+{{- end}}
 {{- if .Write}}
 //gesso:write {{.Write}}
 {{- end}}

@@ -89,7 +89,7 @@ gesso add module events -field title:string:max=200 -field slug:string:key,slug 
                        # internal/events from its model, registered in register.go
 gesso add module search -empty   # no table, for endpoints that are not CRUD
 gesso add endpoint events/stats -method GET -res total:int
-gesso add auth         # sign-in from gesso/auth: a users table, a signedIn guard
+gesso add auth         # sign-in: the users module, a model of your own
 gesso add guard admin  # internal/guards/admin.go; -guard admin on add module
 gesso migrate new add_event_city -dir internal/events/migrations
 gesso gen              # models.go and queries.sql → *.gen.go and migrations; gen -check in CI
