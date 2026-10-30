@@ -64,9 +64,8 @@ The struct's doc comment holds its directives, after `//gesso:table <table>`:
 | `//gesso:sortable` | the records are in the client's order (`-sortable`) |
 
 A sortable model keeps a position column the client never sees. A new record
-goes last; `PUT /<table>/order` with `{"keys": [...]}` puts the records the
-caller can see in that order, and those it cannot see keep their place. A
-string key may then not be `order`.
+goes last; `PATCH /<table>` with `{"order": [...]}`, the keys, puts the records
+the caller can see in that order, and those it cannot see keep their place.
 
 The list is a page of 20 (`?take=`, at most 100, `?after=` the cursor). With
 `orderable` fields it takes `?order=<field>` or `?order=-<field>`, and the

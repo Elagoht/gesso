@@ -34,13 +34,13 @@ var (
 	Patch{{.Entity}} = gesso.Endpoint[models.ReqPatch{{.Entity}}, models.Res{{.Entity}}]{Method: "PATCH", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }"}
 	Delete{{.Entity}} = gesso.Endpoint[models.Req{{.Entity}}Key, gesso.Empty]{Method: "DELETE", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }"}
 {{- if .Sortable}}
-	Reorder{{.Plural}} = gesso.Endpoint[models.ReqReorder{{.Plural}}, gesso.Empty]{Method: "PUT", Pattern: "/{{.Table}}/order"}
+	Reorder{{.Plural}} = gesso.Endpoint[models.ReqReorder{{.Plural}}, gesso.Empty]{Method: "PATCH", Pattern: "/{{.Table}}"}
 {{- end}}
 )
 {{- if .Sortable}}
 
 // ErrReorderKeys answers a reorder that does not list every record once.
-var ErrReorderKeys = gesso.Unprocessable("reorder_keys", "list the key of every record once")
+var ErrReorderKeys = gesso.Unprocessable("reorder_keys", "order lists the key of every record once")
 {{- end}}
 
 type Module struct {
@@ -229,7 +229,7 @@ func (m *Module) delete(ctx context.Context, in models.Req{{.Entity}}Key) (gesso
 
 func (m *Module) reorder(ctx context.Context, in models.ReqReorder{{.Plural}}) (gesso.Empty, error) {
 	return gesso.Empty{}, db.InTx(ctx, m.app.DB(), func(tx db.DB) error {
-		return newRepository(tx).reorder(ctx, in.Keys{{if .Gate}}, m.open(ctx){{end}})
+		return newRepository(tx).reorder(ctx, in.Order{{if .Gate}}, m.open(ctx){{end}})
 	})
 }
 {{- end}}

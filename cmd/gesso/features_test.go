@@ -174,7 +174,9 @@ func TestEvents(t *testing.T) {
 	bob.want("POST", "/events", ` + "`" + `{"title":"Bad","slug":"bad","status":"gone"}` + "`" + `, 400, "oneof")
 	bob.want("POST", "/events", ` + "`" + `{"title":"Walk","slug":"walk","day":"2026-11-03","public":true,"order":5,"host":"x","price":9.5,"startsAt":"2026-11-03T10:00:00Z"}` + "`" + `, 201)
 	bob.want("POST", "/events", ` + "`" + `{"title":"Again","slug":"jam","day":"2026-11-01"}` + "`" + `, 409, ` + "`" + `"field":"slug"` + "`" + `)
-	bob.want("POST", "/events", ` + "`" + `{"title":"Order","slug":"order","day":"2026-11-01"}` + "`" + `, 400)
+	bob.want("POST", "/events", ` + "`" + `{"title":"Order","slug":"order","day":"2026-11-01","public":true}` + "`" + `, 201)
+	bob.want("PUT", "/events/order", ` + "`" + `{"title":"Order 2","slug":"order","day":"2026-11-01","public":true}` + "`" + `, 200, "Order 2")
+	bob.want("DELETE", "/events/order", "", 204)
 
 	// The gate: Talk is not public, and only an admin sees it.
 	if got, _ := anyone.list(""); !slices.Equal(got, []string{"jam", "walk"}) {
@@ -211,12 +213,12 @@ func TestEvents(t *testing.T) {
 
 	// The client's order: bob moves what he sees, and Talk, which he does not,
 	// keeps its place.
-	bob.want("PUT", "/events/order", ` + "`" + `{"keys":["walk","jam"]}` + "`" + `, 204)
+	bob.want("PATCH", "/events", ` + "`" + `{"order":["walk","jam"]}` + "`" + `, 204)
 	if got, _ := ada.list(""); !slices.Equal(got, []string{"walk", "talk", "jam"}) {
 		t.Fatalf("after bob's reorder: %v", got)
 	}
-	bob.want("PUT", "/events/order", ` + "`" + `{"keys":["walk"]}` + "`" + `, 422)
-	ada.want("PUT", "/events/order", ` + "`" + `{"keys":["jam","talk","walk"]}` + "`" + `, 204)
+	bob.want("PATCH", "/events", ` + "`" + `{"order":["walk"]}` + "`" + `, 422)
+	ada.want("PATCH", "/events", ` + "`" + `{"order":["jam","talk","walk"]}` + "`" + `, 204)
 	if got, _ := anyone.list(""); !slices.Equal(got, []string{"jam", "walk"}) {
 		t.Fatalf("after ada's reorder: %v", got)
 	}

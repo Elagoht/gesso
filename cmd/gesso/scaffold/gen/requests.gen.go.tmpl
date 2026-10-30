@@ -45,7 +45,7 @@ type ReqList{{.Plural}} struct {
 {{- if .Sortable}}
 
 type ReqReorder{{.Plural}} struct {
-	Keys []{{.KeyGo}} `json:"keys" validate:"required"`
+	Order []{{.KeyGo}} `json:"order" validate:"required"`
 }
 {{- end}}
 {{- if .Guarded}}

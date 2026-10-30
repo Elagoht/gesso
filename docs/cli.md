@@ -13,7 +13,7 @@ gesso help                # every command; gesso help <command> for one
 | `gesso build` | the binary to deploy: `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"`, `-os linux -arch amd64` for another machine, `-i` to write a Dockerfile and a systemd unit beside it |
 | `gesso routes` | every endpoint: method, path, module, guards, its Req and Res; then the app's commands |
 | `gesso inspect` | the same, and each Req's and Res's fields, as JSON — for an editor |
-| `gesso check` | `ctx` rules, stale generated files (errors), writes with no guard (warnings); `-json` for an editor; exits 1 on an error |
+| `gesso check` | `ctx` rules, stale generated files (errors), writes with no guard and shadowed routes (warnings); `-json` for an editor; exits 1 on an error |
 | `gesso gen [dirs]` | the code models and `queries.sql` describe, and a migration for a model's change; `-check` reports stale files, `-drop` lets a field's column go, `-no-migration` when you wrote the migration |
 | `gesso migrate new <name>` | an empty migration pair |
 | `gesso add module <name>` | a CRUD module from its model, registered in `register.go`: `-field`, `-fields`, `-guard`, `-read`, `-sortable`, `-empty`, `-entity`, `-dialect`; see [Getting started](getting-started.md) |

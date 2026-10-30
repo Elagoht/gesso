@@ -342,11 +342,6 @@ func (m *model) check() error {
 		}
 		m.Listable = m.Listable || f.Listable
 	}
-	if k := m.Key; m.Sortable && k != nil && k.Base == "string" {
-		// PUT /<table>/order is the reorder.
-		k.Rule += ",ne=order"
-		k.Patch += ",ne=order"
-	}
 	return nil
 }
 

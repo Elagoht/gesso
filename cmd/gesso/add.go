@@ -75,7 +75,7 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	entity := fs.String("entity", "", "the entity's Go name (default: the module name, singular, capitalised)")
 	guard := fs.String("guard", "", "a guard from internal/guards on create, update, patch, delete and reorder: //gesso:write")
 	read := fs.String("read", "", "a guard from internal/guards on get and list: //gesso:read")
-	sortable := fs.Bool("sortable", false, "kept in the client's order, with PUT /<name>/order: //gesso:sortable")
+	sortable := fs.Bool("sortable", false, "kept in the client's order, with PATCH /<name> {\"order\": [...]}: //gesso:sortable")
 	empty := fs.Bool("empty", false, "a module with no table, for endpoints of your own")
 	pos, err := parseFlags(fs, args)
 	if err != nil {

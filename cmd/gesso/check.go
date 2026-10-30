@@ -35,9 +35,13 @@ const checkHelp = `Rules:
               method whose first parameter is not ctx            (error)
   stale-gen   a generated file models or queries.sql would change (error)
   open-write  a POST, PUT, PATCH or DELETE with no guard           (warning)
+  shadow      a route whose fixed segment takes a path another route
+              of the method has a {parameter} for: /docs/new hides
+              the record whose key is "new" from /docs/{slug}      (warning)
 
-It exits 1 when it finds an error; a warning is reported only. open-write needs
-the project to build and run (gesso-inspect), and is skipped when it does not.`
+It exits 1 when it finds an error; a warning is reported only. open-write and
+shadow need the project to build and run (gesso-inspect), and are skipped when
+it does not.`
 
 // report is one thing check found.
 type report struct {
@@ -111,6 +115,13 @@ func check(args []string, dir string, out io.Writer) (int, error) {
 			for _, r := range in.Routes {
 				if r.Method != "GET" && r.Method != "HEAD" && len(r.Guards) == 0 && r.Module != "auth.Module" {
 					reports = append(reports, report{"warning", "open-write", r.Method + " " + r.Pattern + " has no guard: anyone may call it"})
+				}
+			}
+			for _, r := range in.Routes {
+				for _, o := range in.Routes {
+					if r.Method == o.Method && shadows(r.Pattern, o.Pattern) {
+						reports = append(reports, report{"warning", "shadow", r.Method + " " + r.Pattern + " takes paths " + o.Pattern + " would match"})
+					}
 				}
 			}
 		}
@@ -201,4 +212,25 @@ func takesContextFirst(info *types.Info, fn *ast.FuncDecl) bool {
 	t := info.TypeOf(params[0].Type)
 	named, ok := t.(*types.Named)
 	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "context" && named.Obj().Name() == "Context"
+}
+
+// shadows reports whether pattern a, with a fixed segment where b has a
+// {parameter}, takes some of b's paths: /docs/new and /docs/{slug}.
+func shadows(a, b string) bool {
+	as, bs := strings.Split(a, "/"), strings.Split(b, "/")
+	if len(as) != len(bs) || a == b {
+		return false
+	}
+	fixedOverParam := false
+	for i := range as {
+		ap, bp := strings.HasPrefix(as[i], "{"), strings.HasPrefix(bs[i], "{")
+		switch {
+		case ap && bp, as[i] == bs[i]:
+		case !ap && bp:
+			fixedOverParam = true
+		default:
+			return false
+		}
+	}
+	return fixedOverParam
 }

@@ -3,6 +3,14 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## Unreleased
+
+- **The reorder is `PATCH /<table>` with `{"order": [keys]}`**, a change to the
+  collection, not `PUT /<table>/order`, which a record whose key is `order`
+  would have been shadowed by. A key may be `order` again.
+- **`gesso check` warns of a shadowed route** (`shadow`): a fixed segment where
+  another route of the method has a `{parameter}`.
+
 ## v0.14.0 — 2026-10-30
 
 - **`default=<value>`** on a model field: a create or a PUT that leaves the
