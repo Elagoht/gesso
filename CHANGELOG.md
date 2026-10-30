@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## Unreleased
+## v0.17.0 — 2026-10-30
 
 - **Sessions or JWTs, chosen when auth is added**: `gesso add auth -tokens
   session -ttl 720h`, or `-tokens jwt -access 15m -refresh 720h`; the model

@@ -1,6 +1,6 @@
 # gesso — design
 
-Status: **v0.16.0 released — the v1 surface sealed (§14)** (2026-10-30). §12 lists the phases.
+Status: **v0.17.0 released — the v1 surface sealed (§14)** (2026-10-30). §12 lists the phases.
 
 This is the document the implementation is written against. Where the code and this
 document disagree, one of them is a bug; decide which, and fix both.
