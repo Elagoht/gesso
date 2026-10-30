@@ -152,6 +152,7 @@ type App struct {
 	middleware    []Middleware  // Config.Middleware and App.Use
 	storageOnce   sync.Once
 	storageErr    error
+	uploadsOnce   sync.Once
 }
 
 // New builds an app, with its modules or with Register after. Every route

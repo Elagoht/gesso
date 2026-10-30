@@ -56,14 +56,7 @@ type ReqReorder{{.Plural}} struct {
 	Order []{{.KeyGo}} `json:"order" validate:"required"`
 }
 {{- end}}
-{{- if .Files}}
 
-// Req{{.Entity}}File names one of a record's files: {{range $i, $f := .Files}}{{if $i}}, {{end}}{{$f.JSON}}{{end}}.
-type Req{{.Entity}}File struct {
-	Key   {{.KeyGo}} `path:"{{.KeyPath}}"`
-	Field string `path:"field" validate:"oneof={{range $i, $f := .Files}}{{if $i}} {{end}}{{$f.JSON}}{{end}}"`
-}
-{{- end}}
 {{- range .Files}}
 {{- if .Routes}}
 

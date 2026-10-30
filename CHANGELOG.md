@@ -5,6 +5,14 @@ change.
 
 ## Unreleased
 
+- **No file route unless asked**: a file is served at `/uploads/<key>`, one
+  route for the app (`App.ServeUploads`, `App.UploadURL`), its random key the
+  URL; `/<module>/{key}/files/{field}` is gone. A field marked `routes` has
+  `GET`, `PUT` and `DELETE /<module>/{key}/<field>` behind its guards, and
+  `/uploads/` does not serve it (`gesso.PrivatePrefix`). gen refuses a guarded
+  file without `routes`, and a file of a `//gesso:read` model without `public`
+  or `routes`.
+
 - `gesso check` no longer warns of `POST /auth/refresh` as an open write: like
   login, it is open by design.
 

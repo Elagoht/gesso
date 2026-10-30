@@ -9,7 +9,11 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"mime"
+	"net/http"
 	"os"
+	"path"
+	"strings"
 
 	"github.com/Elagoht/gesso/migrate"
 	"github.com/Elagoht/gesso/storage"
@@ -159,6 +163,61 @@ func (a *App) Storage() (storage.Storage, error) {
 		a.OnShutdown(func(context.Context) error { return d.Close() })
 	})
 	return a.cfg.Storage, a.storageErr
+}
+
+// UploadsPath is where ServeUploads serves the stored files, under BasePath.
+const UploadsPath = "/uploads/"
+
+// PrivatePrefix begins the keys ServeUploads never serves: the files a route
+// of their own serves, behind its guards.
+const PrivatePrefix = "private/"
+
+// ServeUploads serves the files in App.Storage at /uploads/<key>, once however
+// often it is called: a module's public files, whose keys — random, and new
+// for each file — are what keeps them from being guessed. An image is shown,
+// any other file downloaded, never run as a page; a key under PrivatePrefix
+// is not found.
+func (a *App) ServeUploads() {
+	a.uploadsOnce.Do(func() {
+		a.register("GET "+a.basePath+UploadsPath+"{key...}", uploads{app: a})
+	})
+}
+
+// UploadURL is where ServeUploads serves key.
+func (a *App) UploadURL(key string) string { return a.basePath + UploadsPath + key }
+
+type uploads struct{ app *App }
+
+func (u uploads) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	files, err := u.app.Storage()
+	if err != nil {
+		u.app.errs.write(w, r, err)
+		return
+	}
+	if storage.ValidKey(key) != nil || strings.HasPrefix(key, PrivatePrefix) {
+		u.app.errs.write(w, r, ErrNotFound)
+		return
+	}
+	body, obj, err := files.Open(r.Context(), key)
+	if errors.Is(err, storage.ErrNotFound) {
+		u.app.errs.write(w, r, ErrNotFound)
+		return
+	}
+	if err != nil {
+		u.app.errs.write(w, r, err)
+		return
+	}
+	d := &Download{Body: body, Size: obj.Size, ModTime: obj.ModTime}
+	switch ext := path.Ext(key); ext {
+	case ".jpg", ".png":
+		d.ContentType, d.Inline = mime.TypeByExtension(ext), true
+	default:
+		d.ContentType, d.Filename = mime.TypeByExtension(ext), path.Base(key)
+	}
+	// A key names one file for ever: a new file is a new key.
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	d.write(w, r)
 }
 
 // BasePath is the prefix every route is under: "" or "/api".

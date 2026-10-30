@@ -11,7 +11,7 @@ import (
 {{- end}}
 	"embed"
 	"errors"
-{{- if .Files}}
+{{- if or .RoutedFiles (.FilesOfKind "file")}}
 	"mime"
 {{- end}}
 {{- if .Auth}}
@@ -20,7 +20,7 @@ import (
 {{- if .Auth}}
 	"os"
 {{- end}}
-{{- if .Files}}
+{{- if .RoutedFiles}}
 	"path"
 {{- end}}
 {{- if .Auth}}
@@ -75,11 +75,9 @@ var (
 {{- if .Sortable}}
 	Reorder{{.Plural}} = gesso.Endpoint[models.ReqReorder{{.Plural}}, gesso.Empty]{Method: "PATCH", Pattern: "/{{.Table}}"}
 {{- end}}
-{{- if .Files}}
-	Get{{.Entity}}File = gesso.Endpoint[models.Req{{.Entity}}File, *gesso.Download]{Method: "GET", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }/files/{field}"}
-{{- end}}
 {{- range .Files}}
 {{- if .Routes}}
+	Get{{$m.Entity}}{{.Go}} = gesso.Endpoint[models.Req{{$m.Entity}}Key, *gesso.Download]{Method: "GET", Pattern: "/{{$m.Table}}/{ {{- $m.KeyPath -}} }/{{.JSON}}"}
 	Upload{{$m.Entity}}{{.Go}} = gesso.Endpoint[models.Req{{$m.Entity}}{{.Go}}, models.Res{{$m.Entity}}]{Method: "PUT", Pattern: "/{{$m.Table}}/{ {{- $m.KeyPath -}} }/{{.JSON}}"}
 	Delete{{$m.Entity}}{{.Go}} = gesso.Endpoint[models.Req{{$m.Entity}}Key, gesso.Empty]{Method: "DELETE", Pattern: "/{{$m.Table}}/{ {{- $m.KeyPath -}} }/{{.JSON}}"}
 {{- end}}
@@ -129,6 +127,9 @@ func (m *Module) Init(app *gesso.App) error {
 		return err
 	}
 	m.files = files
+{{- if .PublicFiles}}
+	app.ServeUploads()
+{{- end}}
 {{- end}}
 	app.Migrations(migrations)
 	app.Constraints(map[string]string{ {{- range .ConstraintEntries}}"{{index . 0}}": "{{index . 1}}", {{end -}} })
@@ -195,12 +196,9 @@ func (m *Module) Routes(r *gesso.Router) {
 {{- if .Sortable}}
 	Reorder{{.Plural}}.Handle(r, m.reorder{{if .Write}}, write{{end}})
 {{- end}}
-{{- if .Files}}
-	// Each file's read guard is the handler's: one may be public.
-	Get{{.Entity}}File.Handle(r, m.getFile)
-{{- end}}
 {{- range .Files}}
 {{- if .Routes}}
+	Get{{$m.Entity}}{{.Go}}.Handle(r, m.get{{.Go}}{{if and $m.Read (not .Public)}}, read{{end}})
 	Upload{{$m.Entity}}{{.Go}}.Handle(r, m.upload{{.Go}}{{if $m.Write}}, write{{end}}, gesso.MaxBodyBytes({{.BodyLimit}}))
 	Delete{{$m.Entity}}{{.Go}}.Handle(r, m.delete{{.Go}}{{if $m.Write}}, write{{end}})
 {{- end}}
@@ -578,7 +576,7 @@ func (m *Module) keep{{.Go}}(ctx context.Context, f *gesso.File) (string, error)
 		return "", err
 	}
 {{- end}}
-	key := "{{$m.Table}}/{{.JSON}}-" + rand.Text() + ext
+	key := "{{if .Routes}}{{$m.PrivatePrefix}}{{end}}{{$m.Table}}/{{.JSON}}-" + rand.Text() + ext
 	if _, err := m.files.Put(ctx, key, bytes.NewReader(data)); err != nil {
 		return "", err
 	}
@@ -586,6 +584,19 @@ func (m *Module) keep{{.Go}}(ctx context.Context, f *gesso.File) (string, error)
 }
 
 {{- if .Routes}}
+
+func (m *Module) get{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}Key) (*gesso.Download, error) {
+{{- if .Guard}}
+	if err := guards.{{.Guard}}(gesso.Request(ctx)); err != nil {
+		return nil, err
+	}
+{{- end}}
+	e, err := m.repo.byKey(ctx, in.Key{{if $m.Gate}}, m.open(ctx){{end}})
+	if err != nil {
+		return nil, err
+	}
+	return m.serve(ctx, e.{{.Go}}, {{if eq .File "image"}}true{{else}}false{{end}})
+}
 
 func (m *Module) delete{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}Key) (gesso.Empty, error) {
 {{- if .Guard}}
@@ -671,34 +682,7 @@ func (r *repository) setFiles(ctx context.Context, e *models.{{.Entity}}, k file
 	return nil
 }
 
-// getFile answers one of the record's files, as the record's read guard, the
-// field's guard and the gate allow — or, for a public file, the gate alone.
-func (m *Module) getFile(ctx context.Context, in models.Req{{.Entity}}File) (*gesso.Download, error) {
-{{- if .FilesGuarded}}
-	r := gesso.Request(ctx)
-{{- end}}
-	switch in.Field {
-{{- range .Files}}
-	case "{{.JSON}}":
-{{- if and $m.Read (not .Public)}}
-		if err := guards.{{$m.Read}}(r); err != nil {
-			return nil, err
-		}
-{{- end}}
-{{- if .Guard}}
-		if err := guards.{{.Guard}}(r); err != nil {
-			return nil, err
-		}
-{{- end}}
-		e, err := m.repo.byKey(ctx, in.Key{{if $m.Gate}}, m.open(ctx){{end}})
-		if err != nil {
-			return nil, err
-		}
-		return m.serve(ctx, e.{{.Go}}, {{if eq .File "image"}}true{{else}}false{{end}})
-{{- end}}
-	}
-	return nil, gesso.ErrNotFound
-}
+{{- if .RoutedFiles}}
 
 // serve answers the file stored under key: an image shown, any other file
 // downloaded, never run as a page.
@@ -725,6 +709,7 @@ func (m *Module) serve(ctx context.Context, key string, image bool) (*gesso.Down
 	}
 	return d, nil
 }
+{{- end}}
 {{- end}}
 {{- if .Auth}}
 

@@ -147,16 +147,22 @@ written in one transaction; when anything fails nothing is written and the new
 files go, and only then does a file replaced go. In a form, a field sent empty
 is null: a PATCH clears a date or a number with it.
 
-A record answers each file as its URL — `/docs/kurulum/files/cover?v=…`, the
-base path in front, the `v` changing with the file — or leaves it out. One
-route serves a module's files, `GET /<module>/{key}/files/{field}`, under
-`//gesso:read` unless the field is `public`, its field guard and the gate. A
-field marked `routes` has two more of its own, for the file alone:
+A record answers each file as its URL, or leaves it out. A file is served
+at `/uploads/<key>` (the base path in front): one route for the whole app, no
+route for any module. The key is random and new for each file, so a URL is
+known only to whom a record shows it, and is cached for ever. Since a URL is
+all it takes, a file only some may fetch has a route of its own: mark it
+`routes`, and it is served — and replaced, and removed — at
 
 | | |
 | --- | --- |
+| `GET /<module>/{key}/<field>` | under `//gesso:read`, unless `public`, its field guard and the gate |
 | `PUT /<module>/{key}/<field>` | a multipart form whose `file` is the file, under `//gesso:write`; answers the record |
 | `DELETE /<module>/{key}/<field>` | removes it |
+
+and `/uploads/` never serves it. A guarded file needs `routes`; so does a file
+of a `//gesso:read` model, unless it says `public` — gen refuses the model
+otherwise, rather than put the file where its guard does not reach.
 
 A file's type is read from its first bytes, never from its name or what the
 client says: `accept` lists the types taken, space-separated, and `maxsize`

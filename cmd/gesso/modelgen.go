@@ -493,6 +493,19 @@ func (m *model) checkAuth() error {
 			return fmt.Errorf("%s.%s: a field users change on themselves has no guard", m.Entity, f.Go)
 		}
 	}
+	for _, f := range m.Files() {
+		// /uploads/ serves a file to whoever has its URL: one some may not
+		// see is served by a route of its own, behind the guards.
+		if f.Guard != "" && !f.Routes {
+			return fmt.Errorf("%s.%s: a guarded file is served by a route of its own: add routes", m.Entity, f.Go)
+		}
+		if m.Read != "" && !f.Routes && !f.Public {
+			return fmt.Errorf("%s.%s: %s is //gesso:read %s, and /uploads/ serves a file to whoever has its URL: say public, or routes for a route behind the guard", m.Entity, f.Go, m.Entity, unexported(m.Read))
+		}
+		if f.Public && f.Routes && m.Read == "" {
+			return fmt.Errorf("%s.%s: public is for a file of a //gesso:read model", m.Entity, f.Go)
+		}
+	}
 	if !m.Auth {
 		return nil
 	}

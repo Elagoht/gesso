@@ -438,11 +438,25 @@ func (m model) SelfFilesBodyLimit() int64 {
 	return n
 }
 
-// FilesGuarded reports whether fetching some file asks a guard: the model's
-// read guard for a file that is not public, or the field's own.
-func (m model) FilesGuarded() bool {
+// PrivatePrefix begins the keys of files with routes of their own, which
+// /uploads/ does not serve: gesso.PrivatePrefix.
+func (m model) PrivatePrefix() string { return "private/" }
+
+// PublicFiles reports whether a file is served at /uploads/: one without
+// routes of its own.
+func (m model) PublicFiles() bool {
 	for _, f := range m.Files() {
-		if f.Guard != "" || (m.Read != "" && !f.Public) {
+		if !f.Routes {
+			return true
+		}
+	}
+	return false
+}
+
+// RoutedFiles reports whether a file has routes of its own.
+func (m model) RoutedFiles() bool {
+	for _, f := range m.Files() {
+		if f.Routes {
 			return true
 		}
 	}

@@ -2,9 +2,10 @@
 package models
 
 import (
-{{- if .Files}}
+{{- if .RoutedFiles}}
 	"net/url"
 	"path"
+	"strings"
 {{- if not .Key}}
 	"strconv"
 {{- else if eq .Key.Base "int"}}
@@ -33,10 +34,10 @@ func (e {{.Entity}}) Response({{.RespParams}}) Res{{.Entity}} {
 {{- if .File}}
 {{- if .Guard}}
 	if a.{{.Guard}} {
-		r.{{.Go}} = e.fileURL(base, "{{.JSON}}", e.{{.Go}})
+		r.{{.Go}} = e.fileURL(base{{if $m.RoutedFiles}}, "{{.JSON}}"{{end}}, e.{{.Go}})
 	}
 {{- else}}
-	r.{{.Go}} = e.fileURL(base, "{{.JSON}}", e.{{.Go}})
+	r.{{.Go}} = e.fileURL(base{{if $m.RoutedFiles}}, "{{.JSON}}"{{end}}, e.{{.Go}})
 {{- end}}
 {{- else if .Guard}}
 	if a.{{.Guard}} {
@@ -65,10 +66,10 @@ func (e {{.Entity}}) Item({{.RespParams}}) Res{{.Entity}}Item {
 {{- if .File}}
 {{- if .Guard}}
 	if a.{{.Guard}} {
-		r.{{.Go}} = e.fileURL(base, "{{.JSON}}", e.{{.Go}})
+		r.{{.Go}} = e.fileURL(base{{if $m.RoutedFiles}}, "{{.JSON}}"{{end}}, e.{{.Go}})
 	}
 {{- else}}
-	r.{{.Go}} = e.fileURL(base, "{{.JSON}}", e.{{.Go}})
+	r.{{.Go}} = e.fileURL(base{{if $m.RoutedFiles}}, "{{.JSON}}"{{end}}, e.{{.Go}})
 {{- end}}
 {{- else if .Guard}}
 	if a.{{.Guard}} {
@@ -83,12 +84,18 @@ func (e {{.Entity}}) Item({{.RespParams}}) Res{{.Entity}}Item {
 {{- if .Files}}
 
 // fileURL is where the file stored under key is served, nil when there is
-// none; the key's name in it changes with the file, for caches.
-func (e {{.Entity}}) fileURL(base, name, key string) *string {
+// none: /uploads/<key>, or a file with routes of its own at its route, the
+// key's name added to change with the file, for caches.
+func (e {{.Entity}}) fileURL(base{{if .RoutedFiles}}, name{{end}}, key string) *string {
 	if key == "" {
 		return nil
 	}
-	u := base + "/{{.Table}}/" + {{.KeyText "e"}} + "/files/" + name + "?v=" + url.QueryEscape(path.Base(key))
+	u := base + "/uploads/" + key
+{{- if .RoutedFiles}}
+	if strings.HasPrefix(key, "{{.PrivatePrefix}}") {
+		u = base + "/{{.Table}}/" + {{.KeyText "e"}} + "/" + name + "?v=" + url.QueryEscape(path.Base(key))
+	}
+{{- end}}
 	return &u
 }
 {{- end}}

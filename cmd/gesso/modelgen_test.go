@@ -133,6 +133,8 @@ func TestAuthModelRefuses(t *testing.T) {
 		"own column":    "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tRoles string\n}\n",
 		"unique":        "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tEmail string `gesso:\"unique\"`\n}\n",
 		"gate":          "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tActive bool `gesso:\"gate=admin\"`\n}\n",
+		"guarded file":  "//gesso:table docs\ntype Doc struct {\n\tID int64\n\tSecret string `gesso:\"file,guard=admin\"`\n}\n",
+		"read file":     "//gesso:table docs\n//gesso:read admin\ntype Doc struct {\n\tID int64\n\tCover string `gesso:\"image\"`\n}\n",
 		"bad tokens":    "//gesso:table users\n//gesso:auth oauth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n}\n",
 		"short refresh": "//gesso:table users\n//gesso:auth jwt access=1h refresh=30m\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n}\n",
 		"ttl on jwt":    "//gesso:table users\n//gesso:auth jwt ttl=1h\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n}\n",
