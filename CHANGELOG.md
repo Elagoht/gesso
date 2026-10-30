@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## Unreleased
+## v0.19.0 — 2026-10-30
 
 - **Roles and permissions**: `app.Roles(gesso.Roles{"editor": {"docs:*"}, …})`
   grants permissions, `<module>:<action>`, `*` for all, `:own` for the
