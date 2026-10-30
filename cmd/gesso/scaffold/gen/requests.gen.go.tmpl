@@ -13,7 +13,7 @@ import (
 )
 
 type ReqCreate{{.Entity}} struct {
-{{- range .DataFields}}
+{{- range .ReqFields}}
 	{{.Go}} {{.ReqType}} `{{.ReqTag}}`
 {{- end}}
 {{- range .Files}}
@@ -28,7 +28,7 @@ type ReqUpdate{{.Entity}} struct {
 
 type ReqPatch{{.Entity}} struct {
 	Key {{.KeyGo}} `path:"{{.KeyPath}}"`
-{{- range .DataFields}}
+{{- range .ReqFields}}
 	{{.Go}} gesso.Optional[{{.Type}}] `json:"{{.JSON}},omitzero" form:"{{.JSON}}"{{if .Patch}} validate:"{{.Patch}}"{{end}}`
 {{- end}}
 {{- range .Files}}
@@ -118,24 +118,24 @@ type {{.Entity}}Access struct {
 
 // Forbidden reports whether in sets a field a sees nothing of.
 func (in ReqCreate{{.Entity}}) Forbidden(a {{.Entity}}Access) bool {
-	return {{range $i, $f := .DataFields}}{{if $f.Guard}}(in.{{$f.Go}}.Set && !a.{{$f.Guard}}) || {{end}}{{end}}{{range .Files}}{{if .Guard}}(in.{{.Go}} != nil && !a.{{.Guard}}) || {{end}}{{end}}false
+	return {{range $i, $f := .ReqFields}}{{if $f.Guard}}(in.{{$f.Go}}.Set && !a.{{$f.Guard}}) || {{end}}{{end}}{{range .Files}}{{if .Guard}}(in.{{.Go}} != nil && !a.{{.Guard}}) || {{end}}{{end}}false
 }
 
 // Forbidden reports whether in sets a field a sees nothing of.
 func (in ReqPatch{{.Entity}}) Forbidden(a {{.Entity}}Access) bool {
-	return {{range $i, $f := .DataFields}}{{if $f.Guard}}(in.{{$f.Go}}.Set && !a.{{$f.Guard}}) || {{end}}{{end}}{{range .Files}}{{if .Guard}}(in.{{.Go}} != nil && !a.{{.Guard}}) || {{end}}{{end}}false
+	return {{range $i, $f := .ReqFields}}{{if $f.Guard}}(in.{{$f.Go}}.Set && !a.{{$f.Guard}}) || {{end}}{{end}}{{range .Files}}{{if .Guard}}(in.{{.Go}} != nil && !a.{{.Guard}}) || {{end}}{{end}}false
 }
 {{- end}}
 
 // Record is the {{.Entity}} in describes, without its id.
 func (in ReqCreate{{.Entity}}) Record() {{.Entity}} {
-	return {{.Entity}}{ {{- range .DataFields}}{{.Go}}: in.{{.Go}}{{if or .Guard .Default}}.Value{{end}}, {{end -}} }
+	return {{.Entity}}{ {{- range .ReqFields}}{{.Go}}: in.{{.Go}}{{if or .Guard .Default}}.Value{{end}}, {{end -}} }
 }
 
 // Patch is in as a patch that sets every field{{if .Guarded}} but those a hides, which keep what they hold{{end}}.
 func (in ReqUpdate{{.Entity}}) Patch({{if .Guarded}}a {{.Entity}}Access{{end}}) ReqPatch{{.Entity}} {
 	return ReqPatch{{.Entity}}{Key: in.Key,
-{{- range .DataFields}}
+{{- range .ReqFields}}
 {{- if .Guard}}
 		{{.Go}}: gesso.Optional[{{.Type}}]{Set: a.{{.Guard}}, Value: in.{{.Go}}.Value},
 {{- else}}
@@ -150,7 +150,7 @@ func (in ReqUpdate{{.Entity}}) Patch({{if .Guarded}}a {{.Entity}}Access{{end}}) 
 
 // Apply sets on e the fields in has.
 func (in ReqPatch{{.Entity}}) Apply(e *{{.Entity}}) {
-{{- range .DataFields}}
+{{- range .ReqFields}}
 	if in.{{.Go}}.Set {
 		e.{{.Go}} = in.{{.Go}}.Value
 	}

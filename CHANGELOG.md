@@ -5,6 +5,15 @@ change.
 
 ## Unreleased
 
+- **Roles and permissions**: `app.Roles(gesso.Roles{"editor": {"docs:*"}, …})`
+  grants permissions, `<module>:<action>`, `*` for all, `:own` for the
+  caller's own records, `gesso.Everyone` for every caller. A model marked
+  `//gesso:rbac` (`add module -rbac`) asks each route its permission —
+  `docs:list`, `:get`, `:create`, `:update`, `:delete`, `:reorder` — and an
+  `owner` field (`-owner`), filled with the user who made the record, keeps a
+  `:own` grant to their records, others 404. `GET /auth/me` answers the
+  caller's `permissions`. `gesso.Can`, `gesso.Allows`, `gesso.Permissions`.
+
 - **Sign-in is its own section in the OpenAPI document**: login, logout,
   refresh, password and `/auth/me` are tagged `auth`, apart from the users
   module that serves them.

@@ -172,6 +172,9 @@ func (m *Module) Routes(r *gesso.Router) {
 {{- if .Read}}
 	read := gesso.Guards(guards.{{.Read}})
 {{- end}}
+{{- if .RBAC}}
+	can := func(action string) gesso.HandleOption { return gesso.Guards(gesso.Can("{{.Table}}:" + action)) }
+{{- end}}
 {{- if .Auth}}
 	signedIn, authTag := gesso.Guards(gesso.RequireIdentity), gesso.Tags("auth")
 	m.auth.SignInRoutes(r)
@@ -187,20 +190,20 @@ func (m *Module) Routes(r *gesso.Router) {
 {{- end}}
 	Set{{.Entity}}Password.Handle(r, m.setPassword{{if .Write}}, write{{end}})
 {{- end}}
-	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201){{if .Write}}, write{{end}}{{if .Files}}, gesso.MaxBodyBytes({{.FilesBodyLimit}}){{end}})
-	Get{{.Entity}}.Handle(r, m.get{{if .Read}}, read{{end}})
-	List{{.Plural}}.Handle(r, m.list{{if .Read}}, read{{end}})
-	Update{{.Entity}}.Handle(r, m.update{{if .Write}}, write{{end}}{{if .Files}}, gesso.MaxBodyBytes({{.FilesBodyLimit}}){{end}})
-	Patch{{.Entity}}.Handle(r, m.patch{{if .Write}}, write{{end}}{{if .Files}}, gesso.MaxBodyBytes({{.FilesBodyLimit}}){{end}})
-	Delete{{.Entity}}.Handle(r, m.delete{{if .Write}}, write{{end}})
+	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201){{if .Write}}, write{{end}}{{if .RBAC}}, can("create"){{end}}{{if .Files}}, gesso.MaxBodyBytes({{.FilesBodyLimit}}){{end}})
+	Get{{.Entity}}.Handle(r, m.get{{if .Read}}, read{{end}}{{if .RBAC}}, can("get"){{end}})
+	List{{.Plural}}.Handle(r, m.list{{if .Read}}, read{{end}}{{if .RBAC}}, can("list"){{end}})
+	Update{{.Entity}}.Handle(r, m.update{{if .Write}}, write{{end}}{{if .RBAC}}, can("update"){{end}}{{if .Files}}, gesso.MaxBodyBytes({{.FilesBodyLimit}}){{end}})
+	Patch{{.Entity}}.Handle(r, m.patch{{if .Write}}, write{{end}}{{if .RBAC}}, can("update"){{end}}{{if .Files}}, gesso.MaxBodyBytes({{.FilesBodyLimit}}){{end}})
+	Delete{{.Entity}}.Handle(r, m.delete{{if .Write}}, write{{end}}{{if .RBAC}}, can("delete"){{end}})
 {{- if .Sortable}}
-	Reorder{{.Plural}}.Handle(r, m.reorder{{if .Write}}, write{{end}})
+	Reorder{{.Plural}}.Handle(r, m.reorder{{if .Write}}, write{{end}}{{if .RBAC}}, can("reorder"){{end}})
 {{- end}}
 {{- range .Files}}
 {{- if .Routes}}
-	Get{{$m.Entity}}{{.Go}}.Handle(r, m.get{{.Go}}{{if and $m.Read (not .Public)}}, read{{end}})
-	Upload{{$m.Entity}}{{.Go}}.Handle(r, m.upload{{.Go}}{{if $m.Write}}, write{{end}}, gesso.MaxBodyBytes({{.BodyLimit}}))
-	Delete{{$m.Entity}}{{.Go}}.Handle(r, m.delete{{.Go}}{{if $m.Write}}, write{{end}})
+	Get{{$m.Entity}}{{.Go}}.Handle(r, m.get{{.Go}}{{if and $m.Read (not .Public)}}, read{{end}}{{if $m.RBAC}}, can("get"){{end}})
+	Upload{{$m.Entity}}{{.Go}}.Handle(r, m.upload{{.Go}}{{if $m.Write}}, write{{end}}{{if $m.RBAC}}, can("update"){{end}}, gesso.MaxBodyBytes({{.BodyLimit}}))
+	Delete{{$m.Entity}}{{.Go}}.Handle(r, m.delete{{.Go}}{{if $m.Write}}, write{{end}}{{if $m.RBAC}}, can("update"){{end}})
 {{- end}}
 {{- end}}
 {{- if .Hooks.Routes}}
@@ -211,6 +214,19 @@ func (m *Module) Routes(r *gesso.Router) {
 
 func (m *Module) access(ctx context.Context) models.{{.Entity}}Access {
 	return models.{{.Entity}}Access{ {{- range .Guarded}}{{.}}: gesso.Allowed(ctx, guards.{{.}}), {{end -}} }
+}
+{{- end}}
+{{- if .Owner}}
+
+// scope is what perm reaches: every record, or the caller's own.
+type scope struct {
+	all bool
+	me  string
+}
+
+func (m *Module) scope(ctx context.Context, perm string) scope {
+	id, _ := gesso.IdentityFrom(ctx)
+	return scope{all: gesso.Allows(ctx, perm) == gesso.GrantAll, me: id.Subject}
 }
 {{- end}}
 {{- if .Gate}}
@@ -240,6 +256,11 @@ func (m *Module) create(ctx context.Context, in models.{{.CreateIn}}) (models.Re
 	m.defaults(ctx, data)
 {{- end}}
 	e := data.Record()
+{{- if .Owner}}
+	if id, ok := gesso.IdentityFrom(ctx); ok {
+		e.{{.Owner.Go}} = id.Subject
+	}
+{{- end}}
 {{- if .Hooks.BeforeCreate}}
 	if err := m.BeforeCreate(ctx, &e); err != nil {
 		return models.Res{{.Entity}}{}, err
@@ -346,12 +367,12 @@ func (m *Module) get(ctx context.Context, in models.Req{{.Entity}}Key) (models.R
 {{- if .Guarded}}
 	a := m.access(ctx)
 {{- end}}
-	e, err := m.repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
+	e, err := m.repo.byKey(ctx, in.Key{{$m.Args "get"}})
 	return e.Response({{.RespArgs}}), err
 }
 
 func (m *Module) list(ctx context.Context, in models.ReqList{{.Plural}}) (gesso.Page[models.{{.ListItem}}], error) {
-	page, err := m.repo.list(ctx, in{{if .Gate}}, m.open(ctx){{end}})
+	page, err := m.repo.list(ctx, in{{$m.Args "list"}})
 {{- if .Guarded}}
 	a := m.access(ctx)
 {{- end}}
@@ -401,7 +422,7 @@ func (m *Module) patch(ctx context.Context, in models.ReqPatch{{.Entity}}) (mode
 
 func (m *Module) write(ctx context.Context, in models.ReqPatch{{.Entity}}{{if .Guarded}}, a models.{{.Entity}}Access{{end}}) (models.Res{{.Entity}}, error) {
 {{- if or .Hooks.BeforeUpdate .Files}}
-	old, err := m.repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
+	old, err := m.repo.byKey(ctx, in.Key{{$m.Args "update"}})
 	if err != nil {
 		return models.Res{{.Entity}}{}, err
 	}
@@ -449,7 +470,7 @@ func (m *Module) write(ctx context.Context, in models.ReqPatch{{.Entity}}{{if .G
 	return e.Response({{.RespArgs}}), err
 {{- end}}
 {{- else}}
-	id, err := m.repo.idOf(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
+	id, err := m.repo.idOf(ctx, in.Key{{$m.Args "update"}})
 	if err != nil {
 		return models.Res{{.Entity}}{}, err
 	}
@@ -463,7 +484,7 @@ func (m *Module) write(ctx context.Context, in models.ReqPatch{{.Entity}}{{if .G
 
 func (m *Module) delete(ctx context.Context, in models.Req{{.Entity}}Key) (gesso.Empty, error) {
 {{- if or .Hooks.BeforeDelete .Files}}
-	e, err := m.repo.byKey(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
+	e, err := m.repo.byKey(ctx, in.Key{{$m.Args "delete"}})
 	if err != nil {
 		return gesso.Empty{}, err
 	}
@@ -482,7 +503,7 @@ func (m *Module) delete(ctx context.Context, in models.Req{{.Entity}}Key) (gesso
 {{- end}}
 	return gesso.Empty{}, nil
 {{- else}}
-	id, err := m.repo.idOf(ctx, in.Key{{if .Gate}}, m.open(ctx){{end}})
+	id, err := m.repo.idOf(ctx, in.Key{{$m.Args "delete"}})
 	if err != nil {
 		return gesso.Empty{}, err
 	}
@@ -493,7 +514,7 @@ func (m *Module) delete(ctx context.Context, in models.Req{{.Entity}}Key) (gesso
 
 func (m *Module) reorder(ctx context.Context, in models.ReqReorder{{.Plural}}) (gesso.Empty, error) {
 	return gesso.Empty{}, db.InTx(ctx, m.app.DB(), func(tx db.DB) error {
-		return newRepository(tx).reorder(ctx, in.Order{{if .Gate}}, m.open(ctx){{end}})
+		return newRepository(tx).reorder(ctx, in.Order{{$m.Args "reorder"}})
 	})
 }
 {{- end}}
@@ -509,7 +530,7 @@ func (m *Module) upload{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}{{
 		return models.Res{{$m.Entity}}{}, gesso.ErrForbidden
 	}
 {{- end}}
-	id, err := m.repo.idOf(ctx, in.Key{{if $m.Gate}}, m.open(ctx){{end}})
+	id, err := m.repo.idOf(ctx, in.Key{{$m.Args "update"}})
 	if err != nil {
 		return models.Res{{$m.Entity}}{}, err
 	}
@@ -591,7 +612,7 @@ func (m *Module) get{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}Key) 
 		return nil, err
 	}
 {{- end}}
-	e, err := m.repo.byKey(ctx, in.Key{{if $m.Gate}}, m.open(ctx){{end}})
+	e, err := m.repo.byKey(ctx, in.Key{{$m.Args "get"}})
 	if err != nil {
 		return nil, err
 	}
@@ -604,7 +625,7 @@ func (m *Module) delete{{.Go}}(ctx context.Context, in models.Req{{$m.Entity}}Ke
 		return gesso.Empty{}, gesso.ErrForbidden
 	}
 {{- end}}
-	e, err := m.repo.byKey(ctx, in.Key{{if $m.Gate}}, m.open(ctx){{end}})
+	e, err := m.repo.byKey(ctx, in.Key{{$m.Args "update"}})
 	if err != nil {
 		return gesso.Empty{}, err
 	}
@@ -727,7 +748,7 @@ func (m *Module) me(ctx context.Context, _ gesso.Empty) (models.ResMe, error) {
 	if roles == nil {
 		roles = []string{}
 	}
-	return models.ResMe{Res{{.Entity}}: e.Response({{.RespArgs}}), Roles: roles}, nil
+	return models.ResMe{Res{{.Entity}}: e.Response({{.RespArgs}}), Roles: roles, Permissions: gesso.Permissions(ctx)}, nil
 }
 
 // self is the signed-in user's record.

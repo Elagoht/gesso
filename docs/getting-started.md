@@ -94,6 +94,7 @@ gesso add module docs -guard signedIn \
 | `listable` | the list answers only the listable fields, the id and the key; get answers everything |
 | `filterable` | `?<field>=value` keeps the list to the records that match it exactly |
 | `orderable` | `?order=<field>` or `?order=-<field>` orders the list |
+| `owner` | on a `//gesso:rbac` model: who made the record, for `:own` permissions (`-owner`) |
 | `trim`, `lower`, `upper`, `collapse`, `slugify` | format a string once it is checked; it is checked again |
 | `file`, `image` | a file uploaded on `PUT /<module>/{key}/<field>`: `accept=`, `maxsize=`, `public`; an image `fit=WxH`, `fill=WxH`, `format=`, `quality=` — see [Files and images](modules-and-handlers.md#files-and-images) |
 | `default=<value>` | what a create or a PUT that leaves the field out gets: `draft`, `5`, `true`, `@today` (a date), `@now` (a time), `@user` (the signed-in user's name) |

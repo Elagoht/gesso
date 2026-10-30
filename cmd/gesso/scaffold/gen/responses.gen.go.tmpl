@@ -101,9 +101,10 @@ func (e {{.Entity}}) fileURL(base{{if .RoutedFiles}}, name{{end}}, key string) *
 {{- end}}
 {{- if .Auth}}
 
-// ResMe is who signs in, with their roles.
+// ResMe is who signs in, with their roles and what they grant.
 type ResMe struct {
 	Res{{.Entity}}
-	Roles []string `json:"roles"`
+	Roles       []string `json:"roles"`
+	Permissions []string `json:"permissions"`
 }
 {{- end}}

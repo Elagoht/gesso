@@ -497,6 +497,31 @@ func TestEvents(t *testing.T) {
 		t.Fatal("the avatar goes")
 	}
 
+	// Roles: a writer sees and changes only the tasks they own, an admin all,
+	// someone without the role none.
+	wanda, wes := login("wanda", "writer"), login("wes", "writer")
+	anyone.want("GET", "/tasks", "", 401)
+	bob.want("GET", "/tasks", "", 403)
+	bob.want("POST", "/tasks", ` + "`" + `{"title":"b"}` + "`" + `, 403)
+	wanda.want("POST", "/tasks", ` + "`" + `{"title":"w1","owner":"1"}` + "`" + `, 400)
+	if got := wanda.want("POST", "/tasks", ` + "`" + `{"title":"w1"}` + "`" + `, 201); !strings.Contains(got, ` + "`" + `"owner":"` + "`" + `) || strings.Contains(got, ` + "`" + `"owner":""` + "`" + `) {
+		t.Fatalf("the task's owner: %s", got)
+	}
+	wes.want("POST", "/tasks", ` + "`" + `{"title":"w2"}` + "`" + `, 201)
+	if got := wanda.want("GET", "/tasks", "", 200); !strings.Contains(got, "w1") || strings.Contains(got, "w2") {
+		t.Fatalf("wanda lists %s", got)
+	}
+	wanda.want("GET", "/tasks/2", "", 404)
+	wanda.want("PATCH", "/tasks/2", ` + "`" + `{"title":"mine"}` + "`" + `, 404)
+	wanda.want("DELETE", "/tasks/2", "", 404)
+	wanda.want("PATCH", "/tasks/1", ` + "`" + `{"title":"w1 done"}` + "`" + `, 200, "w1 done")
+	if got := ada.want("GET", "/tasks", "", 200); !strings.Contains(got, "w1 done") || !strings.Contains(got, "w2") {
+		t.Fatalf("ada lists %s", got)
+	}
+	ada.want("DELETE", "/tasks/2", "", 204)
+	wanda.want("GET", "/auth/me", "", 200, ` + "`" + `"tasks:update:own"` + "`" + `)
+	bob.want("GET", "/auth/me", "", 200, ` + "`" + `"permissions":[]` + "`" + `)
+
 	bob.want("DELETE", "/events/jam", "", 204)
 	anyone.want("GET", "/events/jam", "", 404)
 	bob.want("DELETE", "/events/jam", "", 404)

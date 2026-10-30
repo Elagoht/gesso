@@ -443,7 +443,7 @@ func (m *Module) me(ctx context.Context, _ gesso.Empty) (ResMe, error) {
 	if roles == nil {
 		roles = []string{}
 	}
-	return ResMe{ID: u.ID, Username: u.Username, Roles: roles}, nil
+	return ResMe{ID: u.ID, Username: u.Username, Roles: roles, Permissions: gesso.Permissions(ctx)}, nil
 }
 
 // changePassword sets the new password and signs every device out — one that

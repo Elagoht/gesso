@@ -43,7 +43,7 @@ var genTemplates = template.Must(template.New("").Funcs(template.FuncMap{
 
 var (
 	tableDirective = regexp.MustCompile(`^//gesso:table\s+([a-z][a-z0-9_]*)\s*$`)
-	modelDirective = regexp.MustCompile(`^//gesso:(sortable|auth|write|read)(?:\s+([a-z][A-Za-z0-9]*))?\s*$`)
+	modelDirective = regexp.MustCompile(`^//gesso:(sortable|auth|rbac|write|read)(?:\s+([a-z][A-Za-z0-9]*))?\s*$`)
 	authDirective  = regexp.MustCompile(`^//gesso:auth\s+(.+?)\s*$`)
 )
 
@@ -62,6 +62,8 @@ type model struct {
 
 	Sortable    bool          // //gesso:sortable: kept in an order of the client's, a position column
 	Auth        bool          // //gesso:auth: the users who sign in
+	RBAC        bool          // //gesso:rbac: each route asks a permission, <table>:<action>
+	Owner       *mfield       // owner: whose record it is, for :own permissions
 	JWT         bool          // //gesso:auth jwt: JSON Web Tokens, not opaque ones
 	TTL         time.Duration // a session's; or a JWT's access and refresh
 	Access      time.Duration
@@ -107,6 +109,7 @@ type mfield struct {
 	Self                    bool     // a signed-in user may change it on themselves: PATCH /auth/me
 	Public                  bool     // a file anyone may fetch, past the model's read guard
 	Routes                  bool     // a file with PUT and DELETE routes of its own, beside the record's
+	IsOwner                 bool     // owner: the id of the user who made the record
 	Guard                   string   // the Go name of the guard that may see and write it
 	GateGuard               string   // a gate: records with it false are the guard's only
 	Rules                   []string // validation rules beyond what the options imply
@@ -245,7 +248,7 @@ var baseOf = map[string]string{"string": "string", "int64": "int", "bool": "bool
 var options = map[string]bool{"key": true, "unique": true, "index": true, "optional": true, "sort": true, "text": true,
 	"listable": true, "filterable": true, "orderable": true, "guard": true, "gate": true, "default": true,
 	"file": true, "image": true, "accept": true, "maxsize": true, "fit": true, "fill": true, "format": true, "quality": true,
-	"trim": true, "lower": true, "upper": true, "collapse": true, "slugify": true, "self": true, "public": true, "routes": true}
+	"trim": true, "lower": true, "upper": true, "collapse": true, "slugify": true, "self": true, "public": true, "routes": true, "owner": true}
 
 var ruleNames = map[string]bool{
 	"min": true, "max": true, "len": true, "gt": true, "gte": true, "lt": true, "lte": true,
@@ -379,12 +382,13 @@ func (m *model) direct(name, arg string) error {
 	case "auth+":
 		m.Auth = true
 		return m.tokens(arg)
-	case "sortable", "auth":
+	case "sortable", "auth", "rbac":
 		if arg != "" {
 			return fmt.Errorf("//gesso:%s takes nothing", name)
 		}
 		m.Sortable = m.Sortable || name == "sortable"
 		m.Auth = m.Auth || name == "auth"
+		m.RBAC = m.RBAC || name == "rbac"
 	case "write", "read":
 		if arg == "" {
 			return fmt.Errorf("//gesso:%s takes a guard: //gesso:%s signedIn", name, name)
@@ -492,6 +496,23 @@ func (m *model) checkAuth() error {
 		if f.Self && f.Guard != "" {
 			return fmt.Errorf("%s.%s: a field users change on themselves has no guard", m.Entity, f.Go)
 		}
+	}
+	for i := range m.Fields {
+		if m.Fields[i].IsOwner {
+			if m.Owner != nil {
+				return fmt.Errorf("%s: two owners", m.Entity)
+			}
+			m.Owner = &m.Fields[i]
+		}
+	}
+	if m.Owner != nil && !m.RBAC {
+		return fmt.Errorf("%s.%s: owner is for :own permissions, of a //gesso:rbac model", m.Entity, m.Owner.Go)
+	}
+	if m.RBAC && (m.Write != "" || m.Read != "") {
+		return fmt.Errorf("%s: //gesso:rbac asks a permission of each route: it takes no //gesso:write or //gesso:read", m.Entity)
+	}
+	if m.RBAC && m.Auth {
+		return fmt.Errorf("%s: the users are guarded by //gesso:write and //gesso:read, not //gesso:rbac", m.Entity)
 	}
 	for _, f := range m.Files() {
 		// /uploads/ serves a file to whoever has its URL: one some may not
@@ -638,6 +659,8 @@ func newMField(name, typ, tag string) (mfield, error) {
 			f.Public = true
 		case opt == "routes":
 			f.Routes = true
+		case opt == "owner":
+			f.IsOwner = true
 		case opt == "listable":
 			f.Listable = true
 		case opt == "filterable":
@@ -693,6 +716,12 @@ func newMField(name, typ, tag string) (mfield, error) {
 	}
 	if len(f.Transforms) > 0 && base != "string" {
 		return f, fmt.Errorf("%s is for a string", f.Transforms[0])
+	}
+	if f.IsOwner {
+		if typ != "string" || f.Key || f.Unique || f.Guard != "" || f.Default != "" || f.Self || len(f.Transforms) > 0 || len(f.Rules) > 0 {
+			return f, errors.New("owner is a string the app fills with who made the record: no key, unique, guard, default, self, transform or rule")
+		}
+		f.Index, f.Optional = true, true
 	}
 	if f.GateGuard != "" && (base != "bool" || f.Nullable) {
 		return f, errors.New("a gate is a bool: true opens the record to everyone")

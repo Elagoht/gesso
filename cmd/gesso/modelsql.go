@@ -71,10 +71,14 @@ func (m *model) buildSQL() {
 	s := modelSQL{Columns: cols}
 
 	gate := func(p *numbering) string {
-		if m.Gate == nil {
-			return ""
+		w := ""
+		if m.Gate != nil {
+			w += " AND (" + p.next() + " OR " + m.Gate.Ident + ")"
 		}
-		return " AND (" + p.next() + " OR " + m.Gate.Ident + ")"
+		if m.Owner != nil {
+			w += " AND (" + p.next() + " OR " + m.Owner.Ident + " = " + p.next() + ")"
+		}
+		return w
 	}
 	keyCol := m.KeyCol()
 
@@ -110,15 +114,16 @@ func (m *model) buildSQL() {
 	s.ByID = "SELECT " + cols + " FROM " + t + " WHERE id = " + p.next()
 
 	p = &numbering{dialect: d}
-	sets := make([]string, len(data))
-	for i, f := range data {
+	req := m.ReqFields()
+	sets := make([]string, len(req))
+	for i, f := range req {
 		set, val := p.next(), p.next()
 		sets[i] = f.Ident + " = CASE WHEN " + set + " THEN " + val + " ELSE " + f.Ident + " END"
 	}
 	s.Patch = "UPDATE " + t + " SET " + strings.Join(sets, ", ") + " WHERE id = " + p.next()
 
 	p = &numbering{dialect: d}
-	for i, f := range data {
+	for i, f := range req {
 		sets[i] = f.Ident + " = " + p.next()
 	}
 	s.Save = "UPDATE " + t + " SET " + strings.Join(sets, ", ") + " WHERE id = " + p.next()
@@ -133,8 +138,8 @@ func (m *model) buildSQL() {
 	if m.Sortable {
 		p = &numbering{dialect: d}
 		where := ""
-		if m.Gate != nil {
-			where = " WHERE (" + p.next() + " OR " + m.Gate.Ident + ")"
+		if g := gate(p); g != "" {
+			where = " WHERE " + strings.TrimPrefix(g, " AND ")
 		}
 		s.Visible = "SELECT id, " + keyCol + ", position FROM " + t + where + " ORDER BY position, id"
 		p = &numbering{dialect: d}
@@ -171,6 +176,9 @@ func (m *model) listSQL(l listSQL) listSQL {
 	var where []string
 	if m.Gate != nil {
 		where = append(where, "("+p.next()+" OR "+m.Gate.Ident+")")
+	}
+	if m.Owner != nil {
+		where = append(where, "("+p.next()+" OR "+m.Owner.Ident+" = "+p.next()+")")
 	}
 	for _, f := range m.Fields {
 		if f.Filterable {
@@ -461,4 +469,62 @@ func (m model) RoutedFiles() bool {
 		}
 	}
 	return false
+}
+
+// ReqFields are the fields a client writes: the data fields but the owner,
+// which the app fills.
+func (m model) ReqFields() []mfield {
+	var out []mfield
+	for _, f := range m.DataFields() {
+		if !f.IsOwner {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// Params are what the repository's reads take beside their own: the gate's
+// open, the owner's scope.
+func (m model) Params() string {
+	p := ""
+	if m.Gate != nil {
+		p += ", open bool"
+	}
+	if m.Owner != nil {
+		p += ", s scope"
+	}
+	return p
+}
+
+// SQLArgs are Params as a statement's arguments.
+func (m model) SQLArgs() string {
+	a := ""
+	if m.Gate != nil {
+		a += ", open"
+	}
+	if m.Owner != nil {
+		a += ", s.all, s.me"
+	}
+	return a
+}
+
+// ListArgs are SQLArgs at the head of a list's arguments.
+func (m model) ListArgs() string {
+	if a := m.SQLArgs(); a != "" {
+		return strings.TrimPrefix(a, ", ") + ", "
+	}
+	return ""
+}
+
+// Args are what a handler passes the repository for action: the gate, and
+// what <table>:<action> reaches.
+func (m model) Args(action string) string {
+	a := ""
+	if m.Gate != nil {
+		a += ", m.open(ctx)"
+	}
+	if m.Owner != nil {
+		a += `, m.scope(ctx, "` + m.Table + ":" + action + `")`
+	}
+	return a
 }

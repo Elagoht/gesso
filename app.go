@@ -153,6 +153,7 @@ type App struct {
 	storageOnce   sync.Once
 	storageErr    error
 	uploadsOnce   sync.Once
+	roles         Roles
 }
 
 // New builds an app, with its modules or with Register after. Every route
@@ -317,7 +318,11 @@ func (a *App) register(pattern string, h http.Handler) {
 // logged 500, not a dropped connection.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := a.requestID(r)
-	r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id))
+	ctx := context.WithValue(r.Context(), requestIDKey{}, id)
+	if a.roles != nil {
+		ctx = context.WithValue(ctx, rolesKey{}, a.roles)
+	}
+	r = r.WithContext(ctx)
 	w.Header().Set("X-Request-ID", id)
 	if a.probe(w, r) || a.scrape(w, r) {
 		return

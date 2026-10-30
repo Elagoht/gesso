@@ -97,11 +97,24 @@ func TestNew(t *testing.T) {
 			do("add", "endpoint", "events/count", "-method", "GET", "-res", "total:int")
 			do("add", "module", "posts", "-guard", "signedIn",
 				"-field", "title:string:max=200", "-field", "slug:string:key,slug", "-field", "score:int:optional,sort", "-field", "day:date:optional")
+			do("add", "module", "tasks", "-rbac", "-owner", "-field", "title:string:listable,max=100")
+			reg, _ := os.ReadFile(filepath.Join(dir, "register.go"))
+			roles := `app.Roles(gesso.Roles{"admin": {"*"}, gesso.Everyone: {}})`
+			if !strings.Contains(string(reg), roles) {
+				t.Fatalf("add module -rbac wires no role table:\n%s", reg)
+			}
+			reg = []byte(strings.Replace(string(reg), roles, `app.Roles(gesso.Roles{
+		"admin":  {"*"},
+		"writer": {"tasks:create", "tasks:list:own", "tasks:get:own", "tasks:update:own", "tasks:delete:own"},
+	})`, 1))
+			if err := os.WriteFile(filepath.Join(dir, "register.go"), reg, 0o644); err != nil {
+				t.Fatal(err)
+			}
 			do("add", "module", "pages", "-empty")
 			do("add", "endpoint", "pages/home", "-method", "GET", "-path", "/", "-res", "title:string")
 			do("add", "command", "seed")
 			do("add", "middleware", "timing")
-			reg, _ := os.ReadFile(filepath.Join(dir, "register.go"))
+			reg, _ = os.ReadFile(filepath.Join(dir, "register.go"))
 			for _, want := range []string{"users.New(),", "events.New(),", "pages.New(),", `app.Command("seed", commands.Seed(app))`, "app.Use(middleware.Timing)"} {
 				if !strings.Contains(string(reg), want) {
 					t.Fatalf("register.go lacks %s:\n%s", want, reg)
@@ -168,14 +181,14 @@ func migrateRoundTrip(t *testing.T, bin, dbPath string) {
 		}
 		return string(out)
 	}
-	if out := run("up"); strings.Count(out, "applied") != 3 {
+	if out := run("up"); strings.Count(out, "applied") != 4 {
 		t.Fatalf("up: %s", out)
 	}
 	if out := run("down"); strings.Count(out, "reverted") != 1 {
 		t.Fatalf("down: %s", out)
 	}
 	out := run("status")
-	if strings.Count(out, "applied") != 2 || strings.Count(out, "pending") != 1 {
+	if strings.Count(out, "applied") != 3 || strings.Count(out, "pending") != 1 {
 		t.Fatalf("status: %s", out)
 	}
 	cmd := exec.Command(bin, "migrate", "sideways")

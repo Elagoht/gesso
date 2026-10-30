@@ -48,12 +48,12 @@ func (r *repository) insert(ctx context.Context, e models.{{.Entity}}{{if .Auth}
 {{- end}}
 }
 
-func (r *repository) byKey(ctx context.Context, key {{.KeyGo}}{{if .Gate}}, open bool{{end}}) (models.{{.Entity}}, error) {
+func (r *repository) byKey(ctx context.Context, key {{.KeyGo}}{{.Params}}) (models.{{.Entity}}, error) {
 	var e models.{{.Entity}}
 {{- if .Sortable}}
 	var position int64
 {{- end}}
-	err := r.db.QueryRowContext(ctx, {{printf "%q" .SQL.ByKey}}, key{{if .Gate}}, open{{end}}).Scan({{template "dest" .}})
+	err := r.db.QueryRowContext(ctx, {{printf "%q" .SQL.ByKey}}, key{{.SQLArgs}}).Scan({{template "dest" .}})
 	return e, err
 }
 
@@ -67,9 +67,9 @@ func (r *repository) byID(ctx context.Context, id int64) (models.{{.Entity}}, er
 }
 
 // idOf is the id of the record at key; sql.ErrNoRows when there is none.
-func (r *repository) idOf(ctx context.Context, key {{.KeyGo}}{{if .Gate}}, open bool{{end}}) (int64, error) {
+func (r *repository) idOf(ctx context.Context, key {{.KeyGo}}{{.Params}}) (int64, error) {
 	var id int64
-	err := r.db.QueryRowContext(ctx, {{printf "%q" .SQL.IDOf}}, key{{if .Gate}}, open{{end}}).Scan(&id)
+	err := r.db.QueryRowContext(ctx, {{printf "%q" .SQL.IDOf}}, key{{.SQLArgs}}).Scan(&id)
 	return id, err
 }
 
@@ -81,7 +81,7 @@ type cursor{{.Entity}} struct {
 {{- end}}
 }
 
-func (r *repository) list(ctx context.Context, in models.ReqList{{.Plural}}{{if .Gate}}, open bool{{end}}) (gesso.Page[models.{{.Entity}}], error) {
+func (r *repository) list(ctx context.Context, in models.ReqList{{.Plural}}{{.Params}}) (gesso.Page[models.{{.Entity}}], error) {
 	var page gesso.Page[models.{{.Entity}}]
 	after, err := gesso.DecodeCursor[cursor{{.Entity}}](in.After)
 	if err != nil {
@@ -98,7 +98,7 @@ func (r *repository) list(ctx context.Context, in models.ReqList{{.Plural}}{{if 
 {{- range .SQL.Lists}}
 	case "{{.Name}}":
 		rows, err = r.db.QueryContext(ctx, {{printf "%q" .SQL}},
-			{{if $m.Gate}}open, {{end}}{{range $m.Filters}}in.{{.Go}} == nil, in.{{.Go}}, {{end}}first, {{if .Column}}after.{{.Slot}}, after.{{.Slot}}, {{end}}after.ID, in.Take+1)
+			{{$m.ListArgs}}{{range $m.Filters}}in.{{.Go}} == nil, in.{{.Go}}, {{end}}first, {{if .Column}}after.{{.Slot}}, after.{{.Slot}}, {{end}}after.ID, in.Take+1)
 {{- end}}
 	}
 	if err != nil {
@@ -136,14 +136,14 @@ func (r *repository) list(ctx context.Context, in models.ReqList{{.Plural}}{{if 
 // patch writes each field that is set and keeps the rest, in one statement.
 func (r *repository) patch(ctx context.Context, id int64, in models.ReqPatch{{.Entity}}) error {
 	_, err := r.db.ExecContext(ctx, {{printf "%q" .SQL.Patch}},
-		{{range .DataFields}}in.{{.Go}}.Set, in.{{.Go}}.Value, {{end}}id)
+		{{range .ReqFields}}in.{{.Go}}.Set, in.{{.Go}}.Value, {{end}}id)
 	return err
 }
 
 // save writes every field of e.
 func (r *repository) save(ctx context.Context, e models.{{.Entity}}) error {
 	_, err := r.db.ExecContext(ctx, {{printf "%q" .SQL.Save}},
-		{{range .DataFields}}e.{{.Go}}, {{end}}e.ID)
+		{{range .ReqFields}}e.{{.Go}}, {{end}}e.ID)
 	return err
 }
 
@@ -165,8 +165,8 @@ func (r *repository) delete(ctx context.Context, id int64) error {
 // reorder puts the records the caller sees in the order of keys, each given
 // once: they take the positions they held between them, so a record the
 // caller does not see keeps its place.
-func (r *repository) reorder(ctx context.Context, keys []{{.KeyGo}}{{if .Gate}}, open bool{{end}}) error {
-	rows, err := r.db.QueryContext(ctx, {{printf "%q" .SQL.Visible}}{{if .Gate}}, open{{end}})
+func (r *repository) reorder(ctx context.Context, keys []{{.KeyGo}}{{.Params}}) error {
+	rows, err := r.db.QueryContext(ctx, {{printf "%q" .SQL.Visible}}{{.SQLArgs}})
 	if err != nil {
 		return err
 	}

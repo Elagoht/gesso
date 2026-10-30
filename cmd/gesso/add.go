@@ -29,6 +29,7 @@ type moduleSpec struct {
 	Sortable    bool   // //gesso:sortable
 	Auth        bool   // //gesso:auth
 	AuthWords   string // what follows it: session ttl=720h, jwt access=15m refresh=720h
+	RBAC        bool   // //gesso:rbac
 }
 
 type specField struct {
@@ -58,6 +59,8 @@ Options:
   orderable      the client may order the list by it: ?order=title, ?order=-title
   default=<v>    left out of a create or a PUT, it is v: draft, 5, true,
                  @today (a date), @now (a time), @user (who signs in)
+  owner          on a //gesso:rbac model, who made the record: :own grants
+                 reach only theirs (-owner adds one)
   guard=<guard>  only the guard's callers see and write it
   gate=<guard>   on a bool: a record with it false is the guard's callers' only
   trim, lower, upper, collapse, slugify
@@ -92,6 +95,8 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	guard := fs.String("guard", "", "a guard from internal/guards on create, update, patch, delete and reorder: //gesso:write")
 	read := fs.String("read", "", "a guard from internal/guards on get and list: //gesso:read")
 	authModel := fs.String("auth", "", "the users who sign in, //gesso:auth and its words: session ttl=720h, or jwt access=15m refresh=720h (gesso add auth makes it)")
+	rbac := fs.Bool("rbac", false, "each route asks a permission, <name>:list, :get, :create, :update, :delete, :reorder: //gesso:rbac")
+	owner := fs.Bool("owner", false, "an owner field, who made the record, for :own permissions (with -rbac)")
 	sortable := fs.Bool("sortable", false, "kept in the client's order, with PATCH /<name> {\"order\": [...]}: //gesso:sortable")
 	empty := fs.Bool("empty", false, "a module with no table, for endpoints of your own")
 	pos, err := parseFlags(fs, args)
@@ -106,7 +111,10 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 			fieldList = append(fieldList, strings.TrimSpace(part))
 		}
 	}
-	if *empty && (len(fieldList) > 0 || *guard != "" || *read != "" || *sortable || *authModel != "") {
+	if *owner {
+		fieldList = append(fieldList, "owner:string:owner,listable")
+	}
+	if *empty && (len(fieldList) > 0 || *guard != "" || *read != "" || *sortable || *authModel != "" || *rbac) {
 		return usage("-empty takes no fields, guards or -sortable: the module has no table")
 	}
 	if !*empty && len(fieldList) == 0 {
@@ -129,7 +137,7 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 			}
 		}
 	}
-	spec.Write, spec.Read, spec.Sortable, spec.Auth, spec.AuthWords = *guard, *read, *sortable, *authModel != "", *authModel
+	spec.Write, spec.Read, spec.Sortable, spec.Auth, spec.AuthWords, spec.RBAC = *guard, *read, *sortable, *authModel != "", *authModel, *rbac
 	target := filepath.Join(dir, *parent, spec.Pkg)
 	if _, err := os.Stat(target); err == nil {
 		return fmt.Errorf("%s already exists", target)
@@ -172,11 +180,40 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 		if err != nil {
 			return err
 		}
-		if *guard == "" {
+		if *guard == "" && !*rbac {
 			fmt.Fprintf(stdout, "note: anyone may write to %s: -guard <name>, or //gesso:write <guard> in its models.go, guards it\n", spec.Pkg)
 		}
 	}
-	return register(dir, spec.Pkg+".New()", mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), stdout)
+	if err := register(dir, spec.Pkg+".New()", mod+"/"+filepath.ToSlash(filepath.Join(*parent, spec.Pkg)), stdout); err != nil {
+		return err
+	}
+	if *rbac {
+		return roles(dir, spec.Pkg, stdout)
+	}
+	return nil
+}
+
+// roles gives register.go a role table, when it has none: admins may do all.
+func roles(dir, pkg string, stdout io.Writer) error {
+	regGo, src, err := registerFile(dir)
+	if err != nil {
+		return nil
+	}
+	if strings.Contains(string(src), ".Roles(") {
+		fmt.Fprintf(stdout, "note: grant %s's permissions in app.Roles in %s: %s:list, :get, :create, :update, :delete, :reorder, each with :own\n", pkg, regGo, pkg)
+		return nil
+	}
+	wired, err := wireStatement(src, func(app string) string {
+		return app + `.Roles(gesso.Roles{"admin": {"*"}, gesso.Everyone: {}})`
+	}, "github.com/Elagoht/gesso")
+	if err != nil {
+		return fmt.Errorf("%s: %w", regGo, err)
+	}
+	if err := os.WriteFile(regGo, wired, 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "wired %s: app.Roles, admins may do all; grant the rest %s:list, :get, :create, :update, :delete, :reorder\n", regGo, pkg)
+	return nil
 }
 
 // register adds entry to the app's register.go, when there is one.

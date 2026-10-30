@@ -18,4 +18,7 @@ type ResMe struct {
 	ID       string   `json:"id"`
 	Username string   `json:"username"`
 	Roles    []string `json:"roles"`
+	// Permissions are what the roles grant, by App.Roles: for a client to
+	// know which of its buttons to show.
+	Permissions []string `json:"permissions"`
 }

@@ -16,6 +16,9 @@ import (
 {{- if .Auth}}
 //gesso:auth {{.AuthWords}}
 {{- end}}
+{{- if .RBAC}}
+//gesso:rbac
+{{- end}}
 {{- if .Write}}
 //gesso:write {{.Write}}
 {{- end}}

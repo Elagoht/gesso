@@ -105,6 +105,36 @@ Another source of users — one from your own settings (`auth.NewSingle`), a
 directory — is an `auth.Users`: `auth.New(auth.Options{Users: users})` in
 `register.go`. `auth/authtest` is its contract.
 
+## Roles and permissions
+
+A user's roles grant permissions, by a table in `register.go`:
+
+```go
+app.Roles(gesso.Roles{
+	"admin":        {"*"},
+	"editor":       {"docs:*"},
+	"writer":       {"docs:list", "docs:get", "docs:create", "docs:update:own", "docs:delete:own"},
+	gesso.Everyone: {"docs:list", "docs:get"},
+})
+```
+
+A permission is `<module>:<action>`; `docs:*` is every action on docs, `*`
+every permission there is, and one ending in `:own` reaches only the records
+the user owns. `gesso.Everyone` is every caller, signed in or not.
+
+A model marked `//gesso:rbac` (`add module -rbac`) asks each route its
+permission — `docs:list`, `docs:get`, `docs:create`, `docs:update` (PUT and
+PATCH, and a file's routes), `docs:delete`, `docs:reorder` — instead of
+`//gesso:write` and `//gesso:read`. With an `owner` field (`-owner`), the
+record keeps the id of the user who made it, which no request writes, and a
+grant ending in `:own` keeps the caller to their own records: in the list,
+and as 404 for anyone else's. `add module -rbac` writes a table with `admin`
+granted all when `register.go` has none.
+
+`GET /auth/me` answers the caller's `permissions`, for a client to know which
+of its buttons to show. In code, `gesso.Can("docs:publish")` is a guard, and
+`gesso.Allows(ctx, perm)` answers `GrantAll`, `GrantOwn` or `GrantNone`.
+
 ## Guards
 
 ```sh

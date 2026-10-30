@@ -62,6 +62,7 @@ The struct's doc comment holds its directives, after `//gesso:table <table>`:
 | `//gesso:write <guard>` | guards create, update, patch, delete and reorder (`-guard`) |
 | `//gesso:read <guard>` | guards get and list (`-read`) |
 | `//gesso:sortable` | the records are in the client's order (`-sortable`) |
+| `//gesso:rbac` | each route asks a permission, `<module>:<action>` (`-rbac`); see [Roles and permissions](identity-and-limits.md#roles-and-permissions) |
 
 A sortable model keeps a position column the client never sees. A new record
 goes last; `PATCH /<table>` with `{"order": [...]}`, the keys, puts the records
