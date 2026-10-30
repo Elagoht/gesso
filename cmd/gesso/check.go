@@ -113,7 +113,8 @@ func check(args []string, dir string, out io.Writer) (int, error) {
 	if _, _, err := registerFile(dir); err == nil {
 		if in, err := loadInspection(dir, *pkg); err == nil {
 			for _, r := range in.Routes {
-				if r.Method != "GET" && r.Method != "HEAD" && len(r.Guards) == 0 && r.Module != "auth.Module" {
+				signIn := r.Method == "POST" && strings.HasSuffix(r.Pattern, "/auth/login")
+				if r.Method != "GET" && r.Method != "HEAD" && len(r.Guards) == 0 && r.Module != "auth.Module" && !signIn {
 					reports = append(reports, report{"warning", "open-write", r.Method + " " + r.Pattern + " has no guard: anyone may call it"})
 				}
 			}
