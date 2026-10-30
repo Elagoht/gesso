@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## Unreleased
+## v0.16.0 — 2026-10-30
 
 - **A record and its files in one request**: a create, a PUT or a PATCH — and
   `PATCH /auth/me` — takes `multipart/form-data` as well as JSON, the fields as
