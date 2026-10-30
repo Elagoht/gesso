@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## Unreleased
+## v0.18.0 — 2026-10-30
 
 - **No file route unless asked**: a file is served at `/uploads/<key>`, one
   route for the app (`App.ServeUploads`, `App.UploadURL`), its random key the
