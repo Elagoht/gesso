@@ -61,7 +61,13 @@ func TestNew(t *testing.T) {
 			if code := run([]string{"add", "module", "x", "-guard", "admin"}, dir, &out, &errOut, fixedNow); code == 0 {
 				t.Fatal("a guard that does not exist")
 			}
-			do("add", "auth", "-field", "name:string:optional,self,collapse,max=100", "-field", "avatar:image:self,public,listable,fill=64x64")
+			tokens := map[string]string{"sqlite": "session", "postgres": "jwt", "mysql": "jwt"}[dialect]
+			do("add", "auth", "-tokens", tokens, "-access", "10m", "-field", "name:string:optional,self,collapse,max=100", "-field", "avatar:image:self,public,listable,fill=64x64")
+			if tokens == "jwt" {
+				if env, _ := os.ReadFile(filepath.Join(dir, ".env.development")); !strings.Contains(string(env), "JWT_SECRET=") {
+					t.Fatal("no JWT_SECRET in .env.development")
+				}
+			}
 			if code := run([]string{"add", "auth"}, dir, &out, &errOut, fixedNow); code == 0 {
 				t.Fatal("auth is added twice")
 			}

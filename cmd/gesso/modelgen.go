@@ -37,12 +37,14 @@ var genTemplates = template.Must(template.New("").Funcs(template.FuncMap{
 		return "?"
 	},
 	"add": func(a, b int) int { return a + b },
+	"dur": DurationExpr,
 	"lit": func(sql string) string { return strings.ReplaceAll(sql, `"`, `\"`) },
 }).ParseFS(scaffoldFS, "scaffold/gen/*.tmpl"))
 
 var (
 	tableDirective = regexp.MustCompile(`^//gesso:table\s+([a-z][a-z0-9_]*)\s*$`)
 	modelDirective = regexp.MustCompile(`^//gesso:(sortable|auth|write|read)(?:\s+([a-z][A-Za-z0-9]*))?\s*$`)
+	authDirective  = regexp.MustCompile(`^//gesso:auth\s+(.+?)\s*$`)
 )
 
 type model struct {
@@ -58,8 +60,12 @@ type model struct {
 	UsesTime bool
 	UsesDate bool
 
-	Sortable    bool   // //gesso:sortable: kept in an order of the client's, a position column
-	Auth        bool   // //gesso:auth: the users who sign in
+	Sortable    bool          // //gesso:sortable: kept in an order of the client's, a position column
+	Auth        bool          // //gesso:auth: the users who sign in
+	JWT         bool          // //gesso:auth jwt: JSON Web Tokens, not opaque ones
+	TTL         time.Duration // a session's; or a JWT's access and refresh
+	Access      time.Duration
+	Refresh     time.Duration
 	Write, Read string // the guards' Go names, from //gesso:write and //gesso:read
 	Gate        *mfield
 	Guarded     []string // the field guards' Go names, each once
@@ -275,6 +281,8 @@ func parseModel(dir string) (*model, error) {
 			for _, c := range g.Doc.List {
 				if m := tableDirective.FindStringSubmatch(c.Text); m != nil {
 					table = m[1]
+				} else if m := authDirective.FindStringSubmatch(c.Text); m != nil {
+					directives = append(directives, []string{c.Text, "auth+", m[1]})
 				} else if m := modelDirective.FindStringSubmatch(c.Text); m != nil {
 					directives = append(directives, m)
 				} else if strings.HasPrefix(c.Text, "//gesso:") {
@@ -368,6 +376,9 @@ func parseSize(s string) (int64, error) {
 // //gesso:read <guard>.
 func (m *model) direct(name, arg string) error {
 	switch name {
+	case "auth+":
+		m.Auth = true
+		return m.tokens(arg)
 	case "sortable", "auth":
 		if arg != "" {
 			return fmt.Errorf("//gesso:%s takes nothing", name)
@@ -386,6 +397,57 @@ func (m *model) direct(name, arg string) error {
 		m.guardFiles = append(m.guardFiles, arg)
 	}
 	return nil
+}
+
+// tokens reads //gesso:auth's words: session [ttl=720h], or jwt
+// [access=15m] [refresh=720h].
+func (m *model) tokens(args string) error {
+	words := strings.Fields(args)
+	m.TTL, m.Access, m.Refresh = 30*24*time.Hour, 15*time.Minute, 30*24*time.Hour
+	if len(words) == 0 {
+		return nil
+	}
+	switch words[0] {
+	case "session":
+	case "jwt":
+		m.JWT = true
+	default:
+		return fmt.Errorf("//gesso:auth %s: session [ttl=720h], or jwt [access=15m] [refresh=720h]", args)
+	}
+	for _, w := range words[1:] {
+		k, v, _ := strings.Cut(w, "=")
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("//gesso:auth %s: %s is a duration: 15m, 12h, 720h", args, w)
+		}
+		switch {
+		case k == "ttl" && !m.JWT:
+			m.TTL = d
+		case k == "access" && m.JWT:
+			m.Access = d
+		case k == "refresh" && m.JWT:
+			m.Refresh = d
+		default:
+			return fmt.Errorf("//gesso:auth %s: a session takes ttl=, JWTs access= and refresh=", args)
+		}
+	}
+	if m.JWT && m.Refresh <= m.Access {
+		return fmt.Errorf("//gesso:auth %s: the refresh token outlives the access token", args)
+	}
+	return nil
+}
+
+// DurationExpr is d as Go: 15 * time.Minute.
+func DurationExpr(d time.Duration) string {
+	switch {
+	case d%time.Hour == 0:
+		return strconv.FormatInt(int64(d/time.Hour), 10) + " * time.Hour"
+	case d%time.Minute == 0:
+		return strconv.FormatInt(int64(d/time.Minute), 10) + " * time.Minute"
+	case d%time.Second == 0:
+		return strconv.FormatInt(int64(d/time.Second), 10) + " * time.Second"
+	}
+	return "time.Duration(" + strconv.FormatInt(int64(d), 10) + ")"
 }
 
 // check is what holds across fields.
@@ -433,6 +495,9 @@ func (m *model) checkAuth() error {
 	}
 	if !m.Auth {
 		return nil
+	}
+	if m.TTL == 0 {
+		_ = m.tokens("")
 	}
 	if m.Key == nil || m.Key.Column != "username" || m.Key.Base != "string" {
 		return fmt.Errorf("%s is //gesso:auth: its key is Username string `gesso:\"key,…\"`, what users sign in with", m.Entity)

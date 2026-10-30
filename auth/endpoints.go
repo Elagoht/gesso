@@ -9,4 +9,6 @@ var (
 	Logout         = gesso.Endpoint[gesso.Empty, gesso.Empty]{Method: "POST", Pattern: "/auth/logout"}
 	Me             = gesso.Endpoint[gesso.Empty, ResMe]{Method: "GET", Pattern: "/auth/me"}
 	ChangePassword = gesso.Endpoint[ReqChangePassword, ResSession]{Method: "PUT", Pattern: "/auth/password"}
+	// Refresh is served when the module signs in with JWTs.
+	Refresh = gesso.Endpoint[ReqRefresh, ResSession]{Method: "POST", Pattern: "/auth/refresh"}
 )

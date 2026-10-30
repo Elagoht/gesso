@@ -52,6 +52,9 @@ type SQL struct {
 	Hasher password.Hasher
 	// Clock tells created_at. Nil: the system clock.
 	Clock clock.Clock
+	// RevokeSubject ends a user's tokens when their password, roles or account
+	// change. Nil: the gesso_tokens rows go. The module sets it to its JWTs'.
+	RevokeSubject func(ctx context.Context, subject string) error
 	// Table is where the users are. Empty: gesso_users. Another is the app's
 	// own — a //gesso:auth model's, with columns of its own beside these —
 	// whose migrations make it.
@@ -294,6 +297,9 @@ func (s *SQL) List(ctx context.Context) ([]User, error) {
 // revoke deletes the user's tokens, which the module keeps in the same
 // database: gesso_tokens, when the module has made it.
 func (s *SQL) revoke(ctx context.Context, id string) error {
+	if s.RevokeSubject != nil {
+		return s.RevokeSubject(ctx, id)
+	}
 	err := token.NewSQL(s.db, s.dialect).DeleteSubject(ctx, id)
 	if err != nil && !s.tokensExist(ctx) {
 		return nil // the module keeps its tokens elsewhere

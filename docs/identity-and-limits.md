@@ -49,11 +49,41 @@ of a user without `self`, are the administrators'. The fields beside the key
 take a default, so `users add` from the command line makes a user; for that
 reason no field but the key is `unique`.
 
-A sign-in is a random token — `gso_` and 43 characters, not a JWT — kept in
-`gesso_tokens` as its SHA-256 hash, with the user's id and roles and when it
-ends. Logout removes that one token; a password change removes all the user's
-tokens and answers a new one. While the app runs, the expired tokens are
-removed every hour (`auth.Options.PurgeEvery`). A sign-in lasts 30 days. Attempts: 5 a minute per address and username, 20 per
+### Sessions or JWTs
+
+`gesso add auth -tokens session|jwt` chooses, and the model keeps the choice,
+yours to change before `gesso gen`:
+
+```go
+//gesso:auth session ttl=720h
+//gesso:auth jwt access=15m refresh=720h
+```
+
+**Sessions** (the default; `-ttl`): a sign-in is a random token — `gso_` and 43
+characters — kept in `gesso_tokens` as its SHA-256 hash, with the user's id
+and roles and when it ends. Logout removes that one token.
+
+**JWTs** (`-access`, `-refresh`): a sign-in is a pair of HS256 JSON Web
+Tokens. The access token is the bearer; the refresh token, sent to
+`POST /auth/refresh` as `{"refreshToken"}`, answers a new pair and is spent —
+sent again, it ends its session, since one of the two who hold it is not its
+owner. Logout with the access token ends its refresh token too. What the tokens
+may no longer do is kept in `gesso_jwt_denylist` until they expire. They are
+signed with `JWT_SECRET`, at least 32 bytes: `add auth -tokens jwt` writes a
+random one to `.env.development`, and the app does not start without one (its
+commands run). Login answers `{"token", "expiresAt", "refreshToken",
+"refreshExpiresAt"}`.
+
+Either way a password change — the user's own, or an admin's — ends every
+token the user had and the change answers new ones, and the expired tokens
+or denylist rows are removed every hour while the app runs
+(`auth.Options.PurgeEvery`).
+
+JWTs here do not spare the database: each request still reads the denylist
+and the user, so that a logout, a role taken away or a user deleted counts
+from the next request. What they bring is a short-lived bearer and refresh
+rotation — a stolen access token is good for minutes, a stolen refresh token
+is caught the second time it is used. Attempts: 5 a minute per address and username, 20 per
 address — never per username alone. Behind a proxy, set
 `auth.Options.TrustedProxies`. In code, the module's `Users()` is the
 `*auth.SQL` on the table — `Create` for a seed or a test:

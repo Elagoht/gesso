@@ -254,6 +254,7 @@ func TestEvents(t *testing.T) {
 	}
 	uploads := t.TempDir()
 	t.Setenv("UPLOADS_DIR", uploads)
+	t.Setenv("JWT_SECRET", strings.Repeat("s", 40))
 	ctx := context.Background()
 	app, err := newApp(gesso.Env{Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
@@ -437,7 +438,29 @@ func TestEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	caller{t, app, s.Token}.want("GET", "/auth/me", "", 200, ` + "`" + `"roles":["editor"]` + "`" + `)
+	carol := caller{t, app, s.Token}
+	carol.want("GET", "/auth/me", "", 200, ` + "`" + `"roles":["editor"]` + "`" + `)
+	if s.RefreshToken != "" {
+		// JWTs: a refresh token is no bearer, refreshes once, and a session
+		// whose refresh token comes back twice ends.
+		caller{t, app, s.RefreshToken}.want("GET", "/auth/me", "", 401)
+		carol.want("POST", "/auth/refresh", ` + "`" + `{"refreshToken":"` + "`" + ` + s.Token + ` + "`" + `"}` + "`" + `, 401)
+		body := carol.want("POST", "/auth/refresh", ` + "`" + `{"refreshToken":"` + "`" + ` + s.RefreshToken + ` + "`" + `"}` + "`" + `, 200, ` + "`" + `"refreshToken"` + "`" + `)
+		var next auth.ResSession
+		_ = json.Unmarshal([]byte(body), &next)
+		caller{t, app, next.Token}.want("GET", "/auth/me", "", 200)
+		carol.want("POST", "/auth/refresh", ` + "`" + `{"refreshToken":"` + "`" + ` + s.RefreshToken + ` + "`" + `"}` + "`" + `, 401)
+		caller{t, app, next.Token}.want("GET", "/auth/me", "", 401)
+		// Logout ends the refresh token with the access token.
+		s, _ = auth.Login.Call(ctx, gesso.NewLocal(app), auth.ReqLogin{Username: "carol", Password: "another password"})
+		caller{t, app, s.Token}.want("POST", "/auth/logout", "", 204)
+		carol.want("POST", "/auth/refresh", ` + "`" + `{"refreshToken":"` + "`" + ` + s.RefreshToken + ` + "`" + `"}` + "`" + `, 401)
+		// A password set by an admin ends the tokens from before.
+		s, _ = auth.Login.Call(ctx, gesso.NewLocal(app), auth.ReqLogin{Username: "carol", Password: "another password"})
+		time.Sleep(2 * time.Millisecond)
+		ada.want("PUT", "/users/carol/password", ` + "`" + `{"password":"a third password"}` + "`" + `, 204)
+		caller{t, app, s.Token}.want("GET", "/auth/me", "", 401)
+	}
 	if code, body := bob.form("PATCH", "/auth/me", map[string]string{"avatar": ""}, nil); code != 200 || strings.Contains(body, ` + "`" + `"avatar"` + "`" + `) {
 		t.Fatalf("an empty avatar: %d %s", code, body)
 	}

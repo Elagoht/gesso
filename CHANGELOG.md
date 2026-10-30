@@ -5,6 +5,19 @@ change.
 
 ## Unreleased
 
+- **Sessions or JWTs, chosen when auth is added**: `gesso add auth -tokens
+  session -ttl 720h`, or `-tokens jwt -access 15m -refresh 720h`; the model
+  keeps it — `//gesso:auth session ttl=720h`, `//gesso:auth jwt access=15m
+  refresh=720h` — to change and `gesso gen`. JWTs are HS256 pairs: the access
+  token is the bearer, `POST /auth/refresh` trades a refresh token for a new
+  pair and spends it (one used twice ends its session); logout ends the pair;
+  a password change ends what came before; `gesso_jwt_denylist` keeps it all
+  until the tokens expire. `JWT_SECRET` (32 bytes or more) signs them —
+  `add auth -tokens jwt` writes one to `.env.development` — and the app does
+  not start without it. `auth.Options.JWT`, `auth.Refresh`, `token.JWT`,
+  `token.NewDenySQL`; `ResSession` has `refreshToken` and `refreshExpiresAt`.
+- **The new project's test reads `.env.development`**, as `gesso dev` does.
+
 - **A file has no routes of its own unless it asks**: files come with the
   record, in a multipart create, PUT or PATCH; sent empty (`-F cover=`), one
   goes. One route per module serves them: `GET /<module>/{key}/files/{field}`,

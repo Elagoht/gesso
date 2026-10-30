@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/Elagoht/gesso"
 	"github.com/Elagoht/gesso/auth"
@@ -90,4 +91,68 @@ func login(t *testing.T, app *gesso.App) string {
 		t.Fatal(err)
 	}
 	return s.Token
+}
+
+func TestJWTSignIn(t *testing.T) {
+	ctx := context.Background()
+	weak, err := gesso.New(gesso.Config{Database: sqlite.Open(filepath.Join(t.TempDir(), "weak.db"))},
+		auth.New(auth.Options{JWT: &auth.JWT{Secret: []byte("short")}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := weak.Start(ctx); err == nil || !strings.Contains(err.Error(), "JWT_SECRET") {
+		t.Fatalf("a weak secret starts: %v", err)
+	}
+	_ = weak.Shutdown(ctx)
+
+	app, err := gesso.New(gesso.Config{Database: sqlite.Open(filepath.Join(t.TempDir(), "jwt.db"))},
+		auth.New(auth.Options{JWT: &auth.JWT{Secret: []byte(strings.Repeat("s", 32)), Access: time.Minute, Refresh: time.Hour}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Shutdown(ctx) })
+	authn, _ := gesso.ModuleOf[*auth.Module](app)
+	users := authn.Users().(*auth.SQL)
+	if _, err := users.Create(ctx, "ada", "a long password"); err != nil {
+		t.Fatal(err)
+	}
+	api := gesso.NewLocal(app)
+	s, err := auth.Login.Call(ctx, api, auth.ReqLogin{Username: "ada", Password: "a long password"})
+	if err != nil || s.RefreshToken == "" || strings.Count(s.Token, ".") != 2 {
+		t.Fatalf("login: %+v %v", s, err)
+	}
+	if _, err := auth.Me.Call(ctx, api, gesso.Empty{}, gesso.Bearer(s.Token)); err != nil {
+		t.Fatalf("me: %v", err)
+	}
+	if _, err := auth.Me.Call(ctx, api, gesso.Empty{}, gesso.Bearer(s.RefreshToken)); err == nil {
+		t.Fatal("a refresh token as the bearer")
+	}
+	n, err := auth.Refresh.Call(ctx, api, auth.ReqRefresh{RefreshToken: s.RefreshToken})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if _, err := auth.Refresh.Call(ctx, api, auth.ReqRefresh{RefreshToken: s.RefreshToken}); err == nil {
+		t.Fatal("a refresh token twice")
+	}
+	if _, err := auth.Me.Call(ctx, api, gesso.Empty{}, gesso.Bearer(n.Token)); err == nil {
+		t.Fatal("the session of a reused refresh token goes on")
+	}
+	s, _ = auth.Login.Call(ctx, api, auth.ReqLogin{Username: "ada", Password: "a long password"})
+	if _, err := auth.Logout.Call(ctx, api, gesso.Empty{}, gesso.Bearer(s.Token)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Refresh.Call(ctx, api, auth.ReqRefresh{RefreshToken: s.RefreshToken}); err == nil {
+		t.Fatal("a refresh token after logout")
+	}
+	s, _ = auth.Login.Call(ctx, api, auth.ReqLogin{Username: "ada", Password: "a long password"})
+	time.Sleep(time.Millisecond)
+	if err := users.SetPassword(ctx, "ada", "another password"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Me.Call(ctx, api, gesso.Empty{}, gesso.Bearer(s.Token)); err == nil {
+		t.Fatal("a token from before the password was set")
+	}
 }

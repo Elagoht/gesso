@@ -135,7 +135,11 @@ func (m *Module) Init(app *gesso.App) error {
 {{- if .Auth}}
 	m.users = auth.NewSQL(app.DB(), app.Dialect())
 	m.users.Table = "{{.Table}}"
-	m.auth = auth.New(auth.Options{Users: m.users})
+{{- if .JWT}}
+	m.auth = auth.New(auth.Options{Users: m.users, JWT: &auth.JWT{Secret: []byte(os.Getenv("JWT_SECRET")), Access: {{dur .Access}}, Refresh: {{dur .Refresh}}}})
+{{- else}}
+	m.auth = auth.New(auth.Options{Users: m.users, TokenTTL: {{dur .TTL}}})
+{{- end}}
 	app.Command("users", m.users.Command(os.Stdin))
 	return m.auth.Init(app)
 {{- else}}

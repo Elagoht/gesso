@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMigrationDiff(t *testing.T) {
@@ -127,11 +128,15 @@ func TestFileField(t *testing.T) {
 
 func TestAuthModelRefuses(t *testing.T) {
 	for name, src := range map[string]string{
-		"no username": "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tEmail string `gesso:\"key\"`\n}\n",
-		"self alone":  "//gesso:table notes\ntype Note struct {\n\tID int64\n\tTitle string `gesso:\"self\"`\n}\n",
-		"own column":  "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tRoles string\n}\n",
-		"unique":      "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tEmail string `gesso:\"unique\"`\n}\n",
-		"gate":        "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tActive bool `gesso:\"gate=admin\"`\n}\n",
+		"no username":   "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tEmail string `gesso:\"key\"`\n}\n",
+		"self alone":    "//gesso:table notes\ntype Note struct {\n\tID int64\n\tTitle string `gesso:\"self\"`\n}\n",
+		"own column":    "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tRoles string\n}\n",
+		"unique":        "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tEmail string `gesso:\"unique\"`\n}\n",
+		"gate":          "//gesso:table users\n//gesso:auth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n\tActive bool `gesso:\"gate=admin\"`\n}\n",
+		"bad tokens":    "//gesso:table users\n//gesso:auth oauth\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n}\n",
+		"short refresh": "//gesso:table users\n//gesso:auth jwt access=1h refresh=30m\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n}\n",
+		"ttl on jwt":    "//gesso:table users\n//gesso:auth jwt ttl=1h\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n}\n",
+		"bad duration":  "//gesso:table users\n//gesso:auth session ttl=forever\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n}\n",
 	} {
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "models.go"), []byte("package models\n\n"+src), 0o644); err != nil {
@@ -140,5 +145,34 @@ func TestAuthModelRefuses(t *testing.T) {
 		if _, err := parseModel(dir); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestAuthTokens(t *testing.T) {
+	for words, want := range map[string]string{
+		"":                            "session 720h0m0s",
+		" session ttl=12h":            "session 12h0m0s",
+		" jwt":                        "jwt 15m0s 720h0m0s",
+		" jwt access=5m refresh=168h": "jwt 5m0s 168h0m0s",
+	} {
+		dir := t.TempDir()
+		src := "package models\n\n//gesso:table users\n//gesso:auth" + words + "\ntype User struct {\n\tID int64\n\tUsername string `gesso:\"key\"`\n}\n"
+		if err := os.WriteFile(filepath.Join(dir, "models.go"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		m, err := parseModel(dir)
+		if err != nil {
+			t.Fatalf("%q: %v", words, err)
+		}
+		got := "session " + m.TTL.String()
+		if m.JWT {
+			got = "jwt " + m.Access.String() + " " + m.Refresh.String()
+		}
+		if got != want {
+			t.Errorf("%q: %s, want %s", words, got, want)
+		}
+	}
+	if got := DurationExpr(90 * time.Minute); got != "90 * time.Minute" {
+		t.Errorf("DurationExpr: %s", got)
 	}
 }
