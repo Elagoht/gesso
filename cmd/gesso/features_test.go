@@ -277,6 +277,22 @@ func TestEvents(t *testing.T) {
 	}
 	anyone, ada, bob := caller{t: t, app: app}, login("ada", "admin"), login("bob")
 
+	// Sign-in and the users are apart in the OpenAPI document.
+	var doc struct {
+		Paths map[string]map[string]struct {
+			Tags []string ` + "`json:\"tags\"`" + `
+		} ` + "`json:\"paths\"`" + `
+	}
+	if err := json.Unmarshal(app.OpenAPI(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if tags := doc.Paths["/auth/login"]["post"].Tags; len(tags) != 1 || tags[0] != "auth" {
+		t.Fatalf("login is tagged %v", tags)
+	}
+	if tags := doc.Paths["/users"]["get"].Tags; len(tags) != 1 || tags[0] != "users" {
+		t.Fatalf("the users are tagged %v", tags)
+	}
+
 	anyone.want("POST", "/events", ` + "`" + `{"title":"Jam","slug":"jam","day":"2026-11-01"}` + "`" + `, 401)
 	bob.want("POST", "/events", ` + "`" + `{"title":"Jam","slug":"jam","day":"2026-11-01","public":true}` + "`" + `, 201,
 		` + "`" + `"host":"bob"` + "`" + `, ` + "`" + `"status":"draft"` + "`" + `, ` + "`" + `"price":1` + "`" + `, "!notes")

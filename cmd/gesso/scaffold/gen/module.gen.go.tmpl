@@ -173,16 +173,16 @@ func (m *Module) Routes(r *gesso.Router) {
 	read := gesso.Guards(guards.{{.Read}})
 {{- end}}
 {{- if .Auth}}
-	signedIn := gesso.Guards(gesso.RequireIdentity)
+	signedIn, authTag := gesso.Guards(gesso.RequireIdentity), gesso.Tags("auth")
 	m.auth.SignInRoutes(r)
-	Me.Handle(r, m.me, signedIn)
+	Me.Handle(r, m.me, signedIn, authTag)
 {{- if .SelfFields}}
-	UpdateMe.Handle(r, m.updateMe, signedIn{{if .SelfFiles}}, gesso.MaxBodyBytes({{.SelfFilesBodyLimit}}){{end}})
+	UpdateMe.Handle(r, m.updateMe, signedIn, authTag{{if .SelfFiles}}, gesso.MaxBodyBytes({{.SelfFilesBodyLimit}}){{end}})
 {{- end}}
 {{- range .SelfFiles}}
 {{- if .Routes}}
-	UploadMy{{.Go}}.Handle(r, m.uploadMy{{.Go}}, signedIn, gesso.MaxBodyBytes({{.BodyLimit}}))
-	DeleteMy{{.Go}}.Handle(r, m.deleteMy{{.Go}}, signedIn)
+	UploadMy{{.Go}}.Handle(r, m.uploadMy{{.Go}}, signedIn, authTag, gesso.MaxBodyBytes({{.BodyLimit}}))
+	DeleteMy{{.Go}}.Handle(r, m.deleteMy{{.Go}}, signedIn, authTag)
 {{- end}}
 {{- end}}
 	Set{{.Entity}}Password.Handle(r, m.setPassword{{if .Write}}, write{{end}})

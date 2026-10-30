@@ -3,6 +3,12 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
+## Unreleased
+
+- **Sign-in is its own section in the OpenAPI document**: login, logout,
+  refresh, password and `/auth/me` are tagged `auth`, apart from the users
+  module that serves them.
+
 ## v0.18.0 — 2026-10-30
 
 - **No file route unless asked**: a file is served at `/uploads/<key>`, one

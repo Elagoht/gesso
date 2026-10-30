@@ -330,23 +330,27 @@ func (m *Module) Authenticate(r *http.Request) (gesso.Identity, bool, error) {
 // PasswordChanger.
 func (m *Module) Routes(r *gesso.Router) {
 	m.SignInRoutes(r)
-	Me.Handle(r, m.me, gesso.Guards(gesso.RequireIdentity))
+	Me.Handle(r, m.me, gesso.Guards(gesso.RequireIdentity), tag)
 }
+
+// tag puts sign-in's endpoints under auth in the OpenAPI document, whichever
+// module registers them.
+var tag = gesso.Tags("auth")
 
 // SignInRoutes registers Login, Logout and ChangePassword but not Me: for a
 // module of the app's own — a //gesso:auth model's — that answers /auth/me
 // with its users' fields.
 func (m *Module) SignInRoutes(r *gesso.Router) {
 	signedIn := gesso.Guards(gesso.RequireIdentity)
-	Login.Handle(r, m.login)
-	Logout.Handle(r, m.logout, signedIn)
+	Login.Handle(r, m.login, tag)
+	Logout.Handle(r, m.logout, signedIn, tag)
 	if m.opts.JWT != nil {
-		Refresh.Handle(r, m.refresh)
+		Refresh.Handle(r, m.refresh, tag)
 	}
 	if pc, ok := m.opts.Users.(PasswordChanger); ok {
 		ChangePassword.Handle(r, func(ctx context.Context, in ReqChangePassword) (ResSession, error) {
 			return m.changePassword(ctx, pc, in)
-		}, signedIn)
+		}, signedIn, tag)
 	}
 }
 
