@@ -3,7 +3,7 @@
 gesso is before 1.0: a minor release may change the API. Each entry says what to
 change.
 
-## Unreleased
+## v0.15.0 — 2026-10-30
 
 - **The reorder is `PATCH /<table>` with `{"order": [keys]}`**, a change to the
   collection, not `PUT /<table>/order`, which a record whose key is `order`
