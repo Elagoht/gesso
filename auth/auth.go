@@ -62,6 +62,9 @@ type Options struct {
 	TokenStore token.Store
 	// Clock tells the time. Nil: the system clock.
 	Clock clock.Clock
+	// PurgeEvery is how often the expired tokens are removed while the app
+	// runs. Zero: an hour; negative: never — a job of the app's does it.
+	PurgeEvery time.Duration
 	// Logger receives the limiter's store errors. Nil: slog.Default().
 	Logger *slog.Logger
 }
@@ -73,6 +76,8 @@ type Module struct {
 	perPair *ratelimit.Limiter // per address and username
 	perAddr *ratelimit.Limiter // per address
 	addr    func(*http.Request) string
+	stop    context.CancelFunc
+	done    chan struct{}
 }
 
 // New is the module; it is built from opts, at most one, when the app
@@ -149,6 +154,51 @@ func build(opts Options) (*Module, error) {
 		perAddr: limiter(4 * opts.Attempts),
 		addr:    func(r *http.Request) string { return ratelimit.ClientIP(r, opts.TrustedProxies) },
 	}, nil
+}
+
+// Start removes the expired tokens now and every Options.PurgeEvery, until
+// Stop: signing in leaves a row behind for each token, and one never presented
+// again is never met to be removed.
+func (m *Module) Start(ctx context.Context) error {
+	every := m.opts.PurgeEvery
+	if every == 0 {
+		every = time.Hour
+	}
+	if every < 0 || m.tokens == nil {
+		return nil
+	}
+	ctx, m.stop = context.WithCancel(context.WithoutCancel(ctx))
+	m.done = make(chan struct{})
+	go func() {
+		defer close(m.done)
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			if _, err := m.tokens.Purge(ctx); err != nil && ctx.Err() == nil {
+				m.opts.Logger.Error("auth: purge expired tokens", "error", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	return nil
+}
+
+// Stop ends what Start began.
+func (m *Module) Stop(ctx context.Context) error {
+	if m.stop == nil {
+		return nil
+	}
+	m.stop()
+	select {
+	case <-m.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Users are who may sign in: a *SQL when the module made the table itself.

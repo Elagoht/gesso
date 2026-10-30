@@ -206,3 +206,45 @@ func TestNewRefuses(t *testing.T) {
 		}
 	}
 }
+
+// purges is a token store that reports its purges.
+type purges struct {
+	*token.Memory
+	done chan time.Time
+}
+
+func (p purges) DeleteExpired(ctx context.Context, t time.Time) (int64, error) {
+	p.done <- t
+	return p.Memory.DeleteExpired(ctx, t)
+}
+
+// The module removes the expired tokens while the app runs, and stops when it
+// does.
+func TestPurgeExpired(t *testing.T) {
+	store := purges{token.NewMemory(), make(chan time.Time, 8)}
+	authn := auth.New(auth.Options{Users: auth.NewSingle("ada", "a long password"), TokenStore: store, PurgeEvery: 10 * time.Millisecond})
+	app, err := gesso.New(gesso.Config{}, authn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		select {
+		case <-store.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no purge")
+		}
+	}
+	if err := app.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for len(store.done) > 0 {
+		<-store.done
+	}
+	time.Sleep(50 * time.Millisecond)
+	if len(store.done) != 0 {
+		t.Fatal("purges after shutdown")
+	}
+}

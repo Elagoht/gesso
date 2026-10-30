@@ -11,6 +11,13 @@ change.
   stored first, the record and their columns written in one transaction;
   anything failing writes nothing. `PUT /<module>/{key}/<field>` stays, for a
   file alone.
+- **`gesso dev` stops the program when a build fails**: until a build works,
+  every request to its address is answered with the compiler's output, a
+  `500 build_failed` problem, as collage shows it in the browser; the version
+  that ran before no longer stays up looking current.
+- **Expired tokens are removed while the app runs**, every hour: the sign-in
+  module starts and stops with the app (`auth.Options.PurgeEvery`; negative
+  leaves it to a job of the app's).
 - **An input reads JSON or a form**: a field with both a `json` and a `form`
   tag comes from whichever the request's content type says; a form field may
   be a `gesso.Optional`, set when sent, null when sent empty (but a string).

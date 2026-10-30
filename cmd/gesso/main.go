@@ -35,7 +35,7 @@ func init() {
 		{name: "init", summary: "add internal/api — api.go, register.go — to the Go module here, a collage site say",
 			run: func(c cli, a []string) (int, error) { return 0, initProject(a, c.dir, c.stdout) }},
 		{name: "dev", args: "[-- program args]", summary: "run the project, rebuilt and restarted as files change",
-			help: "Reads .env.development, or .env. A failed build leaves the running program up.",
+			help: "Reads .env.development, or .env. A failed build stops the program; its address answers the compiler output, 500 build_failed.",
 			run: func(c cli, a []string) (int, error) {
 				ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 				defer stop()

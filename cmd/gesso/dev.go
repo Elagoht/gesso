@@ -3,15 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -19,8 +23,9 @@ import (
 // devCommand is gesso dev: build the program in dir, run it in development —
 // GESSO_DEV=1, so gesso.Main reads .env.development, or .env — and rebuild and
 // restart it whenever a .go, .sql, go.mod or environment file changes, until
-// ctx ends. A build that fails leaves the running program as it was, and says
-// why.
+// ctx ends. A build that fails stops the program: until the next build that
+// works, every request to its address is answered with the compiler's output,
+// a 500 build_failed problem, and the terminal says it too.
 func devCommand(ctx context.Context, args []string, dir string, stdout, stderr io.Writer) error {
 	fs := newFlags("dev")
 	every := fs.Duration("poll", 500*time.Millisecond, "how often files are looked at")
@@ -68,19 +73,35 @@ func devCommand(ctx context.Context, args []string, dir string, stdout, stderr i
 		}
 		proc = nil
 	}
+	addr := devAddr(dir, programArgs)
+	var failed *http.Server
 	build := func() bool {
 		var out bytes.Buffer
 		cmd := exec.CommandContext(ctx, "go", "build", "-o", bin, *pkg)
 		cmd.Dir, cmd.Stdout, cmd.Stderr = dir, &out, &out
 		if err := cmd.Run(); err != nil {
 			if ctx.Err() == nil {
-				fmt.Fprintf(stderr, "gesso dev: the build failed; the running version stays:\n%s", out.String())
+				fmt.Fprintf(stderr, "gesso dev: the build failed:\n%s", out.String())
+				stop()
+				if failed == nil {
+					failed = serveBuildError(addr, stderr)
+				}
+				buildError.Store(out.String())
 			}
 			return false
 		}
+		if failed != nil {
+			_ = failed.Close()
+			failed = nil
+		}
 		return true
 	}
-	defer stop()
+	defer func() {
+		stop()
+		if failed != nil {
+			_ = failed.Close()
+		}
+	}()
 
 	fmt.Fprintln(stdout, "gesso dev: building")
 	seen := snapshot(dir)
@@ -107,6 +128,74 @@ func devCommand(ctx context.Context, args []string, dir string, stdout, stderr i
 			start()
 		}
 	}
+}
+
+// buildError is the output of the build that failed, which the address answers.
+var buildError atomic.Value
+
+// serveBuildError answers every request on addr with the failed build's output
+// as a problem, until it is closed.
+func serveBuildError(addr string, stderr io.Writer) *http.Server {
+	srv := &http.Server{Addr: addr, ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out, _ := buildError.Load().(string)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(buildProblem{
+			Type: "about:blank", Title: "Internal Server Error", Status: http.StatusInternalServerError,
+			Code: "build_failed", Detail: strings.TrimSpace(out), Instance: r.URL.Path,
+		})
+	})}
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Fprintln(stderr, "gesso dev: answer the failed build:", err)
+		return srv
+	}
+	go func() { _ = srv.Serve(l) }()
+	return srv
+}
+
+type buildProblem struct {
+	Type     string `json:"type"`
+	Title    string `json:"title"`
+	Status   int    `json:"status"`
+	Code     string `json:"code"`
+	Detail   string `json:"detail"`
+	Instance string `json:"instance"`
+}
+
+// devAddr is where the program listens, as gesso.Main finds it: -addr after
+// the flags, ADDR in the environment, then in .env.development or .env, then
+// :8080.
+func devAddr(dir string, args []string) string {
+	for i, a := range args {
+		if v, ok := strings.CutPrefix(a, "-addr="); ok {
+			return v
+		}
+		if v, ok := strings.CutPrefix(a, "--addr="); ok {
+			return v
+		}
+		if (a == "-addr" || a == "--addr") && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	if v := os.Getenv("ADDR"); v != "" {
+		return v
+	}
+	for _, name := range []string{".env.development", ".env"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		for line := range strings.Lines(string(data)) {
+			line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "export "))
+			if v, ok := strings.CutPrefix(line, "ADDR="); ok {
+				return strings.Trim(strings.TrimSpace(v), `"'`)
+			}
+		}
+		break
+	}
+	return ":8080"
 }
 
 // snapshot is the modification time of every file dev watches under dir.

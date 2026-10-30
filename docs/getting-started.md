@@ -13,7 +13,8 @@ gesso dev
 
 `gesso dev` builds the program and runs it in development, and rebuilds and
 restarts it whenever a `.go`, `.sql`, `go.mod` or environment file changes. A
-build that fails leaves the running version up and prints why. Ctrl-C stops
+build that fails stops the program, and until one works every request is
+answered with the compiler's output, a `500 build_failed` problem. Ctrl-C stops
 both.
 
 The program's `main` is one line, `gesso.Main(newApp)`, as in collage. It

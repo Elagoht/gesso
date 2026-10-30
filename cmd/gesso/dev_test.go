@@ -100,9 +100,17 @@ func TestDev(t *testing.T) {
 	waitFor(t, "the failed build to be reported", 60*time.Second, func() bool {
 		return strings.Contains(errOut.String(), "the build failed")
 	})
-	if !strings.Contains(get(base+"/openapi.json"), `"changed"`) {
-		t.Fatal("a failed build stopped the running version")
+	// The program is stopped, and its address answers the compiler's output.
+	waitFor(t, "the failed build to be answered", 60*time.Second, func() bool {
+		body := get(base + "/openapi.json")
+		return strings.Contains(body, `"build_failed"`) && strings.Contains(body, "broken.go")
+	})
+	if err := os.Remove(broken); err != nil {
+		t.Fatal(err)
 	}
+	waitFor(t, "the fixed build to be served", 60*time.Second, func() bool {
+		return strings.Contains(get(base+"/openapi.json"), `"changed"`)
+	})
 
 	cancel()
 	select {

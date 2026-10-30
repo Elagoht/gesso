@@ -141,6 +141,12 @@ func (m *Module) Init(app *gesso.App) error {
 // Users are the users who sign in, to make one from code: a seed, a test.
 func (m *Module) Users() *auth.SQL { return m.users }
 
+// Start begins sign-in's upkeep: the expired tokens removed every hour.
+func (m *Module) Start(ctx context.Context) error { return m.auth.Start(ctx) }
+
+// Stop ends it.
+func (m *Module) Stop(ctx context.Context) error { return m.auth.Stop(ctx) }
+
 // Authenticate finds who sends a request from its bearer token: the module is
 // the app's sign-in.
 func (m *Module) Authenticate(r *http.Request) (gesso.Identity, bool, error) {

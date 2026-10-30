@@ -49,7 +49,11 @@ of a user without `self`, are the administrators'. The fields beside the key
 take a default, so `users add` from the command line makes a user; for that
 reason no field but the key is `unique`.
 
-A sign-in lasts 30 days. Attempts: 5 a minute per address and username, 20 per
+A sign-in is a random token — `gso_` and 43 characters, not a JWT — kept in
+`gesso_tokens` as its SHA-256 hash, with the user's id and roles and when it
+ends. Logout removes that one token; a password change removes all the user's
+tokens and answers a new one. While the app runs, the expired tokens are
+removed every hour (`auth.Options.PurgeEvery`). A sign-in lasts 30 days. Attempts: 5 a minute per address and username, 20 per
 address — never per username alone. Behind a proxy, set
 `auth.Options.TrustedProxies`. In code, the module's `Users()` is the
 `*auth.SQL` on the table — `Create` for a seed or a test:
