@@ -296,6 +296,10 @@ func (s *SQL) List(ctx context.Context) ([]User, error) {
 
 // revoke deletes the user's tokens, which the module keeps in the same
 // database: gesso_tokens, when the module has made it.
+// Revoke ends every token of the user with id: their account deleted, say,
+// by another way than Delete.
+func (s *SQL) Revoke(ctx context.Context, id string) error { return s.revoke(ctx, id) }
+
 func (s *SQL) revoke(ctx context.Context, id string) error {
 	if s.RevokeSubject != nil {
 		return s.RevokeSubject(ctx, id)

@@ -76,6 +76,11 @@ type ReqNew{{.Entity}} struct {
 	Roles    []string `json:"roles" form:"roles"`
 }
 
+type Req{{.Entity}}Roles struct {
+	Key   {{.KeyGo}}   `path:"{{.KeyPath}}"`
+	Roles []string `json:"roles"`
+}
+
 type Req{{.Entity}}Password struct {
 	Key      {{.KeyGo}} `path:"{{.KeyPath}}"`
 	Password string `json:"password" validate:"required,min=8,max=200"`

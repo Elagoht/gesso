@@ -97,7 +97,14 @@ func TestNew(t *testing.T) {
 			do("add", "endpoint", "events/count", "-method", "GET", "-res", "total:int")
 			do("add", "module", "posts", "-guard", "signedIn",
 				"-field", "title:string:max=200", "-field", "slug:string:key,slug", "-field", "score:int:optional,sort", "-field", "day:date:optional")
-			do("add", "module", "tasks", "-rbac", "-owner", "-field", "title:string:listable,max=100")
+			if code := run([]string{"add", "module", "leaky", "-rbac", "-field", "cover:image"}, dir, &out, &errOut, fixedNow); code == 0 {
+				t.Fatal("a file of a //gesso:rbac model with no public or routes")
+			}
+			if _, err := os.Stat(filepath.Join(dir, "internal/leaky")); err == nil {
+				t.Fatal("a refused module leaves its folder")
+			}
+			do("add", "module", "tasks", "-rbac", "-owner", "-field", "title:string:listable,max=100",
+				"-field", "visible:bool:gate=admin,default=true", "-field", "brief:file:routes,accept=application/pdf,maxsize=1MiB")
 			reg, _ := os.ReadFile(filepath.Join(dir, "register.go"))
 			roles := `app.Roles(gesso.Roles{"admin": {"*"}, gesso.Everyone: {}})`
 			if !strings.Contains(string(reg), roles) {

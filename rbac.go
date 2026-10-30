@@ -120,3 +120,14 @@ func Can(perm string) Guard {
 		return ErrForbidden
 	}
 }
+
+// Needs guards a route with Can(perm), and says so in its OpenAPI
+// description.
+func Needs(perm string) HandleOption {
+	return func(c *handleConfig) {
+		c.guards = append(c.guards, Can(perm))
+		if c.description == "" {
+			c.description = "Needs the permission " + perm + "."
+		}
+	}
+}

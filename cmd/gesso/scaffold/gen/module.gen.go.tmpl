@@ -84,6 +84,7 @@ var (
 {{- end}}
 {{- if .Auth}}
 	Set{{.Entity}}Password = gesso.Endpoint[models.Req{{.Entity}}Password, gesso.Empty]{Method: "PUT", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }/password"}
+	Set{{.Entity}}Roles = gesso.Endpoint[models.Req{{.Entity}}Roles, gesso.Empty]{Method: "PUT", Pattern: "/{{.Table}}/{ {{- .KeyPath -}} }/roles"}
 	Me = gesso.Endpoint[gesso.Empty, models.ResMe]{Method: "GET", Pattern: "/auth/me"}
 {{- if .SelfFields}}
 	UpdateMe = gesso.Endpoint[models.ReqPatchMe, models.ResMe]{Method: "PATCH", Pattern: "/auth/me"}
@@ -173,7 +174,7 @@ func (m *Module) Routes(r *gesso.Router) {
 	read := gesso.Guards(guards.{{.Read}})
 {{- end}}
 {{- if .RBAC}}
-	can := func(action string) gesso.HandleOption { return gesso.Guards(gesso.Can("{{.Table}}:" + action)) }
+	can := func(action string) gesso.HandleOption { return gesso.Needs("{{.Table}}:" + action) }
 {{- end}}
 {{- if .Auth}}
 	signedIn, authTag := gesso.Guards(gesso.RequireIdentity), gesso.Tags("auth")
@@ -189,6 +190,7 @@ func (m *Module) Routes(r *gesso.Router) {
 {{- end}}
 {{- end}}
 	Set{{.Entity}}Password.Handle(r, m.setPassword{{if .Write}}, write{{end}})
+	Set{{.Entity}}Roles.Handle(r, m.setRoles{{if .Write}}, write{{end}})
 {{- end}}
 	Create{{.Entity}}.Handle(r, m.create, gesso.Status(201){{if .Write}}, write{{end}}{{if .RBAC}}, can("create"){{end}}{{if .Files}}, gesso.MaxBodyBytes({{.FilesBodyLimit}}){{end}})
 	Get{{.Entity}}.Handle(r, m.get{{if .Read}}, read{{end}}{{if .RBAC}}, can("get"){{end}})
@@ -201,7 +203,7 @@ func (m *Module) Routes(r *gesso.Router) {
 {{- end}}
 {{- range .Files}}
 {{- if .Routes}}
-	Get{{$m.Entity}}{{.Go}}.Handle(r, m.get{{.Go}}{{if and $m.Read (not .Public)}}, read{{end}}{{if $m.RBAC}}, can("get"){{end}})
+	Get{{$m.Entity}}{{.Go}}.Handle(r, m.get{{.Go}}{{if and $m.Read (not .Public)}}, read{{end}}{{if and $m.RBAC (not .Public)}}, can("get"){{end}})
 	Upload{{$m.Entity}}{{.Go}}.Handle(r, m.upload{{.Go}}{{if $m.Write}}, write{{end}}{{if $m.RBAC}}, can("update"){{end}}, gesso.MaxBodyBytes({{.BodyLimit}}))
 	Delete{{$m.Entity}}{{.Go}}.Handle(r, m.delete{{.Go}}{{if $m.Write}}, write{{end}}{{if $m.RBAC}}, can("update"){{end}})
 {{- end}}
@@ -483,7 +485,7 @@ func (m *Module) write(ctx context.Context, in models.ReqPatch{{.Entity}}{{if .G
 }
 
 func (m *Module) delete(ctx context.Context, in models.Req{{.Entity}}Key) (gesso.Empty, error) {
-{{- if or .Hooks.BeforeDelete .Files}}
+{{- if or .Hooks.BeforeDelete .Files .Auth}}
 	e, err := m.repo.byKey(ctx, in.Key{{$m.Args "delete"}})
 	if err != nil {
 		return gesso.Empty{}, err
@@ -496,6 +498,12 @@ func (m *Module) delete(ctx context.Context, in models.Req{{.Entity}}Key) (gesso
 	if err := m.repo.delete(ctx, e.ID); err != nil {
 		return gesso.Empty{}, err
 	}
+{{- if .Auth}}
+	// Their tokens go with them.
+	if err := m.users.Revoke(ctx, strconv.FormatInt(e.ID, 10)); err != nil {
+		return gesso.Empty{}, err
+	}
+{{- end}}
 {{- range .Files}}
 	if e.{{.Go}} != "" {
 		_ = m.files.Delete(ctx, e.{{.Go}})
@@ -803,6 +811,11 @@ func (m *Module) deleteMy{{.Go}}(ctx context.Context, _ gesso.Empty) (gesso.Empt
 }
 {{- end}}
 {{- end}}
+
+// setRoles sets a user's roles, as an administrator does; their tokens end.
+func (m *Module) setRoles(ctx context.Context, in models.Req{{.Entity}}Roles) (gesso.Empty, error) {
+	return gesso.Empty{}, m.users.SetRoles(ctx, in.Key, in.Roles...)
+}
 
 // setPassword sets a user's password, as an administrator does.
 func (m *Module) setPassword(ctx context.Context, in models.Req{{.Entity}}Password) (gesso.Empty, error) {

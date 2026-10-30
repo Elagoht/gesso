@@ -520,11 +520,11 @@ func (m *model) checkAuth() error {
 		if f.Guard != "" && !f.Routes {
 			return fmt.Errorf("%s.%s: a guarded file is served by a route of its own: add routes", m.Entity, f.Go)
 		}
-		if m.Read != "" && !f.Routes && !f.Public {
-			return fmt.Errorf("%s.%s: %s is //gesso:read %s, and /uploads/ serves a file to whoever has its URL: say public, or routes for a route behind the guard", m.Entity, f.Go, m.Entity, unexported(m.Read))
+		if (m.Read != "" || m.RBAC) && !f.Routes && !f.Public {
+			return fmt.Errorf("%s.%s: reading %s is guarded, and /uploads/ serves a file to whoever has its URL: say public, or routes for a route behind the guard", m.Entity, f.Go, m.Entity)
 		}
-		if f.Public && f.Routes && m.Read == "" {
-			return fmt.Errorf("%s.%s: public is for a file of a //gesso:read model", m.Entity, f.Go)
+		if f.Public && f.Routes && m.Read == "" && !m.RBAC {
+			return fmt.Errorf("%s.%s: public is for a file of a model whose reading is guarded", m.Entity, f.Go)
 		}
 	}
 	if !m.Auth {
@@ -912,7 +912,12 @@ func dropIndex(table string, c column, dialect string) string {
 	return "DROP INDEX " + indexName(table, c) + ";\n"
 }
 
-func idSQL(dialect string) string {
+func idSQL(dialect string, auth bool) string {
+	if dialect == "sqlite" && auth {
+		// A user's id is never given again: a deleted user's tokens, or the
+		// records they own, are never another's.
+		return "id INTEGER PRIMARY KEY AUTOINCREMENT"
+	}
 	return map[string]string{
 		"postgres": "id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY",
 		"sqlite":   "id INTEGER PRIMARY KEY",
@@ -927,7 +932,7 @@ func migration(old *schemaSnapshot, s schemaSnapshot, drop bool) (name, up, down
 	d, t := s.Dialect, s.Table
 	if old == nil {
 		var b strings.Builder
-		b.WriteString("CREATE TABLE " + t + " (\n    " + idSQL(d))
+		b.WriteString("CREATE TABLE " + t + " (\n    " + idSQL(d, s.Auth))
 		for _, c := range s.Columns {
 			b.WriteString(",\n    " + c.def(d, s.Auth && !c.Unique && !c.Nullable))
 		}

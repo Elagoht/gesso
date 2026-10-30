@@ -518,7 +518,42 @@ func TestEvents(t *testing.T) {
 	if got := ada.want("GET", "/tasks", "", 200); !strings.Contains(got, "w1 done") || !strings.Contains(got, "w2") {
 		t.Fatalf("ada lists %s", got)
 	}
+	// A file behind its routes reaches only as far as the task.
+	if code, body := wanda.upload("/tasks/1/brief", "b.pdf", []byte("%PDF-1.4\nbrief\n")); code != 200 || !strings.Contains(body, ` + "`" + `"brief":"/tasks/1/brief?v=` + "`" + `) {
+		t.Fatalf("wanda's brief: %d %s", code, body)
+	}
+	if code, typ, _ := wanda.fetch("/tasks/1/brief"); code != 200 || !strings.Contains(typ, "application/pdf") {
+		t.Fatalf("wanda fetches her brief: %d %s", code, typ)
+	}
+	if code, _, _ := wes.fetch("/tasks/1/brief"); code != 404 {
+		t.Fatalf("wes fetches wanda's brief: %d", code)
+	}
+	if code, _ := wes.upload("/tasks/1/brief", "b.pdf", []byte("%PDF-1.4\nmine\n")); code != 404 {
+		t.Fatalf("wes replaces wanda's brief: %d", code)
+	}
+	anyone.want("GET", "/uploads/private/tasks/x.pdf", "", 404)
+	// The gate with the owner: a task hidden is ada's alone, even to its owner.
+	ada.want("PATCH", "/tasks/1", ` + "`" + `{"visible":false}` + "`" + `, 200)
+	wanda.want("GET", "/tasks/1", "", 404)
+	if got := wanda.want("GET", "/tasks", "", 200); strings.Contains(got, "w1") {
+		t.Fatalf("a hidden task listed: %s", got)
+	}
+	ada.want("PATCH", "/tasks/1", ` + "`" + `{"visible":true}` + "`" + `, 200)
 	ada.want("DELETE", "/tasks/2", "", 204)
+
+	// A user deleted: their tokens end, and whoever comes after is not them.
+	zed := login("zed", "writer")
+	zed.want("POST", "/tasks", ` + "`" + `{"title":"zed's"}` + "`" + `, 201)
+	ada.want("DELETE", "/users/zed", "", 204)
+	zed.want("GET", "/auth/me", "", 401)
+	yan := login("yan", "writer")
+	if got := yan.want("GET", "/tasks", "", 200); strings.Contains(got, "zed's") {
+		t.Fatalf("yan sees zed's task: %s", got)
+	}
+	zed.want("GET", "/tasks", "", 401)
+	// Roles changed by an admin count at once.
+	ada.want("PUT", "/users/yan/roles", ` + "`" + `{"roles":[]}` + "`" + `, 204)
+	yan.want("GET", "/tasks", "", 401)
 	wanda.want("GET", "/auth/me", "", 200, ` + "`" + `"tasks:update:own"` + "`" + `)
 	bob.want("GET", "/auth/me", "", 200, ` + "`" + `"permissions":[]` + "`" + `)
 
@@ -527,6 +562,7 @@ func TestEvents(t *testing.T) {
 	bob.want("DELETE", "/events/jam", "", 404)
 	bob.want("DELETE", "/events/walk", "", 204)
 	bob.want("DELETE", "/events/fair", "", 204)
+	wanda.want("DELETE", "/tasks/1", "", 204)
 	if n := files(t, uploads); n != 0 {
 		t.Fatalf("a record's files go with it: %d left", n)
 	}

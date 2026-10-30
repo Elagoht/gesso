@@ -12,7 +12,18 @@ change.
   `docs:list`, `:get`, `:create`, `:update`, `:delete`, `:reorder` — and an
   `owner` field (`-owner`), filled with the user who made the record, keeps a
   `:own` grant to their records, others 404. `GET /auth/me` answers the
-  caller's `permissions`. `gesso.Can`, `gesso.Allows`, `gesso.Permissions`.
+  caller's `permissions`, and each route's permission is in its OpenAPI
+  description. `gesso.Needs`, `gesso.Can`, `gesso.Allows`,
+  `gesso.Permissions`. A file of a `//gesso:rbac` model needs `routes` or
+  `public`, as one of a `//gesso:read` model does.
+- **`PUT /users/{username}/roles`**: admins change a user's roles; their
+  tokens end.
+- **Fix: a deleted user's tokens end with them.** `DELETE /users/{username}`
+  revoked nothing, and SQLite gave a deleted id to the next user, whom the
+  old tokens then passed for. The users table is `AUTOINCREMENT` on SQLite
+  now (made anew; an existing table keeps its id column), and the delete
+  revokes. `auth.SQL.Revoke`.
+- **`gesso add module` leaves nothing behind when gen refuses the model.**
 
 - **Sign-in is its own section in the OpenAPI document**: login, logout,
   refresh, password and `/auth/me` are tagged `auth`, apart from the users

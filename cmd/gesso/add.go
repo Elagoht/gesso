@@ -174,11 +174,13 @@ func addModule(args []string, dir string, stdout io.Writer, now func() time.Time
 	}
 	if !*empty {
 		paths, err := genModel(filepath.Join(target, "models"), genModelOptions{root: dir, dialect: *dialect, now: now})
+		if err != nil {
+			// A model gen refuses leaves nothing behind for the next gen to trip on.
+			_ = os.RemoveAll(target)
+			return err
+		}
 		for _, p := range paths {
 			fmt.Fprintln(stdout, "created", p)
-		}
-		if err != nil {
-			return err
 		}
 		if *guard == "" && !*rbac {
 			fmt.Fprintf(stdout, "note: anyone may write to %s: -guard <name>, or //gesso:write <guard> in its models.go, guards it\n", spec.Pkg)

@@ -41,6 +41,7 @@ the app's authenticator.
 | `PUT`, `DELETE /auth/me/<field>` | a file marked `self` and `routes`, on oneself |
 | `GET`, `POST /users`, `GET`, `PUT`, `PATCH`, `DELETE /users/{username}` | the users, under `//gesso:write` and `//gesso:read` (`admin`) |
 | `PUT /users/{username}/password` | `{"password"}`: an administrator sets one |
+| `PUT /users/{username}/roles` | `{"roles"}`: an administrator sets them |
 
 `POST /users` takes the fields, a `password` and `roles`. Nobody changes their
 own roles: `self` is for the fields a user may change, and `roles` is never
@@ -131,9 +132,15 @@ grant ending in `:own` keeps the caller to their own records: in the list,
 and as 404 for anyone else's. `add module -rbac` writes a table with `admin`
 granted all when `register.go` has none.
 
+Each route's permission is in its OpenAPI description. A file of such a model
+needs `routes` — or `public`, which also opens its `GET` to anyone.
+
 `GET /auth/me` answers the caller's `permissions`, for a client to know which
-of its buttons to show. In code, `gesso.Can("docs:publish")` is a guard, and
-`gesso.Allows(ctx, perm)` answers `GrantAll`, `GrantOwn` or `GrantNone`.
+of its buttons to show. Admins change a user's roles with
+`PUT /users/{username}/roles` and `{"roles": [...]}`, which ends their tokens.
+In code, `gesso.Needs("docs:publish")` guards a route and says so in its
+description, `gesso.Can` is the guard alone, and `gesso.Allows(ctx, perm)`
+answers `GrantAll`, `GrantOwn` or `GrantNone`.
 
 ## Guards
 
